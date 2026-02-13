@@ -5,7 +5,6 @@ use std::hint::unlikely;
 use generic_array::{typenum, GenericArray};
 use hkdf::Hkdf;
 use rand_core::{SeedableRng, TryRng};
-use rand_core::utils::fill_bytes_via_next_word;
 use sha3::Sha3_512;
 use tinymt::TinyMT64;
 use tinymt::tinymt64::tinymt64_generate_uint64;
@@ -83,58 +82,107 @@ impl TryRng for TripleMixPrng {
 
     #[inline(always)]
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        const LCG_MULTIPLIER: u128 = 47026247687942121848144207491837523525;
-
-
-        // 1. COMBINE: Summing modulo 2^256 preserves equidistribution
-        // and maximizes the period (LCM of individual periods).
-        let [mut l0, mut r1] = split_u128(self.lcg_state);
-        self.lcg_state = self.lcg_state.wrapping_mul(LCG_MULTIPLIER).wrapping_add(1);
-        let mut l1 = xoroshiro128::RngCore::next_u64(&mut self.xoroshiro128rng);
-        let mut r0 = tinymt64_generate_uint64(&mut self.tiny_mt64);
-        // 2. Perform 4 rounds of a 128-bit wide Feistel Network.
-        // We use a simple but effective mixer for the round function.
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 0);
-        r1 = r1.reverse_bits();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 1);
-        r0 = r0.swap_bytes();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 2);
-        l1 = l1.reverse_bits();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 3);
-        Ok((r0 ^ l0).wrapping_add(r1 ^ !l1))
+        Ok(self.next_u64_raw())
     }
 
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        fill_bytes_via_next_word(dst, || self.try_next_u64())
+        let mut chunks = dst.chunks_exact_mut(8);
+        for chunk in chunks.by_ref() {
+            let val = self.next_u64_raw();
+            chunk.copy_from_slice(&val.to_ne_bytes());
+        }
+        let remainder = chunks.into_remainder();
+        if !remainder.is_empty() {
+            let val = self.next_u64_raw();
+            let bytes = val.to_ne_bytes();
+            remainder.copy_from_slice(&bytes[..remainder.len()]);
+        }
+        Ok(())
     }
 }
 
 impl TripleMixPrng {
     #[inline(always)]
-    fn feistel_round(l0: &mut u64, l1: &mut u64, r0: &mut u64, r1: &mut u64, i: usize) {
-        // These are large primes, and the first is the golden ratio times 1<<64.
-
+    fn next_u64_raw(&mut self) -> u64 {
+        const LCG_MULTIPLIER: u128 = 47026247687942121848144207491837523525;
         const FEISTEL_KEYS: [u64; 4] = [0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9, 0x94D049BB133111EB, 0xFF51AFD7ED558CCD];
 
-        let old_r0 = *r0;
-        let old_r1 = *r1;
+        let [mut l0, mut r1] = split_u128(self.lcg_state);
+        self.lcg_state = self.lcg_state.wrapping_mul(LCG_MULTIPLIER).wrapping_add(1);
+        let mut l1 = xoroshiro128::RngCore::next_u64(&mut self.xoroshiro128rng);
+        let mut r0 = tinymt64_generate_uint64(&mut self.tiny_mt64);
 
-        // --- Round Function ---
-        // We use rotate_right to mix bits without losing any (unlike >> which discards bits).
-        let mut mix0 = old_r0 ^ old_r1.rotate_right(23);
-        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[i]);
+        // Round 0
+        let mut mix0 = r0 ^ r1.rotate_right(23);
+        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[0]);
         let h0 = mix0 ^ mix0.rotate_right(31);
 
-        let mut mix1 = old_r1 ^ old_r0.rotate_right(33);
-        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[(i + 1) % 4]);
+        let mut mix1 = r1 ^ r0.rotate_right(33);
+        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[1]);
         let h1 = mix1 ^ mix1.rotate_right(29);
 
-        // --- Feistel Swap ---
-        *r0 = *l0 ^ h0;
-        *r1 = *l1 ^ h1;
-        *l0 = old_r0;
-        *l1 = old_r1;
+        let old_r0 = r0;
+        let old_r1 = r1;
+        r0 = l0 ^ h0;
+        r1 = l1 ^ h1;
+        l0 = old_r0;
+        l1 = old_r1;
+
+        r1 = r1.reverse_bits();
+
+        // Round 1
+        let mut mix0 = r0 ^ r1.rotate_right(23);
+        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[1]);
+        let h0 = mix0 ^ mix0.rotate_right(31);
+
+        let mut mix1 = r1 ^ r0.rotate_right(33);
+        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[2]);
+        let h1 = mix1 ^ mix1.rotate_right(29);
+
+        let old_r0 = r0;
+        let old_r1 = r1;
+        r0 = l0 ^ h0;
+        r1 = l1 ^ h1;
+        l0 = old_r0;
+        l1 = old_r1;
+
+        r0 = r0.swap_bytes();
+
+        // Round 2
+        let mut mix0 = r0 ^ r1.rotate_right(23);
+        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[2]);
+        let h0 = mix0 ^ mix0.rotate_right(31);
+
+        let mut mix1 = r1 ^ r0.rotate_right(33);
+        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[3]);
+        let h1 = mix1 ^ mix1.rotate_right(29);
+
+        let old_r0 = r0;
+        let old_r1 = r1;
+        r0 = l0 ^ h0;
+        r1 = l1 ^ h1;
+        l0 = old_r0;
+        l1 = old_r1;
+
+        l1 = l1.reverse_bits();
+
+        // Round 3
+        let mut mix0 = r0 ^ r1.rotate_right(23);
+        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[3]);
+        let h0 = mix0 ^ mix0.rotate_right(31);
+
+        let mut mix1 = r1 ^ r0.rotate_right(33);
+        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[0]);
+        let h1 = mix1 ^ mix1.rotate_right(29);
+
+        let res_r0 = l0 ^ h0;
+        let res_r1 = l1 ^ h1;
+        let res_l0 = r0;
+        let res_l1 = r1;
+
+        (res_r0 ^ res_l0).wrapping_add(res_r1 ^ !res_l1)
     }
+
 }
 
 #[cfg(test)]
@@ -237,5 +285,22 @@ mod tests {
                 results[digit as usize].windows(3).map(|win| if win[0] == win[2] {1} else {0}).sum::<usize>(),
             );
         }
+    }
+
+    #[test]
+    fn test_equivalence() {
+        let mut prng1 = TripleMixPrng::from_seed(GenericArray::default());
+        let mut prng2 = TripleMixPrng::from_seed(GenericArray::default());
+        
+        let mut buf1 = vec![0u8; 1024];
+        prng1.fill_bytes(&mut buf1);
+        
+        let mut buf2 = vec![0u8; 1024];
+        for chunk in buf2.chunks_exact_mut(8) {
+            let val = prng2.next_u64();
+            chunk.copy_from_slice(&val.to_ne_bytes());
+        }
+        
+        assert_eq!(buf1, buf2);
     }
 }
