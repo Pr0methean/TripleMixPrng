@@ -1,74 +1,110 @@
-#![feature(likely_unlikely)]
+#![feature(likely_unlikely, portable_simd)]
 
 use core::convert::Infallible;
-use std::hint::unlikely;
 use generic_array::{typenum, GenericArray};
 use hkdf::Hkdf;
 use rand_core::{SeedableRng, TryRng};
-use rand_core::utils::fill_bytes_via_next_word;
 use sha3::Sha3_512;
-use tinymt::TinyMT64;
-use tinymt::tinymt64::tinymt64_generate_uint64;
-use xoroshiro128::Xoroshiro128Rng;
+use rand_core::block::{BlockRng, Generator};
+use std::simd::*;
+use std::simd::num::SimdUint;
+use std::simd::cmp::SimdPartialOrd;
 
-#[derive(Clone)]
-pub struct TripleMixPrng {
-    xoroshiro128rng: Xoroshiro128Rng,
-    tiny_mt64: TinyMT64,
-    lcg_state: u128
+#[derive(Debug, Clone)]
+pub struct TripleMixSimdCore {
+    xr0: u64x4,
+    xr1: u64x4,
+    tm0: u64x4,
+    tm1: u64x4,
+    weyl_lo: u64x4,
+    weyl_hi: u64x4,
+    inc_lo: u64x4,
+    inc_hi: u64x4,
 }
 
-fn split_u128(x: u128) -> [u64;2] { [x as u64, (x>>64) as u64] }
+impl TripleMixSimdCore {
+    const TINYMT_MAT1: u32 = 0xdaa51b54;
+    const TINYMT_MAT2: u32 = 0xfed47fb5;
+    const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
+}
+
+#[derive(Clone)]
+pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, typenum::U47>;
 
     fn from_seed(seed: Self::Seed) -> Self {
-        // Taken from the second entry in src/tinymt64dc.0.65536.txt from https://www.math.sci.hiroshima-u.ac.jp/m-mat/MT/TINYMT/JAVA/tinymt-1.0.zip
-        const TINYMT_MAT1: u32 = 0xdaa51b54;
-        const TINYMT_MAT2: u32 = 0xfed47fb5;
-        const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
+        let mut xr0_s = [0u64; 4];
+        let mut xr1_s = [0u64; 4];
+        let mut tm0_s = [0u64; 4];
+        let mut tm1_s = [0u64; 4];
+        let mut w_lo_s = [0u64; 4];
+        let mut w_hi_s = [0u64; 4];
+        let mut i_lo_s = [0u64; 4];
+        let mut i_hi_s = [0u64; 4];
 
-        let hk = Hkdf::<Sha3_512>::new(Some(b"TripleMixPrng"), &seed);
-        let mut subgenerator_seeds_combined = [0u8; 48];
-        hk.expand(b"TinyMT64, Xoroshiro128, and LCG-128 combined", &mut subgenerator_seeds_combined).expect("Hkdf::expand failed");
-        let mut tinymt_val = u128::from_ne_bytes(subgenerator_seeds_combined[..16].try_into().unwrap()) & (i128::MAX as u128);
-        let mut xoroshiro_val = u128::from_ne_bytes(subgenerator_seeds_combined[16..32].try_into().unwrap());
-        let lcg_state = u128::from_ne_bytes(subgenerator_seeds_combined[32..].try_into().unwrap());
-        if unlikely(tinymt_val == 0) {
-            let mut input = [0u8; 32];
-            let mut new_tinymt_val = [0u8; 16];
-            input[0..15].copy_from_slice(b"Seed for TinyMT");
-            hk.expand(&input, &mut new_tinymt_val).expect("Hkdf::expand failed");
-            tinymt_val = u128::from_ne_bytes(new_tinymt_val.try_into().unwrap()) & (i128::MAX as u128);
-            let mut rejection_counter = 1u128;
-            while unlikely(tinymt_val == 0) {
-                input[16..32].copy_from_slice(&rejection_counter.to_ne_bytes()[..]);
-                hk.expand(&input, &mut new_tinymt_val).expect("Hkdf::expand failed");
-                // After 2 failed tries, switch to dropping the least significant bit rather than
-                // the most significant, to improve the chance of escaping a mathematically simple
-                // cycle.
-                tinymt_val = u128::from_ne_bytes(new_tinymt_val.try_into().unwrap()) >> 1;
-                rejection_counter += 1;
+        for i in 0..4 {
+            let mut buf = [0u8; 16];
+
+            // 1. Xoroshiro128+ State
+            let salt = format!("TripleMix V9 Xoroshiro L{}", i);
+            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
+            hk.expand(b"state", &mut buf).expect("HKDF failed");
+            let mut x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
+            let mut x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+            let mut count = 0;
+            while x0 == 0 && x1 == 0 {
+                count += 1;
+                hk.expand(format!("retry {}", count).as_bytes(), &mut buf).expect("HKDF failed");
+                x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
+                x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
             }
-        }
-        if unlikely(xoroshiro_val == 0) {
-            let mut rejection_counter = 0u128;
-            let mut input = [0u8; 32];
-            let mut new_xoroshiro_val = [0u8; 16];
-            input[0..14].copy_from_slice(b"Xoroshiro seed");
-            while xoroshiro_val == 0 {
-                input[16..32].copy_from_slice(&rejection_counter.to_ne_bytes()[..]);
-                hk.expand(&input, &mut new_xoroshiro_val).expect("Hkdf::expand failed");
-                xoroshiro_val = u128::from_ne_bytes(new_xoroshiro_val.try_into().unwrap()) & (i128::MAX as u128);
-                rejection_counter += 1;
+            xr0_s[i] = x0;
+            xr1_s[i] = x1;
+
+            // 2. TinyMT64 State
+            let salt = format!("TripleMix V9 TinyMT L{}", i);
+            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
+            hk.expand(b"state", &mut buf).expect("HKDF failed");
+            let mut t0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
+            let mut t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+            count = 0;
+            while t0 == 0 && t1 == 0 {
+                count += 1;
+                hk.expand(format!("retry {}", count).as_bytes(), &mut buf).expect("HKDF failed");
+                t0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
+                t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
             }
+            tm0_s[i] = t0;
+            tm1_s[i] = t1;
+
+            // 3. Weyl 128-bit State
+            let salt = format!("TripleMix V9 WeylState L{}", i);
+            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
+            hk.expand(b"state", &mut buf).expect("HKDF failed");
+            w_lo_s[i] = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
+            w_hi_s[i] = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+
+            // 4. Weyl 128-bit Increment
+            let salt = format!("TripleMix V9 WeylInc L{}", i);
+            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
+            hk.expand(b"state", &mut buf).expect("HKDF failed");
+            i_lo_s[i] = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) | 1; // Must be odd
+            i_hi_s[i] = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
         }
-        TripleMixPrng {
-            tiny_mt64: TinyMT64::new(split_u128(tinymt_val), TINYMT_MAT1, TINYMT_MAT2, TINYMT_TMAT),
-            xoroshiro128rng: Xoroshiro128Rng::from_seed_u64(split_u128(xoroshiro_val)),
-            lcg_state: u128::from(lcg_state)
-        }
+
+        let core = TripleMixSimdCore {
+            xr0: u64x4::from_array(xr0_s),
+            xr1: u64x4::from_array(xr1_s),
+            tm0: u64x4::from_array(tm0_s),
+            tm1: u64x4::from_array(tm1_s),
+            weyl_lo: u64x4::from_array(w_lo_s),
+            weyl_hi: u64x4::from_array(w_hi_s),
+            inc_lo: u64x4::from_array(i_lo_s),
+            inc_hi: u64x4::from_array(i_hi_s),
+        };
+        TripleMixPrng(BlockRng::new(core))
     }
 }
 
@@ -83,57 +119,113 @@ impl TryRng for TripleMixPrng {
 
     #[inline(always)]
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        const LCG_MULTIPLIER: u128 = 47026247687942121848144207491837523525;
-
-
-        // 1. COMBINE: Summing modulo 2^256 preserves equidistribution
-        // and maximizes the period (LCM of individual periods).
-        let [mut l0, mut r1] = split_u128(self.lcg_state);
-        self.lcg_state = self.lcg_state.wrapping_mul(LCG_MULTIPLIER).wrapping_add(1);
-        let mut l1 = xoroshiro128::RngCore::next_u64(&mut self.xoroshiro128rng);
-        let mut r0 = tinymt64_generate_uint64(&mut self.tiny_mt64);
-        // 2. Perform 4 rounds of a 128-bit wide Feistel Network.
-        // We use a simple but effective mixer for the round function.
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 0);
-        r1 = r1.reverse_bits();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 1);
-        r0 = r0.swap_bytes();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 2);
-        l1 = l1.reverse_bits();
-        Self::feistel_round(&mut l0, &mut l1, &mut r0, &mut r1, 3);
-        Ok((r0 ^ l0).wrapping_add(r1 ^ !l1))
+        Ok(self.0.next_word())
     }
 
+    #[inline(always)]
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        fill_bytes_via_next_word(dst, || self.try_next_u64())
+        self.0.fill_bytes(dst);
+        Ok(())
     }
 }
 
-impl TripleMixPrng {
+impl Generator for TripleMixSimdCore {
+    type Output = [u64; 16];
+
     #[inline(always)]
-    fn feistel_round(l0: &mut u64, l1: &mut u64, r0: &mut u64, r1: &mut u64, i: usize) {
-        // These are large primes, and the first is the golden ratio times 1<<64.
-
+    fn generate(&mut self, output: &mut Self::Output) {
         const FEISTEL_KEYS: [u64; 4] = [0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9, 0x94D049BB133111EB, 0xFF51AFD7ED558CCD];
+        const TINYMT64_SH0: u64 = 12;
+        const TINYMT64_SH1: u64 = 11;
+        const TINYMT64_SH8: u64 = 8;
+        const TINYMT64_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 
-        let old_r0 = *r0;
-        let old_r1 = *r1;
+        let mut xr0 = self.xr0;
+        let mut xr1 = self.xr1;
+        let mut tm0 = self.tm0;
+        let mut tm1 = self.tm1;
+        let mut w_lo = self.weyl_lo;
+        let mut w_hi = self.weyl_hi;
+        let i_lo = self.inc_lo;
+        let i_hi = self.inc_hi;
 
-        // --- Round Function ---
-        // We use rotate_right to mix bits without losing any (unlike >> which discards bits).
-        let mut mix0 = old_r0 ^ old_r1.rotate_right(23);
-        mix0 = mix0.wrapping_mul(FEISTEL_KEYS[i]);
-        let h0 = mix0 ^ mix0.rotate_right(31);
+        for step in 0..4 {
+            // 1. Source Generation
+            let b_l0 = w_lo;
+            let b_r1 = w_hi;
+            
+            // 128-bit Weyl Update: w += inc
+            let next_w_lo = w_lo + i_lo;
+            let carry = next_w_lo.simd_lt(w_lo).select(u64x4::splat(1), u64x4::splat(0));
+            w_hi = w_hi + i_hi + carry;
+            w_lo = next_w_lo;
 
-        let mut mix1 = old_r1 ^ old_r0.rotate_right(33);
-        mix1 = mix1.wrapping_mul(FEISTEL_KEYS[(i + 1) % 4]);
-        let h1 = mix1 ^ mix1.rotate_right(29);
+            let b_l1 = xr0 + xr1;
+            let t = xr0 ^ xr1;
+            xr0 = ((xr0 << u64x4::splat(55)) | (xr0 >> u64x4::splat(9))) ^ t ^ (t << u64x4::splat(14));
+            xr1 = (t << u64x4::splat(36)) | (t >> u64x4::splat(28));
 
-        // --- Feistel Swap ---
-        *r0 = *l0 ^ h0;
-        *r1 = *l1 ^ h1;
-        *l0 = old_r0;
-        *l1 = old_r1;
+            tm0 &= u64x4::splat(TINYMT64_MASK);
+            let mut x = tm0 ^ tm1;
+            x ^= x << u64x4::splat(TINYMT64_SH0);
+            x ^= x >> u64x4::splat(32);
+            x ^= x << u64x4::splat(32);
+            x ^= x << u64x4::splat(TINYMT64_SH1);
+            
+            let mask = (x & u64x4::splat(1)).wrapping_neg();
+            let next_tm0 = tm1 ^ (mask & u64x4::splat(Self::TINYMT_MAT1 as u64));
+            let next_tm1 = x ^ (mask & u64x4::splat((Self::TINYMT_MAT2 as u64) << 32));
+            tm0 = next_tm0;
+            tm1 = next_tm1;
+
+            let mut ty = tm0 + tm1;
+            ty ^= tm0 >> u64x4::splat(TINYMT64_SH8);
+            let b_r0 = ty ^ ((ty & u64x4::splat(1)).wrapping_neg() & u64x4::splat(Self::TINYMT_TMAT));
+
+            // 2. Mixing
+            let mut cur_l0 = b_l0;
+            let mut cur_l1 = b_l1;
+            let mut cur_r0 = b_r0;
+            let mut cur_r1 = b_r1;
+
+            for r in 0..4 {
+                let m0 = cur_r0 ^ ((cur_r1 >> u64x4::splat(23)) | (cur_r1 << u64x4::splat(41)));
+                let mut h0 = m0 * u64x4::splat(FEISTEL_KEYS[r]);
+                h0 ^= (h0 >> u64x4::splat(31)) | (h0 << u64x4::splat(33));
+
+                let m1 = cur_r1 ^ ((cur_r0 >> u64x4::splat(33)) | (cur_r0 << u64x4::splat(31)));
+                let mut h1 = m1 * u64x4::splat(FEISTEL_KEYS[(r+1)%4]);
+                h1 ^= (h1 >> u64x4::splat(29)) | (h1 << u64x4::splat(35));
+
+                let tr0 = cur_r0;
+                let tr1 = cur_r1;
+                cur_r0 = cur_l0 ^ h0;
+                cur_r1 = cur_l1 ^ h1;
+                cur_l0 = tr0;
+                cur_l1 = tr1;
+
+                match r {
+                    0 => { cur_r1 = simd_swizzle!(cur_r1, [3, 0, 1, 2]); }
+                    1 => { cur_r0 = simd_swizzle!(cur_r0, [2, 3, 0, 1]); }
+                    2 => { cur_l1 = simd_swizzle!(cur_l1, [1, 2, 3, 0]); }
+                    _ => {}
+                }
+            }
+
+            let res = (cur_r0 ^ cur_l0) + (cur_r1 ^ !cur_l1);
+            let arr = res.to_array();
+            output[step * 4] = arr[0];
+            output[step * 4 + 1] = arr[1];
+            output[step * 4 + 2] = arr[2];
+            output[step * 4 + 3] = arr[3];
+        }
+
+        self.xr0 = xr0;
+        self.xr1 = xr1;
+        self.tm0 = tm0;
+        self.tm1 = tm1;
+        self.weyl_lo = w_lo;
+        self.weyl_hi = w_hi;
     }
 }
 
@@ -147,14 +239,13 @@ mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut prng = TripleMixPrng::from_seed(GenericArray::default());
+        let mut seed = [0u8; 47];
+        seed[0] = 1;
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let byte: u8 = prng.random();
             frequencies[byte as usize] += 1;
-        }
-        for i in 0..=255 {
-            println!("{:02X}: {}", i, frequencies[i as usize]);
         }
         let chi_square = goodness_of_fit(frequencies.map(f64::from), repeat((1 << 20) as f64).take(u8::MAX as usize + 1), 0.01).unwrap();
         println!("{:?}", chi_square);
@@ -163,7 +254,9 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut prng = TripleMixPrng::from_seed(GenericArray::default());
+        let mut seed = [0u8; 47];
+        seed[0] = 1;
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let word: u16 = prng.random();
@@ -176,7 +269,9 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut prng = TripleMixPrng::from_seed(GenericArray::default());
+        let mut seed = [0u8; 47];
+        seed[0] = 1;
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
@@ -187,9 +282,6 @@ mod tests {
                 for sample in &samples {
                     bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                 }
-                println!("Coincidence for bits {i:02} and {j:02}: 00={:07}, 01={:07}, 10={:07}, 11={:07}",
-                    bins[0], bins[1], bins[2], bins[3]
-                );
                 for bin in bins {
                     lowest_bin = lowest_bin.min(bin);
                     highest_bin = highest_bin.max(bin);
@@ -207,35 +299,29 @@ mod tests {
                     let second = pair[1];
                     lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                 }
-                println!("Bit transition for {i:02}->{j:02}: 00={:07}, 01={:07}, 10={:07}, 11={:07}",
-                    lagged_bins[0], lagged_bins[1], lagged_bins[2], lagged_bins[3]
-                );
                 for bin in lagged_bins {
                     lowest_lagged_bin = lowest_lagged_bin.min(bin);
                     highest_lagged_bin = highest_lagged_bin.max(bin);
                 }
-
             }
         }
         println!("Lowest lagged bin: {}, Highest lagged bin: {}", lowest_lagged_bin, highest_lagged_bin);
     }
+
     #[test]
-    fn first_output_for_small_seeds() {
-        let mut seed_array = GenericArray::default();
-        let mut results = [[0u8; u8::MAX as usize + 1]; 16];
-        for seed in 0..=u8::MAX {
-            seed_array[46] = seed;
-            let mut prng = TripleMixPrng::from_seed(seed_array);
-            for (index, digit) in format!("{:016X}", prng.next_u64()).chars().enumerate() {
-                results[index][seed as usize] = digit as u8;
-            }
+    fn test_equivalence() {
+        let mut prng1 = TripleMixPrng::from_seed(GenericArray::default());
+        let mut prng2 = TripleMixPrng::from_seed(GenericArray::default());
+        
+        let mut buf1 = vec![0u8; 1024];
+        prng1.fill_bytes(&mut buf1);
+        
+        let mut buf2 = vec![0u8; 1024];
+        for chunk in buf2.chunks_exact_mut(8) {
+            let val = prng2.next_u64();
+            chunk.copy_from_slice(&val.to_ne_bytes());
         }
-        for digit in 0..16 {
-            println!("{digit}: {}, {}, {}",
-                 str::from_utf8(&results[digit as usize]).unwrap(),
-                results[digit as usize].windows(2).map(|win| if win[0] == win[1] {1} else {0}).sum::<usize>(),
-                results[digit as usize].windows(3).map(|win| if win[0] == win[2] {1} else {0}).sum::<usize>(),
-            );
-        }
+        
+        assert_eq!(buf1, buf2);
     }
 }
