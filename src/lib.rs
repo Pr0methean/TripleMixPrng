@@ -281,6 +281,7 @@ impl Generator for TripleMixSimdCore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::iter::repeat;
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
@@ -289,8 +290,7 @@ mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut seed = [0u8; 256];
-        seed[0] = 1;
+        let seed = [0u8; 256];
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
@@ -304,8 +304,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut seed = [0u8; 256];
-        seed[0] = 1;
+        let seed = [0u8; 256];
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
         for _ in 0..(1 << 28) {
@@ -319,8 +318,7 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut seed = [0u8; 256];
-        seed[0] = 1;
+        let seed = [0u8; 256];
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
@@ -374,5 +372,18 @@ mod tests {
         }
         
         assert_eq!(buf1, buf2);
+    }
+
+    #[test]
+    fn test_fork_independence() {
+        let mut random = HashSet::with_capacity(256);
+        let seed = [0u8; 256];
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        for _ in 0..64 {
+            for _ in 0..4 {
+                assert!(random.insert(prng.next_u64()));
+            }
+            prng = prng.fork();
+        }
     }
 }
