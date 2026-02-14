@@ -2,9 +2,10 @@
 
 use core::convert::Infallible;
 use generic_array::{typenum, GenericArray};
-use hkdf::Hkdf;
+use rs_shake256::{Shake256Hasher};
+use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
+use std::hash::Hasher;
 use rand_core::{SeedableRng, TryRng};
-use sha3::Sha3_512;
 use rand_core::block::{BlockRng, Generator};
 use std::simd::*;
 use std::simd::num::SimdUint;
@@ -49,61 +50,47 @@ impl SeedableRng for TripleMixPrng {
         let mut i_hi_s = [0u64; 4];
 
         for i in 0..4 {
-            let mut buf = [0u8; 16];
-
-            // 1. Xoroshiro128+ State
-            let salt = format!("TripleMix V9 Xoroshiro L{}", i);
-            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
-            hk.expand(b"state", &mut buf).expect("HKDF failed");
-            let mut x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
-            let mut x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+            let mut buf = [0u8; 64];
             let mut count: u128 = 0;
-            while x0 == 0 && x1 == 0 {
-                let mut retry_input = [0u8; 32];
-                retry_input[..15].copy_from_slice(b"Xoroshiro retry");
-                retry_input[15] = i as u8;
-                retry_input[16..].copy_from_slice(&count.to_ne_bytes());
-                count += 1;
-                hk.expand(&retry_input, &mut buf).expect("HKDF failed");
-                x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
-                x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+            
+            loop {
+                // Using SHAKE256 to ensure full 2048-bit entropy reachability.
+                // We use a cumulative prefix of the seed for each lane to ensure that
+                // the total state across all lanes is a function of the full 2048-bit seed,
+                // while bypassing the 1600-bit internal state bottleneck of a single sponge call.
+                let mut hasher = Shake256Hasher::<64>::default();
+                hasher.write(&seed[0..(i + 1) * 64]);
+                hasher.write(format!("TripleMix V9 Lane {}", i).as_bytes());
+                if count > 0 {
+                    hasher.write(&count.to_ne_bytes());
+                }
+                
+                let output: ByteArrayWrapper<64> = HasherContext::finish(&mut hasher);
+                let out_bytes: &[u8] = output.as_ref();
+                buf.copy_from_slice(out_bytes);
+
+                // Extract states for current lane
+                let x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
+                let x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+                let t0 = u64::from_ne_bytes(buf[16..24].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
+                let t1 = u64::from_ne_bytes(buf[24..32].try_into().unwrap());
+                
+                // Rejection sampling for trap states
+                if (x0 == 0 && x1 == 0) || (t0 == 0 && t1 == 0) {
+                    count += 1;
+                    continue;
+                }
+
+                xr0_s[i] = x0;
+                xr1_s[i] = x1;
+                tm0_s[i] = t0;
+                tm1_s[i] = t1;
+                w_lo_s[i] = u64::from_ne_bytes(buf[32..40].try_into().unwrap());
+                w_hi_s[i] = u64::from_ne_bytes(buf[40..48].try_into().unwrap());
+                i_lo_s[i] = u64::from_ne_bytes(buf[48..56].try_into().unwrap()) | 1;
+                i_hi_s[i] = u64::from_ne_bytes(buf[56..64].try_into().unwrap());
+                break;
             }
-            xr0_s[i] = x0;
-            xr1_s[i] = x1;
-
-            // 2. TinyMT64 State
-            let salt = format!("TripleMix V9 TinyMT L{}", i);
-            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
-            hk.expand(b"state", &mut buf).expect("HKDF failed");
-            let mut t0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
-            let mut t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
-            count = 0;
-            while t0 == 0 && t1 == 0 {
-                let mut retry_input = [0u8; 32];
-                retry_input[..15].copy_from_slice(b"TinyMT64 retry ");
-                retry_input[15] = i as u8;
-                retry_input[16..].copy_from_slice(&count.to_ne_bytes());
-                count += 1;
-                hk.expand(&retry_input, &mut buf).expect("HKDF failed");
-                t0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
-                t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
-            }
-            tm0_s[i] = t0;
-            tm1_s[i] = t1;
-
-            // 3. Weyl 128-bit State
-            let salt = format!("TripleMix V9 WeylState L{}", i);
-            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
-            hk.expand(b"state", &mut buf).expect("HKDF failed");
-            w_lo_s[i] = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
-            w_hi_s[i] = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
-
-            // 4. Weyl 128-bit Increment
-            let salt = format!("TripleMix V9 WeylInc L{}", i);
-            let hk = Hkdf::<Sha3_512>::new(Some(salt.as_bytes()), &seed);
-            hk.expand(b"state", &mut buf).expect("HKDF failed");
-            i_lo_s[i] = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) | 1; // Must be odd
-            i_hi_s[i] = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
         }
 
         let core = TripleMixSimdCore {
@@ -251,9 +238,9 @@ mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let byte: u8 = prng.random();
@@ -266,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut seed = [0u8; super::TripleMixPrng::SEED_SIZE];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
@@ -281,9 +268,9 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut seed = [0u8; super::TripleMixPrng::SEED_SIZE];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
@@ -322,8 +309,9 @@ mod tests {
 
     #[test]
     fn test_equivalence() {
-        let mut prng1 = TripleMixPrng::from_seed(GenericArray::default());
-        let mut prng2 = TripleMixPrng::from_seed(GenericArray::default());
+        let mut seed = [0u8; 256];
+        let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
         
         let mut buf1 = vec![0u8; 1024];
         prng1.fill_bytes(&mut buf1);
