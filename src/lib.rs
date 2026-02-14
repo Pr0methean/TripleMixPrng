@@ -32,7 +32,7 @@ impl TripleMixSimdCore {
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 
 impl SeedableRng for TripleMixPrng {
-    type Seed = GenericArray<u8, typenum::U47>;
+    type Seed = GenericArray<u8, typenum::U256>;
 
     fn from_seed(seed: Self::Seed) -> Self {
         let mut xr0_s = [0u64; 4];
@@ -53,10 +53,14 @@ impl SeedableRng for TripleMixPrng {
             hk.expand(b"state", &mut buf).expect("HKDF failed");
             let mut x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
             let mut x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
-            let mut count = 0;
+            let mut count: u128 = 0;
             while x0 == 0 && x1 == 0 {
+                let mut retry_input = [0u8; 32];
+                retry_input[..15].copy_from_slice(b"Xoroshiro retry");
+                retry_input[15] = i as u8;
+                retry_input[16..].copy_from_slice(&count.to_ne_bytes());
                 count += 1;
-                hk.expand(format!("retry {}", count).as_bytes(), &mut buf).expect("HKDF failed");
+                hk.expand(&retry_input, &mut buf).expect("HKDF failed");
                 x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
                 x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
             }
@@ -71,8 +75,12 @@ impl SeedableRng for TripleMixPrng {
             let mut t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
             count = 0;
             while t0 == 0 && t1 == 0 {
+                let mut retry_input = [0u8; 32];
+                retry_input[..15].copy_from_slice(b"TinyMT64 retry ");
+                retry_input[15] = i as u8;
+                retry_input[16..].copy_from_slice(&count.to_ne_bytes());
                 count += 1;
-                hk.expand(format!("retry {}", count).as_bytes(), &mut buf).expect("HKDF failed");
+                hk.expand(&retry_input, &mut buf).expect("HKDF failed");
                 t0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
                 t1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
             }
@@ -239,9 +247,9 @@ mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut seed = [0u8; 47];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let byte: u8 = prng.random();
@@ -254,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut seed = [0u8; 47];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
@@ -269,9 +277,9 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut seed = [0u8; 47];
+        let mut seed = [0u8; 256];
         seed[0] = 1;
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
