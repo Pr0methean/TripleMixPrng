@@ -62,7 +62,8 @@ impl SeedableRng for TripleMixPrng {
                 // 2. Clone the master_hasher to prevent "polluting" the prefix state 
                 //    with lane-specific domain strings or retry counters.
                 let mut lane_hasher = master_hasher.clone();
-                lane_hasher.write(format!("TripleMix V10 Lane {}", i).as_bytes());
+                lane_hasher.write(b"TripleMix V11 Lane ");
+                lane_hasher.write(&[i as u8]);
                 if count > 0 {
                     lane_hasher.write(&count.to_ne_bytes());
                 }
