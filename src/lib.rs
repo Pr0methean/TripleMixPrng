@@ -59,16 +59,11 @@ impl SeedableRng for TripleMixPrng {
             
             // 1. Absorb only the NEW 64-byte chunk into the master hasher
             master_hasher.write(&seed[i * 64 .. (i + 1) * 64]);
-            
+            // 2. Clone the master_hasher to prevent "polluting" the prefix state
+            //    with lane-specific domain strings or retry counters.
+            let mut lane_hasher = master_hasher.clone();
+            lane_hasher.write(&[i as u8]);
             loop {
-                // 2. Clone the master_hasher to prevent "polluting" the prefix state 
-                //    with lane-specific domain strings or retry counters.
-                let mut lane_hasher = master_hasher.clone();
-                lane_hasher.write(&[i as u8]);
-                if count > 0 {
-                    lane_hasher.write(&count.to_ne_bytes());
-                }
-                
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
 
@@ -77,6 +72,7 @@ impl SeedableRng for TripleMixPrng {
                 
                 // Rejection sampling for trap states
                 if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
+                    lane_hasher.write(&count.to_ne_bytes());
                     count += 1;
                     continue;
                 }
