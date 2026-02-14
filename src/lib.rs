@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_equivalence() {
-        let mut seed = [0u8; 256];
+        let seed = [0u8; 256];
         let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
         
