@@ -104,8 +104,8 @@ impl SeedableRng for TripleMixPrng {
     /// This is an O(1) operation that avoids the expensive SHAKE256 seeding process.
     fn fork(&mut self) -> Self {
         let mut entropy = [0u64; 32];
-        for i in 0..32 {
-            entropy[i] = self.next_u64();
+        for entry in entropy.iter_mut() {
+            *entry = self.next_u64();
         }
 
         let mut child_core = self.0.core.clone();
