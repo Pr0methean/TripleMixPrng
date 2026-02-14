@@ -6,6 +6,7 @@ use rs_shake256::{Shake256Hasher};
 use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
 use std::hash::Hasher;
 use std::hint::unlikely;
+use std::mem::swap;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_core::block::{BlockRng, Generator};
 use std::simd::*;
@@ -192,11 +193,11 @@ impl Generator for TripleMixSimdCore {
 
         const ONES: Simd<u64, 4> = u64x4::splat(1);
         const ZEROES: Simd<u64, 4> = u64x4::splat(0);
-        const TINYMT64_SH3: Simd<u64, 4> = u64x4::splat(55);
-        const TINYMT64_SH4: Simd<u64, 4> = u64x4::splat(9);
-        const TINYMT64_SH5: Simd<u64, 4> = u64x4::splat(14);
-        const TINYMT64_SH6: Simd<u64, 4> = u64x4::splat(36);
-        const TINYMT64_SH7: Simd<u64, 4> = u64x4::splat(28);
+        const XORSHIFT_SH1: Simd<u64, 4> = u64x4::splat(55);
+        const XORSHIFT_SH1_REVERSE: Simd<u64, 4> = u64x4::splat(9);
+        const XORSHIFT_SH2: Simd<u64, 4> = u64x4::splat(14);
+        const XORSHIFT_SH3: Simd<u64, 4> = u64x4::splat(36);
+        const XORSHIFT_SH3_REVERSE: Simd<u64, 4> = u64x4::splat(28);
         const MIX_SHIFT_1: Simd<u64, 4> = u64x4::splat(23);
         const MIX_SHIFT_1_REVERSE: Simd<u64, 4> = u64x4::splat(41);
         const MIX_SHIFT_2: Simd<u64, 4> = u64x4::splat(33);
@@ -214,11 +215,13 @@ impl Generator for TripleMixSimdCore {
             w_hi = w_hi + i_hi + carry;
             w_lo = next_w_lo;
 
+            // Xoroshiro update
             let b_l1 = xr0 + xr1;
             let t = xr0 ^ xr1;
-            xr0 = ((xr0 << TINYMT64_SH3) | (xr0 >> TINYMT64_SH4)) ^ t ^ (t << TINYMT64_SH5);
-            xr1 = (t << TINYMT64_SH6) | (t >> TINYMT64_SH7);
+            xr0 = ((xr0 << XORSHIFT_SH1) | (xr0 >> XORSHIFT_SH1_REVERSE)) ^ t ^ (t << XORSHIFT_SH2);
+            xr1 = (t << XORSHIFT_SH3) | (t >> XORSHIFT_SH3_REVERSE);
 
+            // TinyMT64 update
             tm0 &= TINYMT64_MASK;
             let mut x = tm0 ^ tm1;
             x ^= x << TINYMT64_SH0;
@@ -251,12 +254,10 @@ impl Generator for TripleMixSimdCore {
                 let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
                 h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
 
-                let tr0 = cur_r0;
-                let tr1 = cur_r1;
-                cur_r0 = cur_l0 ^ h0;
-                cur_r1 = cur_l1 ^ h1;
-                cur_l0 = tr0;
-                cur_l1 = tr1;
+                swap(&mut cur_r0, &mut cur_l0);
+                swap(&mut cur_r1, &mut cur_l1);
+                cur_r0 ^= h0;
+                cur_r1 ^= h1;
 
                 match r {
                     0 => { cur_r1 = simd_swizzle!(cur_r1, [3, 0, 1, 2]); }
