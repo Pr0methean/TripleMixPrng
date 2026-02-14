@@ -1,0 +1,27 @@
+    Checking triple_mix_prng v0.1.0 (C:\Users\cryoc\RustroverProjects\TripleMixPrng)
+error[E0599]: no method named `simd_lt` found for struct `Simd<T, N>` in the current scope
+   --> src\lib.rs:124:35
+    |
+124 |             let carry = next_w_lo.simd_lt(w_lo).select(u64x4::splat(1), u64x4::splat(0));
+    |                                   ^^^^^^^
+    |
+   ::: C:\Users\cryoc\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\..\..\portable-simd\crates\core_simd\src\simd\cmp\ord.rs:11:8
+    |
+ 11 |     fn simd_lt(self, other: Self) -> Self::Mask;
+    |        ------- the method is available for `Simd<u64, 4>` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `SimdPartialOrd` which provides `simd_lt` is implemented but not in scope; perhaps you want to import it
+    |
+  3 + use std::simd::cmp::SimdPartialOrd;
+    |
+help: there is a method `simd_gt` with a similar name
+    |
+124 -             let carry = next_w_lo.simd_lt(w_lo).select(u64x4::splat(1), u64x4::splat(0));
+124 +             let carry = next_w_lo.simd_gt(w_lo).select(u64x4::splat(1), u64x4::splat(0));
+    |
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `triple_mix_prng` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `triple_mix_prng` (lib test) due to 1 previous error

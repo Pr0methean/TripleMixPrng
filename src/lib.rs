@@ -50,6 +50,7 @@ impl SeedableRng for TripleMixPrng {
         let mut i_hi_s = [0u64; 4];
 
         let mut master_hasher = Shake256Hasher::<64>::default();
+        master_hasher.write(b"TripleMix V11");
 
         for i in 0..4 {
             let mut buf = [0u8; 64];
@@ -62,7 +63,6 @@ impl SeedableRng for TripleMixPrng {
                 // 2. Clone the master_hasher to prevent "polluting" the prefix state 
                 //    with lane-specific domain strings or retry counters.
                 let mut lane_hasher = master_hasher.clone();
-                lane_hasher.write(b"TripleMix V11 Lane ");
                 lane_hasher.write(&[i as u8]);
                 if count > 0 {
                     lane_hasher.write(&count.to_ne_bytes());
