@@ -53,7 +53,6 @@ impl SeedableRng for TripleMixPrng {
         master_hasher.write(b"TripleMix V11");
 
         for i in 0..4 {
-            let mut buf = [0u8; 64];
             let mut count: u128 = 0;
             
             // 1. Absorb only the NEW 64-byte chunk into the master hasher
@@ -70,13 +69,12 @@ impl SeedableRng for TripleMixPrng {
                 
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
-                buf.copy_from_slice(out_bytes);
 
                 // Extract states for current lane
-                let x0 = u64::from_ne_bytes(buf[0..8].try_into().unwrap());
-                let x1 = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
-                let t0 = u64::from_ne_bytes(buf[16..24].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
-                let t1 = u64::from_ne_bytes(buf[24..32].try_into().unwrap());
+                let x0 = u64::from_ne_bytes(out_bytes[0..8].try_into().unwrap());
+                let x1 = u64::from_ne_bytes(out_bytes[8..16].try_into().unwrap());
+                let t0 = u64::from_ne_bytes(out_bytes[16..24].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
+                let t1 = u64::from_ne_bytes(out_bytes[24..32].try_into().unwrap());
                 
                 // Rejection sampling for trap states
                 if (x0 == 0 && x1 == 0) || (t0 == 0 && t1 == 0) {
@@ -88,10 +86,10 @@ impl SeedableRng for TripleMixPrng {
                 xr1_s[i] = x1;
                 tm0_s[i] = t0;
                 tm1_s[i] = t1;
-                w_lo_s[i] = u64::from_ne_bytes(buf[32..40].try_into().unwrap());
-                w_hi_s[i] = u64::from_ne_bytes(buf[40..48].try_into().unwrap());
-                i_lo_s[i] = u64::from_ne_bytes(buf[48..56].try_into().unwrap()) | 1;
-                i_hi_s[i] = u64::from_ne_bytes(buf[56..64].try_into().unwrap());
+                w_lo_s[i] = u64::from_ne_bytes(out_bytes[32..40].try_into().unwrap());
+                w_hi_s[i] = u64::from_ne_bytes(out_bytes[40..48].try_into().unwrap());
+                i_lo_s[i] = u64::from_ne_bytes(out_bytes[48..56].try_into().unwrap()) | 1;
+                i_hi_s[i] = u64::from_ne_bytes(out_bytes[56..64].try_into().unwrap());
                 break;
             }
         }
