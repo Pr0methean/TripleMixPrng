@@ -31,6 +31,10 @@ impl TripleMixSimdCore {
 #[derive(Clone)]
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 
+impl TripleMixPrng {
+    pub const SEED_SIZE: usize = 256;
+}
+
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, typenum::U256>;
 
@@ -247,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut seed = [0u8; 256];
+        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
         seed[0] = 1;
         let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
         let mut frequencies = [0u32; u8::MAX as usize + 1];
@@ -262,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut seed = [0u8; 256];
+        let mut seed = [0u8; super::TripleMixPrng::SEED_SIZE];
         seed[0] = 1;
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
@@ -277,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut seed = [0u8; 256];
+        let mut seed = [0u8; super::TripleMixPrng::SEED_SIZE];
         seed[0] = 1;
         let mut prng = TripleMixPrng::from_seed(GenericArray::from_array(seed));
         let mut samples = vec![0u64; 1 << 24];
