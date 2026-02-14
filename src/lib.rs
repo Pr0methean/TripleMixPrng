@@ -6,11 +6,11 @@ use rs_shake256::{Shake256Hasher};
 use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
 use std::hash::Hasher;
 use std::hint::unlikely;
-use rand_core::{SeedableRng, TryRng};
+use rand_core::{Rng, SeedableRng, TryRng};
 use rand_core::block::{BlockRng, Generator};
 use std::simd::*;
 use std::simd::num::SimdUint;
-use std::simd::cmp::SimdPartialOrd;
+use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
@@ -96,6 +96,54 @@ impl SeedableRng for TripleMixPrng {
             inc_hi: u64x4::from_array(i_hi_s),
         };
         TripleMixPrng(BlockRng::new(core))
+    }
+
+
+    /// Splits the PRNG into two independent instances.
+    /// The current instance remains valid, and a new one is returned.
+    /// This is an O(1) operation that avoids the expensive SHAKE256 seeding process.
+    fn fork(&mut self) -> Self {
+        let mut entropy = [0u64; 32];
+        for i in 0..32 {
+            entropy[i] = self.next_u64();
+        }
+
+        let mut child_core = self.0.core.clone();
+
+        // 1. Unique Increments: Replace the child's Weyl increments with new entropy.
+        // We ensure inc_lo is odd to guarantee a full-period 128-bit Weyl sequence.
+        let inc_lo = [
+            entropy[0] | 1, entropy[1] | 1, entropy[2] | 1, entropy[3] | 1
+        ];
+        let inc_hi = [
+            entropy[4], entropy[5], entropy[6], entropy[7]
+        ];
+        child_core.inc_lo = u64x4::from_array(inc_lo);
+        child_core.inc_hi = u64x4::from_array(inc_hi);
+
+        // 2. State Masking: XOR the remaining entropy into the existing states.
+        // This ensures the child instance starts at a completely different point in the state space.
+        child_core.xr0 ^= u64x4::from_array([entropy[8], entropy[9], entropy[10], entropy[11]]);
+        child_core.xr1 ^= u64x4::from_array([entropy[12], entropy[13], entropy[14], entropy[15]]);
+        child_core.tm0 ^= u64x4::from_array([entropy[16], entropy[17], entropy[18], entropy[19]]);
+        child_core.tm1 ^= u64x4::from_array([entropy[20], entropy[21], entropy[22], entropy[23]]);
+        child_core.weyl_lo ^= u64x4::from_array([entropy[24], entropy[25], entropy[26], entropy[27]]);
+        child_core.weyl_hi ^= u64x4::from_array([entropy[28], entropy[29], entropy[30], entropy[31]]);
+
+        // 3. Rejection Check (TinyMT / Xoroshiro protection)
+        // Ensure no lane ended up in an all-zero trap state.
+        let xr_zero = (child_core.xr0 | child_core.xr1).simd_eq(u64x4::splat(0));
+        let tm_zero = (child_core.tm0 | child_core.tm1).simd_eq(u64x4::splat(0));
+
+        if unlikely(xr_zero.any() || tm_zero.any()) {
+            // In the astronomical event of a zero-trap, we just fallback to full re-seeding
+            // to maintain absolute robustness.
+            let mut seed = [0u8; 256];
+            self.0.fill_bytes(&mut seed);
+            return Self::from_seed(GenericArray::from(seed));
+        }
+
+        TripleMixPrng(BlockRng::new(child_core))
     }
 }
 
