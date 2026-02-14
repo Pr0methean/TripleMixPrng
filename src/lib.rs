@@ -7,11 +7,12 @@ use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
 use std::hash::Hasher;
 use std::hint::unlikely;
 use std::mem::swap;
-use rand_core::{Rng, SeedableRng, TryRng};
+use rand_core::{SeedableRng, TryRng};
 use rand_core::block::{BlockRng, Generator};
 use std::simd::*;
 use std::simd::num::SimdUint;
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use rand::RngExt;
 use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
@@ -101,9 +102,7 @@ impl SeedableRng for TripleMixPrng {
     /// This is an O(1) operation that avoids the expensive SHAKE256 seeding process.
     fn fork(&mut self) -> Self {
         let mut entropy = [0u64; 32];
-        for entry in entropy.iter_mut() {
-            *entry = self.next_u64();
-        }
+        self.fill(&mut entropy);
 
         let mut child_core = self.0.core.clone();
 
