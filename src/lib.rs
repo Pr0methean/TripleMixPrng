@@ -26,9 +26,9 @@ pub struct TripleMixSimdCore {
 }
 
 impl TripleMixSimdCore {
-    const TINYMT_MAT1: u32 = 0xdaa51b54;
-    const TINYMT_MAT2: u32 = 0xfed47fb5;
-    const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
+    const TINYMT_MAT1: u64x4 = u64x4::splat(0xdaa51b54);
+    const TINYMT_MAT2: u64x4 = u64x4::splat(0xfed47fb5 << 32);
+    const TINYMT_TMAT: u64x4 = u64x4::splat(0xa853e7ffeffefffe);
 }
 
 #[derive(Clone)]
@@ -169,11 +169,17 @@ impl Generator for TripleMixSimdCore {
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEYS: [u64; 4] = [0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9, 0x94D049BB133111EB, 0xFF51AFD7ED558CCD];
-        const TINYMT64_SH0: u64 = 12;
-        const TINYMT64_SH1: u64 = 11;
-        const TINYMT64_SH8: u64 = 8;
-        const TINYMT64_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
+        const FEISTEL_KEYS: [u64x4; 4] = [
+            u64x4::splat(0x9E3779B97F4A7C15),
+            u64x4::splat(0xBF58476D1CE4E5B9),
+            u64x4::splat(0x94D049BB133111EB),
+            u64x4::splat(0xFF51AFD7ED558CCD)
+        ];
+        const TINYMT64_SH0: u64x4 = u64x4::splat(12);
+        const TINYMT64_SH1: u64x4 = u64x4::splat(11);
+        const TINYMT64_SH2: u64x4 = u64x4::splat(32);
+        const TINYMT64_SH8: u64x4 = u64x4::splat(8);
+        const TINYMT64_MASK: u64x4 = u64x4::splat(0x7fff_ffff_ffff_ffff_u64);
 
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
@@ -184,6 +190,19 @@ impl Generator for TripleMixSimdCore {
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
 
+        const ONES: Simd<u64, 4> = u64x4::splat(1);
+        const ZEROES: Simd<u64, 4> = u64x4::splat(0);
+        const TINYMT64_SH3: Simd<u64, 4> = u64x4::splat(55);
+        const TINYMT64_SH4: Simd<u64, 4> = u64x4::splat(9);
+        const TINYMT64_SH5: Simd<u64, 4> = u64x4::splat(14);
+        const TINYMT64_SH6: Simd<u64, 4> = u64x4::splat(36);
+        const TINYMT64_SH7: Simd<u64, 4> = u64x4::splat(28);
+        const MIX_SHIFT_1: Simd<u64, 4> = u64x4::splat(23);
+        const MIX_SHIFT_1_REVERSE: Simd<u64, 4> = u64x4::splat(41);
+        const MIX_SHIFT_2: Simd<u64, 4> = u64x4::splat(33);
+        const MIX_SHIFT_2_REVERSE: Simd<u64, 4> = u64x4::splat(31);
+        const MIX_SHIFT_3: Simd<u64, 4> = u64x4::splat(29);
+        const MIX_SHIFT_3_REVERSE: Simd<u64, 4> = u64x4::splat(35);
         for step in 0..4 {
             // 1. Source Generation
             let b_l0 = w_lo;
@@ -191,31 +210,31 @@ impl Generator for TripleMixSimdCore {
             
             // 128-bit Weyl Update: w += inc
             let next_w_lo = w_lo + i_lo;
-            let carry = next_w_lo.simd_lt(w_lo).select(u64x4::splat(1), u64x4::splat(0));
+            let carry = next_w_lo.simd_lt(w_lo).select(ONES, ZEROES);
             w_hi = w_hi + i_hi + carry;
             w_lo = next_w_lo;
 
             let b_l1 = xr0 + xr1;
             let t = xr0 ^ xr1;
-            xr0 = ((xr0 << u64x4::splat(55)) | (xr0 >> u64x4::splat(9))) ^ t ^ (t << u64x4::splat(14));
-            xr1 = (t << u64x4::splat(36)) | (t >> u64x4::splat(28));
+            xr0 = ((xr0 << TINYMT64_SH3) | (xr0 >> TINYMT64_SH4)) ^ t ^ (t << TINYMT64_SH5);
+            xr1 = (t << TINYMT64_SH6) | (t >> TINYMT64_SH7);
 
-            tm0 &= u64x4::splat(TINYMT64_MASK);
+            tm0 &= TINYMT64_MASK;
             let mut x = tm0 ^ tm1;
-            x ^= x << u64x4::splat(TINYMT64_SH0);
-            x ^= x >> u64x4::splat(32);
-            x ^= x << u64x4::splat(32);
-            x ^= x << u64x4::splat(TINYMT64_SH1);
+            x ^= x << TINYMT64_SH0;
+            x ^= x >> TINYMT64_SH2;
+            x ^= x << TINYMT64_SH2;
+            x ^= x << TINYMT64_SH1;
             
-            let mask = (x & u64x4::splat(1)).wrapping_neg();
-            let next_tm0 = tm1 ^ (mask & u64x4::splat(Self::TINYMT_MAT1 as u64));
-            let next_tm1 = x ^ (mask & u64x4::splat((Self::TINYMT_MAT2 as u64) << 32));
+            let mask = (x & ONES).wrapping_neg();
+            let next_tm0 = tm1 ^ (mask & Self::TINYMT_MAT1);
+            let next_tm1 = x ^ (mask & Self::TINYMT_MAT2);
             tm0 = next_tm0;
             tm1 = next_tm1;
 
             let mut ty = tm0 + tm1;
-            ty ^= tm0 >> u64x4::splat(TINYMT64_SH8);
-            let b_r0 = ty ^ ((ty & u64x4::splat(1)).wrapping_neg() & u64x4::splat(Self::TINYMT_TMAT));
+            ty ^= tm0 >> TINYMT64_SH8;
+            let b_r0 = ty ^ ((ty & ONES).wrapping_neg() & Self::TINYMT_TMAT);
 
             // 2. Mixing
             let mut cur_l0 = b_l0;
@@ -224,13 +243,13 @@ impl Generator for TripleMixSimdCore {
             let mut cur_r1 = b_r1;
 
             for r in 0..4 {
-                let m0 = cur_r0 ^ ((cur_r1 >> u64x4::splat(23)) | (cur_r1 << u64x4::splat(41)));
-                let mut h0 = m0 * u64x4::splat(FEISTEL_KEYS[r]);
-                h0 ^= (h0 >> u64x4::splat(31)) | (h0 << u64x4::splat(33));
+                let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
+                let mut h0 = m0 * FEISTEL_KEYS[r];
+                h0 ^= (h0 >> MIX_SHIFT_2_REVERSE) | (h0 << MIX_SHIFT_2);
 
-                let m1 = cur_r1 ^ ((cur_r0 >> u64x4::splat(33)) | (cur_r0 << u64x4::splat(31)));
-                let mut h1 = m1 * u64x4::splat(FEISTEL_KEYS[(r+1)%4]);
-                h1 ^= (h1 >> u64x4::splat(29)) | (h1 << u64x4::splat(35));
+                let m1 = cur_r1 ^ ((cur_r0 >> MIX_SHIFT_2) | (cur_r0 << MIX_SHIFT_2_REVERSE));
+                let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
+                h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
 
                 let tr0 = cur_r0;
                 let tr1 = cur_r1;
