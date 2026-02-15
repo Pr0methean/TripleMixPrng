@@ -376,13 +376,18 @@ mod tests {
 
     #[test]
     fn test_fork_independence() {
-        let mut random = HashSet::with_capacity(256);
+        const SAMPLES_PER_FORK: usize = 32;
+        const FORKS: usize = 64;
+        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         let seed = [0u8; 256];
         let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
-        for _ in 0..64 {
-            for _ in 0..4 {
-                assert!(random.insert(prng.next_u64()));
+        for _ in 0..FORKS {
+            for _ in 0..SAMPLES_PER_FORK {
+                let next = prng.next_u64();
+                print!("{next:016X}");
+                assert!(random.insert(next));
             }
+            println!();
             prng = prng.fork();
         }
     }
