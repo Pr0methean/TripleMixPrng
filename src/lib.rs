@@ -531,6 +531,12 @@ mod tests {
                         let mut output2 = [0u64; OUTPUT_LEN];
                         core2.generate(&mut output2);
 
+                        // Check for similar states leading to related outputs
+                        for cell in 1..OUTPUT_LEN {
+                            assert_ne!(output2[cell].wrapping_sub(output2[0]), output1[cell].wrapping_sub(output1[0]));
+                            assert_ne!(output2[cell] ^ output2[0], output1[cell] ^ output1[0]);
+                        }
+
                         let mut flips = 0;
                         for i in 0..OUTPUT_LEN {
                             flips += (output1[i] ^ output2[i]).count_ones();
