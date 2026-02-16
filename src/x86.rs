@@ -5,9 +5,7 @@ use std::simd::Simd;
 #[target_feature(enable = "avx2")]
 pub unsafe fn simd_u64x4_to_m256i(x: Simd<u64, 4>) -> __m256i {
     let arr = x.to_array();
-    unsafe {
-        _mm256_loadu_si256(arr.as_ptr() as *const __m256i)
-    }
+    unsafe { _mm256_loadu_si256(arr.as_ptr() as *const __m256i) }
 }
 
 /*
@@ -24,7 +22,10 @@ pub unsafe fn m256i_to_simd_u64x4(x: __m256i) -> Simd<u64, 4> {
 
 #[inline(always)]
 #[target_feature(enable = "avx2")]
-unsafe fn rotl_u64x4_avx2<const K: i32>(x: __m256i) -> __m256i where [(); (64 - K) as usize]: {
+unsafe fn rotl_u64x4_avx2<const K: i32>(x: __m256i) -> __m256i
+where
+    [(); (64 - K) as usize]:,
+{
     // rotate_left per 64-bit lane: (x<<k) | (x>>(64-k))
     // (k must be 0<k<64 in your usage)
     let l = _mm256_slli_epi64(x, K);
@@ -57,9 +58,7 @@ unsafe fn mullo_u64x4_avx2(a: __m256i, b: __m256i) -> __m256i {
 #[inline(always)]
 unsafe fn mullo_u64x4_const_avx2(a: __m256i, c: u64) -> __m256i {
     let bc = _mm256_set1_epi64x(c as i64);
-    unsafe {
-        mullo_u64x4_avx2(a, bc)
-    }
+    unsafe { mullo_u64x4_avx2(a, bc) }
 }
 
 #[target_feature(enable = "avx2")]
@@ -101,10 +100,18 @@ pub unsafe fn permute_u64x4_avx2<const IMM8: i32>(x: __m256i) -> __m256i {
 
 #[target_feature(enable = "avx2")]
 #[inline(always)]
-pub unsafe fn finish_and_store_u64x4( l0: __m256i, l1: __m256i, r0: __m256i, r1: __m256i, output: &mut [u64], step: usize ) { // res = (r0 ^ l0) + (r1 ^ !l1)
-        unsafe {
+pub unsafe fn finish_and_store_u64x4(
+    l0: __m256i,
+    l1: __m256i,
+    r0: __m256i,
+    r1: __m256i,
+    output: &mut [u64],
+    step: usize,
+) {
+    // res = (r0 ^ l0) + (r1 ^ !l1)
+    unsafe {
         let t0 = _mm256_xor_si256(r0, l0);
-        let ones = _mm256_set1_epi64x(-1);      // all bits set
+        let ones = _mm256_set1_epi64x(-1); // all bits set
         let not_l1 = _mm256_xor_si256(l1, ones); // bitwise NOT
         let t1 = _mm256_xor_si256(r1, not_l1);
 

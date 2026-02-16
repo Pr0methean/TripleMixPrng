@@ -1,7 +1,6 @@
-
 use generic_array::GenericArray;
 use rand_core::{SeedableRng, TryRng};
-use triple_mix_prng::TripleMixPrng; 
+use triple_mix_prng::TripleMixPrng;
 
 #[test]
 fn test_seed_diffusion() {
@@ -18,7 +17,10 @@ fn test_seed_diffusion() {
             let mut rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
             let start_val2 = rng2.try_next_u64().unwrap();
 
-            assert_ne!(start_val1, start_val2, "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure.");
+            assert_ne!(
+                start_val1, start_val2,
+                "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure."
+            );
             assert_ne!(start_val1, 0, "Output shouldn't be zero");
         }
     }
