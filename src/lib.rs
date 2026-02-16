@@ -31,6 +31,12 @@ impl TripleMixSimdCore {
     const TINYMT_MAT1: u64x4 = u64x4::splat(0xdaa51b54);
     const TINYMT_MAT2: u64x4 = u64x4::splat(0xfed47fb5 << 32);
     const TINYMT_TMAT: u64x4 = u64x4::splat(0xa853e7ffeffefffe);
+    const LANE_MASK: u64x4 = u64x4::from_array(
+        [0x3243_f6a8_885a_308d,
+            0x3131_98a2_e037_0734,
+            0x4a40_9382_2299_f31d,
+            0x0082_efa9_8ec4_e6c8]
+    );
 }
 
 #[derive(Clone)]
@@ -253,12 +259,12 @@ impl Generator for TripleMixSimdCore {
 
             for r in 0..4 {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
-                let mut h0 = m0 * FEISTEL_KEYS[r];
+                let mut h0 = (m0 + Self::LANE_MASK) * FEISTEL_KEYS[r];
                 h0 ^= (h0 >> MIX_SHIFT_2_REVERSE) | (h0 << MIX_SHIFT_2);
                 // h0[0] = h0[0].reverse_bits();
 
                 let m1 = cur_r1 ^ ((cur_r0 >> MIX_SHIFT_2) | (cur_r0 << MIX_SHIFT_2_REVERSE));
-                let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
+                let mut h1 = (m1 + Self::LANE_MASK) * FEISTEL_KEYS[(r+1)%4];
                 h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
                 // h1[3] = h1[3].swap_bytes();
 
@@ -303,23 +309,22 @@ mod tests {
     use rand_core::{Rng, SeedableRng};
 
     fn almost_all_zeroes_state() -> TripleMixPrng {
-        TripleMixPrng(TripleMixSimdCore {
+        TripleMixPrng(BlockRng::new(TripleMixSimdCore {
             xr0: ZEROES,
             xr1: ONES,
 
             tm0: ZEROES,
-            tm1: Default::default(),
-            weyl_lo: Default::default(),
-            weyl_hi: Default::default(),
-            inc_lo: Default::default(),
-            inc_hi: Default::default(),
-        })
+            tm1: ONES,
+            weyl_lo: ZEROES,
+            weyl_hi: ZEROES,
+            inc_lo: ONES,
+            inc_hi: ZEROES,
+        }))
     }
 
     #[test]
     fn test_byte_frequencies() {
-        let seed = [0u8; 256];
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = almost_all_zeroes_state();
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let byte: u8 = prng.random();
@@ -332,8 +337,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let seed = [0u8; 256];
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = almost_all_zeroes_state();
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let word: u16 = prng.random();
@@ -346,14 +350,13 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let seed = [0u8; 256];
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = almost_all_zeroes_state();
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
         let mut highest_bin = 0;
         for i in 0..=62 {
-            for j in (i+1)..=63 {
+            for j in (i + 1)..=63 {
                 let mut bins = [0u64; 4];
                 for sample in &samples {
                     bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
@@ -389,16 +392,16 @@ mod tests {
         let seed = [0u8; 256];
         let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        
+
         let mut buf1 = vec![0u8; 1024];
         prng1.fill_bytes(&mut buf1);
-        
+
         let mut buf2 = vec![0u8; 1024];
         for chunk in buf2.chunks_exact_mut(8) {
             let val = prng2.next_u64();
             chunk.copy_from_slice(&val.to_ne_bytes());
         }
-        
+
         assert_eq!(buf1, buf2);
     }
 
@@ -407,8 +410,7 @@ mod tests {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        let seed = [0u8; 256];
-        let mut prng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng = almost_all_zeroes_state();
         for _ in 0..FORKS {
             for _ in 0..SAMPLES_PER_FORK {
                 let next = prng.next_u64();
@@ -425,9 +427,9 @@ mod tests {
         let mut core = rng.0.core.clone();
 
         const OUTPUT_LEN: usize = 16;
-        
+
         let iterations = 20; // 20 iterations * 2048 bits = 40,960 checks.
-        
+
         let mut min_flips = u32::MAX;
         let mut max_flips = 0;
         let mut total_flips: u64 = 0;
@@ -445,25 +447,25 @@ mod tests {
             // We can treat it as [u64; 32] via transmute for the test, 
             // or just iterate fields manually to be safe.
             // Let's use a safe field iterator approach.
-            
+
             // Actually, to flip "every bit", we need to mutate the struct fields.
             // Since they are private, we are in the module, so we can access them.
             // Let's iterate over the 8 fields.
-            
+
             // Wait, we need to clone core for each flip AND mutate the clone.
             // Iterating pointers to a clone is tricky in a loop.
-            
+
             // Better strategy: Serialization/Deserialization or direct access.
             // Let's just use `unsafe` to treat `core` as `[u64; 32]` for bit flipping since `TripleMixSimdCore` is `repr(C)`? No it's not.
             // But it's all u64x4s.
             // Let's just manually iterate the logic.
-            
+
             for field_idx in 0..8 {
                 for lane_idx in 0..4 {
                     for bit_idx in 0usize..64 {
                         // TinyMT tm0 MSB (field_idx 2, bit 63) is masked out.
                         if field_idx == 2 && bit_idx == 63 { continue; }
-                        
+
                         // Weyl Increment Low (field_idx 6) bit 0 must be 1. Flipping it breaks valid state assumption.
                         if field_idx == 6 && bit_idx == 0 { continue; }
 
@@ -474,21 +476,53 @@ mod tests {
 
                         let mut core2 = core.clone();
                         // Mutate specific bit
-                         match field_idx {
-                            0 => { let mut arr = core2.xr0.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.xr0 = u64x4::from_array(arr); }
-                            1 => { let mut arr = core2.xr1.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.xr1 = u64x4::from_array(arr); }
-                            2 => { let mut arr = core2.tm0.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.tm0 = u64x4::from_array(arr); }
-                            3 => { let mut arr = core2.tm1.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.tm1 = u64x4::from_array(arr); }
-                            4 => { let mut arr = core2.weyl_lo.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.weyl_lo = u64x4::from_array(arr); }
-                            5 => { let mut arr = core2.weyl_hi.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.weyl_hi = u64x4::from_array(arr); }
-                            6 => { let mut arr = core2.inc_lo.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.inc_lo = u64x4::from_array(arr); }
-                            7 => { let mut arr = core2.inc_hi.to_array(); arr[lane_idx] ^= 1 << bit_idx; core2.inc_hi = u64x4::from_array(arr); }
+                        match field_idx {
+                            0 => {
+                                let mut arr = core2.xr0.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.xr0 = u64x4::from_array(arr);
+                            }
+                            1 => {
+                                let mut arr = core2.xr1.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.xr1 = u64x4::from_array(arr);
+                            }
+                            2 => {
+                                let mut arr = core2.tm0.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.tm0 = u64x4::from_array(arr);
+                            }
+                            3 => {
+                                let mut arr = core2.tm1.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.tm1 = u64x4::from_array(arr);
+                            }
+                            4 => {
+                                let mut arr = core2.weyl_lo.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.weyl_lo = u64x4::from_array(arr);
+                            }
+                            5 => {
+                                let mut arr = core2.weyl_hi.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.weyl_hi = u64x4::from_array(arr);
+                            }
+                            6 => {
+                                let mut arr = core2.inc_lo.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.inc_lo = u64x4::from_array(arr);
+                            }
+                            7 => {
+                                let mut arr = core2.inc_hi.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.inc_hi = u64x4::from_array(arr);
+                            }
                             _ => unreachable!()
                         }
-                        
+
                         let mut output2 = [0u64; OUTPUT_LEN];
                         core2.generate(&mut output2);
-                        
+
                         let mut flips = 0;
                         for i in 0..OUTPUT_LEN {
                             flips += (output1[i] ^ output2[i]).count_ones();
@@ -501,7 +535,7 @@ mod tests {
                     }
                 }
             }
-            
+
             // Advance state
             let mut dummy = [0u64; OUTPUT_LEN];
             core.generate(&mut dummy);
@@ -512,13 +546,13 @@ mod tests {
             }
         }
         let avg_flips = total_flips as f64 / count as f64;
-        println!("Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}", 
-            count, avg_flips, min_flips, max_flips);
-            
+        println!("Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
+                 count, avg_flips, min_flips, max_flips);
+
         // 512 is ideal. Allow 10% deviation.
         assert!(avg_flips >= 460.0, "Average diffusion too low");
         assert!(avg_flips <= 564.0, "Average diffusion too high?"); // Just sanity
-        
+
         // Critical check: Ensure NO bit flip caused zero diffusion (independence failure)
         // With swizzle fix, min flips is around 337 (33%).
         // We accept this as sufficiently mixed (no obvious blind spots).
