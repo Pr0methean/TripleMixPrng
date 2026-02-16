@@ -63,7 +63,6 @@ unsafe fn mullo_u64x4_const_avx2(a: __m256i, c: u64) -> __m256i {
 
 #[target_feature(enable = "avx2")]
 #[inline(always)]
-#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn feistel_round_avx2(
     l0: &mut __m256i,
     l1: &mut __m256i,
@@ -72,24 +71,26 @@ pub unsafe fn feistel_round_avx2(
     const1: u64,
     const2: u64,
 ) {
-    let m0 = _mm256_xor_si256(*r0, rotl_u64x4_avx2::<23>(*r1));
-    let mut h0 = mullo_u64x4_const_avx2(m0, const1);
-    h0 = _mm256_xor_si256(h0, _mm256_srli_epi64(h0, 31));
+    unsafe {
+        let m0 = _mm256_xor_si256(*r0, rotl_u64x4_avx2::<23>(*r1));
+        let mut h0 = mullo_u64x4_const_avx2(m0, const1);
+        h0 = _mm256_xor_si256(h0, _mm256_srli_epi64(h0, 31));
 
-    let m1 = _mm256_xor_si256(*r1, rotl_u64x4_avx2::<33>(*r0));
-    let mut h1 = _mm256_add_epi64(m1, _mm256_set1_epi64x(const2 as i64));
-    h1 = _mm256_add_epi64(h1, rotl_u64x4_avx2::<29>(h0));
+        let m1 = _mm256_xor_si256(*r1, rotl_u64x4_avx2::<33>(*r0));
+        let mut h1 = _mm256_add_epi64(m1, _mm256_set1_epi64x(const2 as i64));
+        h1 = _mm256_add_epi64(h1, rotl_u64x4_avx2::<29>(h0));
 
-    // swap halves + apply (matches your macro’s dataflow)
-    let nl0 = *r0;
-    let nr0 = _mm256_xor_si256(*l0, h0);
-    let nl1 = *r1;
-    let nr1 = _mm256_xor_si256(*l1, h1);
+        // swap halves + apply (matches your macro’s dataflow)
+        let nl0 = *r0;
+        let nr0 = _mm256_xor_si256(*l0, h0);
+        let nl1 = *r1;
+        let nr1 = _mm256_xor_si256(*l1, h1);
 
-    *l0 = nl0;
-    *r0 = nr0;
-    *l1 = nl1;
-    *r1 = nr1;
+        *l0 = nl0;
+        *r0 = nr0;
+        *l1 = nl1;
+        *r1 = nr1;
+    }
 }
 
 #[target_feature(enable = "avx2")]
