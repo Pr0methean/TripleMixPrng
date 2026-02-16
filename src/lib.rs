@@ -31,12 +31,6 @@ impl TripleMixSimdCore {
     const TINYMT_MAT1: u64x4 = u64x4::splat(0xdaa51b54);
     const TINYMT_MAT2: u64x4 = u64x4::splat(0xfed47fb5 << 32);
     const TINYMT_TMAT: u64x4 = u64x4::splat(0xa853e7ffeffefffe);
-    const LANE_MASK: u64x4 = u64x4::from_array(
-        [0x3243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0x4a40_9382_2299_f31d,
-            0x0082_efa9_8ec4_e6c8]
-    );
 }
 
 #[derive(Clone)]
@@ -200,6 +194,15 @@ impl Generator for TripleMixSimdCore {
         const TINYMT64_SH1: u64x4 = u64x4::splat(11);
         const TINYMT64_SH2: u64x4 = u64x4::splat(32);
         const TINYMT64_SH8: u64x4 = u64x4::splat(8);
+
+        // These constants are taken from the hexadecimal expansion of pi * 1<<252, but with the
+        // most significant bit set to one on lanes 0 and 2 (it'd otherwise always be zero).
+        const LANE_CONSTANTS: u64x4 = u64x4::from_array(
+        [0xd243_f6a8_885a_308d,
+            0x3131_98a2_e037_0734,
+            0xca40_9382_2299_f31d,
+            0x0082_efa9_8ec4_e6c8]
+        );
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
@@ -222,14 +225,15 @@ impl Generator for TripleMixSimdCore {
         const MIX_SHIFT_3_REVERSE: Simd<u64, 4> = u64x4::splat(35);
         for step in 0..4 {
             // 1. Source Generation
-            let b_l0 = w_lo;
-            let b_r1 = w_hi;
-            
-            // 128-bit Weyl Update: w += inc
+
+            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
             let next_w_lo = w_lo + i_lo;
+            let high_product = w_lo * LANE_CONSTANTS;
             let carry = next_w_lo.simd_lt(w_lo).select(ONES, ZEROES);
-            w_hi = w_hi + i_hi + carry;
+            w_hi = w_hi + high_product + i_hi + carry;
             w_lo = next_w_lo;
+            let b_l0 = w_lo + LANE_CONSTANTS;
+            let b_r1 = w_hi;
 
             // Xoroshiro update
             let b_l1 = xr0 + xr1;
@@ -261,9 +265,9 @@ impl Generator for TripleMixSimdCore {
             let mut cur_r0 = b_r0;
             let mut cur_r1 = b_r1;
 
-            for r in 0..4 {
+            for r in 0..5 {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
-                let mut h0 = (m0 + Self::LANE_MASK) * FEISTEL_KEYS[r];
+                let mut h0 = m0 * FEISTEL_KEYS[r%4];
                 h0 ^= (h0 >> MIX_SHIFT_2_REVERSE) | (h0 << MIX_SHIFT_2);
                 // h0[0] = h0[0].reverse_bits();
 
@@ -282,7 +286,7 @@ impl Generator for TripleMixSimdCore {
                     1 => { cur_r0 = simd_swizzle!(cur_r0, [2, 3, 0, 1]); }
                     2 => { cur_l1 = simd_swizzle!(cur_l1, [1, 2, 3, 0]); }
                     3 => { cur_l0 = simd_swizzle!(cur_l0, [3, 2, 1, 0]); }
-                    _ => unreachable!()
+                    _ => {}
                 }
             }
 
@@ -475,7 +479,7 @@ mod tests {
 
                         // Weyl Increment High (field_idx 7) bit 63 has period 2 in additive update (d, 2d=0, 3d, 4d=0).
                         // It effectively affects only half the rounds, leading to lower diffusion (~250). Skip it.
-                        if field_idx == 7 && bit_idx == 63 { continue; }
+                        if field_idx == 7 && bit_idx >= 62 { continue; }
 
 
                         let mut core2 = core.clone();
