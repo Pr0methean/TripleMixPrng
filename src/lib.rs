@@ -328,11 +328,6 @@ impl Generator for TripleMixSimdCore {
                 not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
             )))]
             {
-                #[inline(always)]
-                fn rotl(x: Simd<u64, 4>, k: u32) -> Simd<u64, 4> {
-                    (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
-                }
-
                 macro_rules! feistel_round {
                     ($const1:expr, $const2:expr) => {{
                         let m0 = r0_s ^ rotl(r1_s, 23);
