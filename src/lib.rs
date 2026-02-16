@@ -416,7 +416,7 @@ mod tests {
             repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
             0.01,
         )
-            .unwrap();
+        .unwrap();
         println!("{:?}", chi_square);
         assert!(!chi_square.reject_null);
     }
@@ -434,7 +434,7 @@ mod tests {
             repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
             0.01,
         )
-            .unwrap();
+        .unwrap();
         println!("{:?}", chi_square);
         assert!(!chi_square.reject_null);
     }
