@@ -74,7 +74,7 @@ impl SeedableRng for TripleMixPrng {
         // This ensures every lane depends on every bit of the 2048-bit seed.
         master_hasher.write(&seed);
 
-        for i in 0..4 {
+        for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
             // 2. Clone the master_hasher to prevent "polluting" the prefix state
             //    with lane-specific domain strings or retry counters.
@@ -270,7 +270,7 @@ impl Generator for TripleMixSimdCore {
             let mut cur_r0 = b_r0;
             let mut cur_r1 = b_r1;
 
-            for r in 0..SIMD_WIDTH {
+            for r in 0..(SIMD_WIDTH.max(3)) {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
                 let mut h0 = m0 * FEISTEL_KEYS[r%4];
                 h0 ^= h0 >> MIX_SHIFT_2_REVERSE;
@@ -552,7 +552,7 @@ mod tests {
             core.generate(&mut dummy);
         }
         for field_idx in 0..8 {
-            for lane_idx in 0..4 {
+            for lane_idx in 0..SIMD_WIDTH {
                 println!("Field {} lane {}: Flips: {:?}", field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]);
             }
         }
@@ -568,7 +568,7 @@ mod tests {
         // Critical check: Ensure NO bit flip caused zero diffusion (independence failure)
         // With swizzle fix, min flips is around 337 (33%).
         // We accept this as sufficiently mixed (no obvious blind spots).
-        assert!(min_flips > 330, "Minimum diffusion too low, possible blind spot!");
+        assert!(min_flips as usize >= 96 * SIMD_WIDTH, "Minimum diffusion too low, possible blind spot!");
     }
 }
 
