@@ -19,27 +19,27 @@ use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
 pub struct TripleMixSimdCore {
-    pub xr0: u64x8,
-    pub xr1: u64x8,
-    pub tm0: u64x8,
-    pub tm1: u64x8,
-    pub weyl_lo: u64x8,
-    pub weyl_hi: u64x8,
-    pub inc_lo: u64x8,
-    pub inc_hi: u64x8,
+    pub xr0: Simd64,
+    pub xr1: Simd64,
+    pub tm0: Simd64,
+    pub tm1: Simd64,
+    pub weyl_lo: Simd64,
+    pub weyl_hi: Simd64,
+    pub inc_lo: Simd64,
+    pub inc_hi: Simd64,
 }
 
 impl TripleMixSimdCore {
-    const TINYMT_MAT1: u64x8 = u64x8::splat(0xdaa51b54);
-    const TINYMT_MAT2: u64x8 = u64x8::splat(0xfed47fb5 << 32);
-    const TINYMT_TMAT: u64x8 = u64x8::splat(0xa853e7ffeffefffe);
+    const TINYMT_MAT1: Simd64 = Simd64::splat(0xdaa51b54);
+    const TINYMT_MAT2: Simd64 = Simd64::splat(0xfed47fb5 << 32);
+    const TINYMT_TMAT: Simd64 = Simd64::splat(0xa853e7ffeffefffe);
 }
 
 #[derive(Clone)]
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 
-const TINYMT64_MASK: u64x8 = u64x8::splat(TINYMT64_LANE_MASK);
+const TINYMT64_MASK: Simd64 = Simd64::splat(TINYMT64_LANE_MASK);
 
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
@@ -50,8 +50,9 @@ impl TripleMixPrng {
 }
 const SIMD_WIDTH: usize = 8;
 const OUTPUT_LEN: usize = 4 * SIMD_WIDTH;
-const ONES: u64x8 = u64x8::splat(1);
-const ZEROES: u64x8 = u64x8::splat(0);
+type Simd64 = Simd<u64, SIMD_WIDTH>;
+const ONES: Simd64 = Simd64::splat(1);
+const ZEROES: Simd64 = Simd64::splat(0);
 
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
@@ -107,14 +108,14 @@ impl SeedableRng for TripleMixPrng {
         }
 
         let core = TripleMixSimdCore {
-            xr0: u64x8::from_array(xr0_s),
-            xr1: u64x8::from_array(xr1_s),
-            tm0: u64x8::from_array(tm0_s),
-            tm1: u64x8::from_array(tm1_s),
-            weyl_lo: u64x8::from_array(w_lo_s),
-            weyl_hi: u64x8::from_array(w_hi_s),
-            inc_lo: u64x8::from_array(i_lo_s),
-            inc_hi: u64x8::from_array(i_hi_s),
+            xr0: Simd64::from_array(xr0_s),
+            xr1: Simd64::from_array(xr1_s),
+            tm0: Simd64::from_array(tm0_s),
+            tm1: Simd64::from_array(tm1_s),
+            weyl_lo: Simd64::from_array(w_lo_s),
+            weyl_hi: Simd64::from_array(w_hi_s),
+            inc_lo: Simd64::from_array(i_lo_s),
+            inc_hi: Simd64::from_array(i_hi_s),
         };
         TripleMixPrng(BlockRng::new(core))
     }
@@ -189,21 +190,21 @@ impl Generator for TripleMixSimdCore {
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEYS: [u64x8; 4] = [
-            u64x8::splat(0x9E3779B97F4A7C15),
-            u64x8::splat(0xBF58476D1CE4E5B9),
-            u64x8::splat(0x94D049BB133111EB),
-            u64x8::splat(0xFF51AFD7ED558CCD)
+        const FEISTEL_KEYS: [Simd64; 4] = [
+            Simd64::splat(0x9E3779B97F4A7C15),
+            Simd64::splat(0xBF58476D1CE4E5B9),
+            Simd64::splat(0x94D049BB133111EB),
+            Simd64::splat(0xFF51AFD7ED558CCD)
         ];
-        const TINYMT64_SH0: u64x8 = u64x8::splat(12);
-        const TINYMT64_SH1: u64x8 = u64x8::splat(11);
-        const TINYMT64_SH2: u64x8 = u64x8::splat(32);
-        const TINYMT64_SH8: u64x8 = u64x8::splat(8);
+        const TINYMT64_SH0: Simd64 = Simd64::splat(12);
+        const TINYMT64_SH1: Simd64 = Simd64::splat(11);
+        const TINYMT64_SH2: Simd64 = Simd64::splat(32);
+        const TINYMT64_SH8: Simd64 = Simd64::splat(8);
 
         // These constants are taken from the hexadecimal expansion of pi, but with the
         // most significant bit set to one on lanes 0 and 2 (it'd otherwise always be zero).
         // 79216d5d98979fb1bd1310ba698dfb5ac2ffd72dbd01adfb7b8e1afed6a267e96ba7c9045f12c7f9924a19947b3916cf70801f2e2858efc16636920d871574e69a458fea3f4933d7e0d95748f728eb658718bcd5882154aee7b54a41dc25a59b59c30d5392af26013c5d1b023286085f0ca417918b8db38ef8e79dcb0603a180e6c9e0e8bb01e8a3ed71577c1bd314b2778af2fda55605c60e65525f3aa55ab945748986263e8144055ca396a2aab10b6b4cc5c341141e8cea15486af7c72e993b3ee1411636fbc2a2ba9c55d741831f6ce5c3e169b87931eafd6ba336c24cf5c7a325381289586773b8f48986b4bb9afc4bfe81b6628219361d809ccfb21a991487cac605dec8032ef845d5de98575b1dc262302eb651b8823893e81d396acc50f6d6ff383f442392e0b4482a484200469c8f04a9e1f9b5e21c66842f6e96c9a670c9c61abd388f06a51a0d2d8542f68960fa728ab5133a36eef0b6c137a3be4ba3bf0507efb2a98a1f1651d39af017666ca593e82430e888cee8619456f9fb47d84a5c33b8b5ebee06f75d885c12073401a449f56c16aa64ed3aa62363f77061bfedf72429b023d37d0d724d00a1248db0fead349f1c09b075372c980991..._16
-        const LANE_CONSTANTS: u64x8 = u64x8::from_array(
+        const LANE_CONSTANTS: Simd64 = Simd64::from_array(
         [0x3243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
             0x4a40_9382_2299_f31d,
@@ -223,17 +224,17 @@ impl Generator for TripleMixSimdCore {
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
 
-        const XORSHIFT_SH1: u64x8 = u64x8::splat(55);
-        const XORSHIFT_SH1_REVERSE: u64x8 = u64x8::splat(9);
-        const XORSHIFT_SH2: u64x8 = u64x8::splat(14);
-        const XORSHIFT_SH3: u64x8 = u64x8::splat(36);
-        const XORSHIFT_SH3_REVERSE: u64x8 = u64x8::splat(28);
-        const MIX_SHIFT_1: u64x8 = u64x8::splat(23);
-        const MIX_SHIFT_1_REVERSE: u64x8 = u64x8::splat(41);
-        const MIX_SHIFT_2: u64x8 = u64x8::splat(33);
-        const MIX_SHIFT_2_REVERSE: u64x8 = u64x8::splat(31);
-        const MIX_SHIFT_3: u64x8 = u64x8::splat(29);
-        const MIX_SHIFT_3_REVERSE: u64x8 = u64x8::splat(35);
+        const XORSHIFT_SH1: Simd64 = Simd64::splat(55);
+        const XORSHIFT_SH1_REVERSE: Simd64 = Simd64::splat(9);
+        const XORSHIFT_SH2: Simd64 = Simd64::splat(14);
+        const XORSHIFT_SH3: Simd64 = Simd64::splat(36);
+        const XORSHIFT_SH3_REVERSE: Simd64 = Simd64::splat(28);
+        const MIX_SHIFT_1: Simd64 = Simd64::splat(23);
+        const MIX_SHIFT_1_REVERSE: Simd64 = Simd64::splat(41);
+        const MIX_SHIFT_2: Simd64 = Simd64::splat(33);
+        const MIX_SHIFT_2_REVERSE: Simd64 = Simd64::splat(31);
+        const MIX_SHIFT_3: Simd64 = Simd64::splat(29);
+        const MIX_SHIFT_3_REVERSE: Simd64 = Simd64::splat(35);
         for step in 0..4 {
             // 1. Source Generation
 
@@ -454,7 +455,7 @@ mod tests {
 
             // Access core as mutable slice of u64s
             // We need to be careful with safety here or just use a safe introspection if possible.
-            // TripleMixSimdCore has 8 u64x8 fields.
+            // TripleMixSimdCore has 8 Simd64 fields.
             // We can treat it as [u64; 32] via transmute for the test, 
             // or just iterate fields manually to be safe.
             // Let's use a safe field iterator approach.
@@ -468,7 +469,7 @@ mod tests {
 
             // Better strategy: Serialization/Deserialization or direct access.
             // Let's just use `unsafe` to treat `core` as `[u64; 32]` for bit flipping since `TripleMixSimdCore` is `repr(C)`? No it's not.
-            // But it's all u64x8s.
+            // But it's all Simd64s.
             // Let's just manually iterate the logic.
 
             for field_idx in 0..8 {
@@ -491,42 +492,42 @@ mod tests {
                             0 => {
                                 let mut arr = core2.xr0.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr0 = u64x8::from_array(arr);
+                                core2.xr0 = Simd64::from_array(arr);
                             }
                             1 => {
                                 let mut arr = core2.xr1.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr1 = u64x8::from_array(arr);
+                                core2.xr1 = Simd64::from_array(arr);
                             }
                             2 => {
                                 let mut arr = core2.tm0.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm0 = u64x8::from_array(arr);
+                                core2.tm0 = Simd64::from_array(arr);
                             }
                             3 => {
                                 let mut arr = core2.tm1.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm1 = u64x8::from_array(arr);
+                                core2.tm1 = Simd64::from_array(arr);
                             }
                             4 => {
                                 let mut arr = core2.weyl_lo.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = u64x8::from_array(arr);
+                                core2.weyl_lo = Simd64::from_array(arr);
                             }
                             5 => {
                                 let mut arr = core2.weyl_hi.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = u64x8::from_array(arr);
+                                core2.weyl_hi = Simd64::from_array(arr);
                             }
                             6 => {
                                 let mut arr = core2.inc_lo.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = u64x8::from_array(arr);
+                                core2.inc_lo = Simd64::from_array(arr);
                             }
                             7 => {
                                 let mut arr = core2.inc_hi.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = u64x8::from_array(arr);
+                                core2.inc_hi = Simd64::from_array(arr);
                             }
                             _ => unreachable!()
                         }

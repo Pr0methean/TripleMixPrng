@@ -3,7 +3,7 @@
 use std::{env, thread};
 use std::ffi::OsString;
 use std::io::{stdout, Write};
-use std::simd::u64x8;
+use std::simd::Simd64;
 use std::str::FromStr;
 use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::rand::SecureRandom;
@@ -23,14 +23,14 @@ fn main() {
         prng = TripleMixPrng::from_seed(seed.into());
     } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
         prng = TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: u64x8::splat(0),
-            xr1: u64x8::splat(1),
-            tm0: u64x8::splat(0),
-            tm1: u64x8::splat(1),
-            weyl_lo: u64x8::splat(0),
-            weyl_hi: u64x8::splat(0),
-            inc_lo: u64x8::splat(1),
-            inc_hi: u64x8::splat(0),
+            xr0: Simd64::splat(0),
+            xr1: Simd64::splat(1),
+            tm0: Simd64::splat(0),
+            tm1: Simd64::splat(1),
+            weyl_lo: Simd64::splat(0),
+            weyl_hi: Simd64::splat(0),
+            inc_lo: Simd64::splat(1),
+            inc_hi: Simd64::splat(0),
         })
     } else {
         let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
