@@ -4,15 +4,30 @@ use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::rand::SecureRandom;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use triple_mix_prng::TripleMixPrng;
+use rand_core::block::BlockRng;
+use triple_mix_prng::{TripleMixPrng, TripleMixSimdCore};
 
 const OS_ENTROPY_BYTES: usize = 32;
 
 fn main() {
     let args: Vec<_> = env::args_os().collect();
-    let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
+    let mut prng: TripleMixPrng;
     if let Some(seed_arg) = args.get(1) && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes()) {
+        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
         seed[0..(TripleMixPrng::SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
+        eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
+        prng = TripleMixPrng::from_seed(seed.into());
+    } else if args.get(1) == Some("z".into()) {
+        prng = TripleMixPrng(BlockRng::new(TripleMixSimdCore {
+            xr0: ZEROES,
+            xr1: ONES,
+            tm0: ZEROES,
+            tm1: ONES,
+            weyl_lo: ZEROES,
+            weyl_hi: ZEROES,
+            inc_lo: ONES,
+            inc_hi: ZEROES,
+        }))
     } else {
         for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
             #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
@@ -47,9 +62,9 @@ fn main() {
                 thread::yield_now();
             }
         }
+        eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
+        prng = TripleMixPrng::from_seed(seed.into());
     }
-    eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
-    let mut prng = TripleMixPrng::from_seed(seed.into());
     loop {
         let mut buffer = [0u8; 1<<16];
         prng.fill_bytes(&mut buffer);

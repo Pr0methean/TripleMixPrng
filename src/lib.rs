@@ -17,14 +17,14 @@ use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
 pub struct TripleMixSimdCore {
-    xr0: u64x4,
-    xr1: u64x4,
-    tm0: u64x4,
-    tm1: u64x4,
-    weyl_lo: u64x4,
-    weyl_hi: u64x4,
-    inc_lo: u64x4,
-    inc_hi: u64x4,
+    pub(crate) xr0: u64x4,
+    pub(crate) xr1: u64x4,
+    pub(crate) tm0: u64x4,
+    pub(crate) tm1: u64x4,
+    pub(crate) weyl_lo: u64x4,
+    pub(crate) weyl_hi: u64x4,
+    pub(crate) inc_lo: u64x4,
+    pub(crate) inc_hi: u64x4,
 }
 
 impl TripleMixSimdCore {
@@ -48,8 +48,8 @@ const TINYMT64_MASK: u64x4 = u64x4::splat(TINYMT64_LANE_MASK);
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 256;
 }
-const ONES: Simd<u64, 4> = u64x4::splat(1);
-const ZEROES: Simd<u64, 4> = u64x4::splat(0);
+pub(crate) const ONES: Simd<u64, 4> = u64x4::splat(1);
+pub(crate) const ZEROES: Simd<u64, 4> = u64x4::splat(0);
 
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, typenum::U256>;
@@ -264,7 +264,7 @@ impl Generator for TripleMixSimdCore {
                 // h0[0] = h0[0].reverse_bits();
 
                 let m1 = cur_r1 ^ ((cur_r0 >> MIX_SHIFT_2) | (cur_r0 << MIX_SHIFT_2_REVERSE));
-                let mut h1 = (m1 + Self::LANE_MASK) * FEISTEL_KEYS[(r+1)%4];
+                let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
                 h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
                 // h1[3] = h1[3].swap_bytes();
 
