@@ -35,6 +35,9 @@ impl TripleMixSimdCore {
 
 #[derive(Clone)]
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
+const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
+
+const TINYMT64_MASK: u64x4 = u64x4::splat(TINYMT64_LANE_MASK);
 
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 256;
@@ -81,7 +84,8 @@ impl SeedableRng for TripleMixPrng {
 
                 // Extract states for current lane
                 [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
-                
+                tm0_s[i] &= TINYMT64_LANE_MASK;
+
                 // Rejection sampling for trap states
                 if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
                     lane_hasher.write(&count.to_ne_bytes());
@@ -124,6 +128,7 @@ impl SeedableRng for TripleMixPrng {
         child_core.xr1 ^= entropy[3];
         child_core.tm0 ^= entropy[4];
         child_core.tm1 ^= entropy[5];
+        child_core.tm0 &= TINYMT64_MASK;
 
         // 2. Rejection Check (TinyMT / Xoroshiro protection)
         // Ensure no lane ended up in an all-zero trap state.
@@ -185,8 +190,6 @@ impl Generator for TripleMixSimdCore {
         const TINYMT64_SH1: u64x4 = u64x4::splat(11);
         const TINYMT64_SH2: u64x4 = u64x4::splat(32);
         const TINYMT64_SH8: u64x4 = u64x4::splat(8);
-        const TINYMT64_MASK: u64x4 = u64x4::splat(0x7fff_ffff_ffff_ffff_u64);
-
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
@@ -298,6 +301,20 @@ mod tests {
     use rand::RngExt;
     use super::*;
     use rand_core::{Rng, SeedableRng};
+
+    fn almost_all_zeroes_state() -> TripleMixPrng {
+        TripleMixPrng(TripleMixSimdCore {
+            xr0: ZEROES,
+            xr1: ONES,
+
+            tm0: ZEROES,
+            tm1: Default::default(),
+            weyl_lo: Default::default(),
+            weyl_hi: Default::default(),
+            inc_lo: Default::default(),
+            inc_hi: Default::default(),
+        })
+    }
 
     #[test]
     fn test_byte_frequencies() {
