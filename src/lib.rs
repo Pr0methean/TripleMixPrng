@@ -58,15 +58,23 @@ impl SeedableRng for TripleMixPrng {
         let mut master_hasher = Shake256Hasher::<64>::default();
         master_hasher.write(b"TripleMix V11");
 
+        // 1. Absorb the FULL seed into the master hasher
+        // This ensures every lane depends on every bit of the 2048-bit seed.
+        master_hasher.write(&seed);
+
         for i in 0..4 {
             let mut count: u128 = 0;
-            
-            // 1. Absorb only the NEW 64-byte chunk into the master hasher
-            master_hasher.write(&seed[i * 64 .. (i + 1) * 64]);
             // 2. Clone the master_hasher to prevent "polluting" the prefix state
             //    with lane-specific domain strings or retry counters.
             let mut lane_hasher = master_hasher.clone();
+
+            // 3. Lane ID: Feed the lane index FIRST as a "Salt" or "Config".
             lane_hasher.write(&[i as u8]);
+
+            // 4. Re-absorb the lane-specific chunk of the seed.
+            // This breaks the 1600-bit bottleneck of the master_hasher state,
+            // allowing us to reach the full 2048-bit state space of the PRNG.
+            lane_hasher.write(&seed[i * 64 .. (i + 1) * 64]);
             loop {
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
