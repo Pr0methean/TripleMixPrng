@@ -118,21 +118,14 @@ impl SeedableRng for TripleMixPrng {
 
         let mut child_core = self.0.core.clone();
 
-        // 1. Unique Increments: Replace the child's Weyl increments with new entropy.
-        // We ensure inc_lo is odd to guarantee a full-period 128-bit Weyl sequence.
-        child_core.inc_lo = entropy[0] | ONES;
-        child_core.inc_hi = entropy[1];
-
-        // 2. State Masking: XOR the remaining entropy into the existing states.
+        // 1. State Masking: XOR most of the entropy into the existing states.
         // This ensures the child instance starts at a completely different point in the state space.
         child_core.xr0 ^= entropy[2];
         child_core.xr1 ^= entropy[3];
         child_core.tm0 ^= entropy[4];
         child_core.tm1 ^= entropy[5];
-        child_core.weyl_lo ^= entropy[6];
-        child_core.weyl_hi ^= entropy[7];
 
-        // 3. Rejection Check (TinyMT / Xoroshiro protection)
+        // 2. Rejection Check (TinyMT / Xoroshiro protection)
         // Ensure no lane ended up in an all-zero trap state.
         let xr_zero = (child_core.xr0 | child_core.xr1).simd_eq(ZEROES);
         let tm_zero = (child_core.tm0 | child_core.tm1).simd_eq(ZEROES);
@@ -144,6 +137,13 @@ impl SeedableRng for TripleMixPrng {
             self.0.fill_bytes(&mut seed);
             return Self::from_seed(GenericArray::from(seed));
         }
+
+        // 3. Unique Increments: Replace the child's Weyl increments with new entropy.
+        // We ensure inc_lo is odd to guarantee a full-period 128-bit Weyl sequence.
+        child_core.inc_lo = entropy[0] | ONES;
+        child_core.inc_hi = entropy[1];
+        child_core.weyl_lo ^= entropy[6];
+        child_core.weyl_hi ^= entropy[7];
 
         TripleMixPrng(BlockRng::new(child_core))
     }
