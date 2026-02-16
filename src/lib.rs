@@ -5,7 +5,7 @@ use generic_array::{typenum, GenericArray};
 use rs_shake256::{Shake256Hasher};
 use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
 use std::hash::Hasher;
-use std::hint::unlikely;
+use std::hint::{unlikely, unreachable_unchecked};
 use std::mem::swap;
 use rand_core::{SeedableRng, TryRng};
 use rand_core::block::{BlockRng, Generator};
@@ -265,16 +265,14 @@ impl Generator for TripleMixSimdCore {
             let mut cur_r0 = b_r0;
             let mut cur_r1 = b_r1;
 
-            for r in 0..5 {
+            for r in 0..4 {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
                 let mut h0 = m0 * FEISTEL_KEYS[r%4];
                 h0 ^= (h0 >> MIX_SHIFT_2_REVERSE) | (h0 << MIX_SHIFT_2);
-                // h0[0] = h0[0].reverse_bits();
 
                 let m1 = cur_r1 ^ ((cur_r0 >> MIX_SHIFT_2) | (cur_r0 << MIX_SHIFT_2_REVERSE));
                 let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
                 h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
-                // h1[3] = h1[3].swap_bytes();
 
                 swap(&mut cur_r0, &mut cur_l0);
                 swap(&mut cur_r1, &mut cur_l1);
@@ -286,7 +284,7 @@ impl Generator for TripleMixSimdCore {
                     1 => { cur_r0 = simd_swizzle!(cur_r0, [2, 3, 0, 1]); }
                     2 => { cur_l1 = simd_swizzle!(cur_l1, [1, 2, 3, 0]); }
                     3 => { cur_l0 = simd_swizzle!(cur_l0, [3, 2, 1, 0]); }
-                    _ => {}
+                    _ => unsafe { unreachable_unchecked() }
                 }
             }
 
