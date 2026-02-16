@@ -12,11 +12,11 @@ rand = "0.10.0"
 hex = { version = "0.4.3", optional = true }
 rdrand = { version = "0.8.3", optional = true }
 tss-esapi = { version = "7.6.0", optional = true }
-userspace-rng = { version = "1.0.3", optional = true }
+aws-lc-rs = { version = "1.15.4", optional = true }
 
 [[bin]]
 name = "triple_mix_prng"
-required-features = ["hex","userspace-rng"]
+required-features = ["hex","aws-lc-rs"]
 
 [profile.release]
 lto = "fat"

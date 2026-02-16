@@ -1,8 +1,8 @@
 use std::env;
 use std::io::{stdout, Write};
+use aws_lc_rs::rand::SystemRandom;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use userspace_rng::random256;
 use triple_mix_prng::TripleMixPrng;
 
 const OS_ENTROPY_BYTES: usize = 32;
@@ -34,10 +34,8 @@ fn main() {
             eprintln!("TPM GetRandom failed.");
         }
         if !seeded {
-            for chunk in seed[OS_ENTROPY_BYTES..].chunks_mut(32) {
-                chunk.copy_from_slice(&random256());
-            }
-            eprintln!("Seed generated mostly using userspace-rng.");
+            SystemRandom::default().fill_bytes(&mut seed[crate::OS_ENTROPY_BYTES..]);
+            eprintln!("Seed generated mostly using aws_lc_rs.");
         }
     }
     eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
