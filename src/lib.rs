@@ -268,11 +268,11 @@ impl Generator for TripleMixSimdCore {
             for r in 0..4 {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
                 let mut h0 = m0 * FEISTEL_KEYS[r%4];
-                h0 ^= (h0 >> MIX_SHIFT_2_REVERSE) | (h0 << MIX_SHIFT_2);
+                h0 ^= h0 >> MIX_SHIFT_2_REVERSE;
 
                 let m1 = cur_r1 ^ ((cur_r0 >> MIX_SHIFT_2) | (cur_r0 << MIX_SHIFT_2_REVERSE));
                 let mut h1 = m1 * FEISTEL_KEYS[(r+1)%4];
-                h1 ^= (h1 >> MIX_SHIFT_3) | (h1 << MIX_SHIFT_3_REVERSE);
+                h1 += (h0 >> MIX_SHIFT_3) | (h0 << MIX_SHIFT_3_REVERSE);
 
                 swap(&mut cur_r0, &mut cur_l0);
                 swap(&mut cur_r1, &mut cur_l1);
