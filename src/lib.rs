@@ -1,9 +1,6 @@
 #![feature(likely_unlikely, portable_simd)]
 #![feature(generic_const_exprs)]
-#![feature(target_feature_inline_always)]
 #![allow(incomplete_features)]
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
-mod x86;
 
 use typenum::{U};
 use core::convert::Infallible;
@@ -53,7 +50,7 @@ impl TripleMixPrng {
 }
 const SIMD_WIDTH: usize = 4;
 const OUTPUT_LEN: usize = 4 * SIMD_WIDTH;
-type Simd64 = Simd<u64, SIMD_WIDTH>;
+pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 const ONES: Simd64 = Simd64::splat(1);
 const ZEROES: Simd64 = Simd64::splat(0);
 
@@ -264,35 +261,6 @@ impl Generator for TripleMixSimdCore {
             #[allow(unused_mut)]
             let mut r1_s = b_r1;
 
-            #[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
-            unsafe {
-                let mut l0 = x86::simd_u64x4_to_m256i(l0_s);
-                let mut l1 = x86::simd_u64x4_to_m256i(l1_s);
-                let mut r0 = x86::simd_u64x4_to_m256i(r0_s);
-                let mut r1 = x86::simd_u64x4_to_m256i(r1_s);
-
-                x86::feistel_round_avx2(&mut l0, &mut l1, &mut r0, &mut r1, FEISTEL_KEY_1, FEISTEL_KEY_2);
-                r1 = x86::permute_u64x4_avx2::<0x93>(r1);
-
-                x86::feistel_round_avx2(&mut l0, &mut l1, &mut r0, &mut r1, FEISTEL_KEY_2, FEISTEL_KEY_3);
-                r0 = x86::permute_u64x4_avx2::<0x4E>(r0);
-
-                x86::feistel_round_avx2(&mut l0, &mut l1, &mut r0, &mut r1, FEISTEL_KEY_3, FEISTEL_KEY_4);
-                l1 = x86::permute_u64x4_avx2::<0x39>(l1);
-
-                x86::feistel_round_avx2(&mut l0, &mut l1, &mut r0, &mut r1, FEISTEL_KEY_4, FEISTEL_KEY_1);
-                l0 = x86::permute_u64x4_avx2::<0x1B>(l0);
-
-                x86::finish_and_store_u64x4(l0, l1, r0, r1, output, step);
-            }
-
-            #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
-            {
-                #[inline(always)]
-                fn rotl(x: Simd<u64, 4>, k: u32) -> Simd<u64, 4> {
-                    (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
-                }
-
                 macro_rules! feistel_round {
                     ($const1:expr, $const2:expr) => {{
                         let m0 = r0_s ^ rotl(r1_s, 23);
@@ -329,9 +297,8 @@ impl Generator for TripleMixSimdCore {
             // swizzle for r=3: cur_l0 = [3,2,1,0]
             l0_s = simd_swizzle!(l0_s, [3, 2, 1, 0]);
 
-                let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
-                res.copy_to_slice(&mut output[(step * SIMD_WIDTH)..((step + 1) * SIMD_WIDTH)]);
-            }
+            let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
+            res.copy_to_slice(&mut output[(step * SIMD_WIDTH)..((step + 1) * SIMD_WIDTH)]);
         }
 
         self.xr0 = xr0;

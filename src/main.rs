@@ -1,15 +1,14 @@
 #![feature(portable_simd)]
 
-use std::{env, thread};
-use std::ffi::OsString;
-use std::io::{stdout, Write};
-use std::simd::Simd64;
-use std::str::FromStr;
-use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::rand::SecureRandom;
+use aws_lc_rs::rand::SystemRandom;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use triple_mix_prng::{TripleMixPrng, TripleMixSimdCore};
+use std::ffi::OsString;
+use std::io::{stdout, Write};
+use std::str::FromStr;
+use std::{env, thread};
+use triple_mix_prng::{Simd64, TripleMixPrng, TripleMixSimdCore};
 
 const OS_ENTROPY_BYTES: usize = 32;
 
