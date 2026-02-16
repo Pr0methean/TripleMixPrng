@@ -17,14 +17,14 @@ use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
 pub struct TripleMixSimdCore {
-    pub(crate) xr0: u64x4,
-    pub(crate) xr1: u64x4,
-    pub(crate) tm0: u64x4,
-    pub(crate) tm1: u64x4,
-    pub(crate) weyl_lo: u64x4,
-    pub(crate) weyl_hi: u64x4,
-    pub(crate) inc_lo: u64x4,
-    pub(crate) inc_hi: u64x4,
+    pub xr0: u64x4,
+    pub xr1: u64x4,
+    pub tm0: u64x4,
+    pub tm1: u64x4,
+    pub weyl_lo: u64x4,
+    pub weyl_hi: u64x4,
+    pub inc_lo: u64x4,
+    pub inc_hi: u64x4,
 }
 
 impl TripleMixSimdCore {
@@ -47,9 +47,13 @@ const TINYMT64_MASK: u64x4 = u64x4::splat(TINYMT64_LANE_MASK);
 
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 256;
+
+    pub fn from_core(core: TripleMixSimdCore) -> Self {
+        TripleMixPrng(BlockRng::new(core))
+    }
 }
-pub(crate) const ONES: Simd<u64, 4> = u64x4::splat(1);
-pub(crate) const ZEROES: Simd<u64, 4> = u64x4::splat(0);
+const ONES: Simd<u64, 4> = u64x4::splat(1);
+const ZEROES: Simd<u64, 4> = u64x4::splat(0);
 
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, typenum::U256>;
@@ -309,7 +313,7 @@ mod tests {
     use rand_core::{Rng, SeedableRng};
 
     fn almost_all_zeroes_state() -> TripleMixPrng {
-        TripleMixPrng(BlockRng::new(TripleMixSimdCore {
+        TripleMixPrng::from_core(TripleMixSimdCore {
             xr0: ZEROES,
             xr1: ONES,
 
@@ -319,7 +323,7 @@ mod tests {
             weyl_hi: ZEROES,
             inc_lo: ONES,
             inc_hi: ZEROES,
-        }))
+        })
     }
 
     #[test]

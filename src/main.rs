@@ -1,10 +1,14 @@
+#![feature(portable_simd)]
+
 use std::{env, thread};
+use std::ffi::OsString;
 use std::io::{stdout, Write};
+use std::simd::u64x4;
+use std::str::FromStr;
 use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::rand::SecureRandom;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use rand_core::block::BlockRng;
 use triple_mix_prng::{TripleMixPrng, TripleMixSimdCore};
 
 const OS_ENTROPY_BYTES: usize = 32;
@@ -17,18 +21,19 @@ fn main() {
         seed[0..(TripleMixPrng::SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
         eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
         prng = TripleMixPrng::from_seed(seed.into());
-    } else if args.get(1) == Some("z".into()) {
-        prng = TripleMixPrng(BlockRng::new(TripleMixSimdCore {
-            xr0: ZEROES,
-            xr1: ONES,
-            tm0: ZEROES,
-            tm1: ONES,
-            weyl_lo: ZEROES,
-            weyl_hi: ZEROES,
-            inc_lo: ONES,
-            inc_hi: ZEROES,
-        }))
+    } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
+        prng = TripleMixPrng::from_core(TripleMixSimdCore {
+            xr0: u64x4::splat(0),
+            xr1: u64x4::splat(1),
+            tm0: u64x4::splat(0),
+            tm1: u64x4::splat(1),
+            weyl_lo: u64x4::splat(0),
+            weyl_hi: u64x4::splat(0),
+            inc_lo: u64x4::splat(1),
+            inc_hi: u64x4::splat(0),
+        })
     } else {
+        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
         for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
             #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
             let mut seeded = false;
