@@ -1,5 +1,6 @@
 #![feature(likely_unlikely, portable_simd)]
 
+use typenum::{U, U64};
 use core::convert::Infallible;
 use generic_array::{typenum, GenericArray};
 use rs_shake256::{Shake256Hasher};
@@ -12,55 +13,59 @@ use rand_core::block::{BlockRng, Generator};
 use std::simd::*;
 use std::simd::num::SimdUint;
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use generic_array::typenum::op;
 use rand::RngExt;
 use rand_core::utils::read_words;
 
 #[derive(Debug, Clone)]
 pub struct TripleMixSimdCore {
-    pub xr0: u64x4,
-    pub xr1: u64x4,
-    pub tm0: u64x4,
-    pub tm1: u64x4,
-    pub weyl_lo: u64x4,
-    pub weyl_hi: u64x4,
-    pub inc_lo: u64x4,
-    pub inc_hi: u64x4,
+    pub xr0: u64x8,
+    pub xr1: u64x8,
+    pub tm0: u64x8,
+    pub tm1: u64x8,
+    pub weyl_lo: u64x8,
+    pub weyl_hi: u64x8,
+    pub inc_lo: u64x8,
+    pub inc_hi: u64x8,
 }
 
 impl TripleMixSimdCore {
-    const TINYMT_MAT1: u64x4 = u64x4::splat(0xdaa51b54);
-    const TINYMT_MAT2: u64x4 = u64x4::splat(0xfed47fb5 << 32);
-    const TINYMT_TMAT: u64x4 = u64x4::splat(0xa853e7ffeffefffe);
+    const TINYMT_MAT1: u64x8 = u64x8::splat(0xdaa51b54);
+    const TINYMT_MAT2: u64x8 = u64x8::splat(0xfed47fb5 << 32);
+    const TINYMT_TMAT: u64x8 = u64x8::splat(0xa853e7ffeffefffe);
 }
 
 #[derive(Clone)]
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 
-const TINYMT64_MASK: u64x4 = u64x4::splat(TINYMT64_LANE_MASK);
+const TINYMT64_MASK: u64x8 = u64x8::splat(TINYMT64_LANE_MASK);
 
 impl TripleMixPrng {
-    pub const SEED_SIZE: usize = 256;
+    pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 
     pub fn from_core(core: TripleMixSimdCore) -> Self {
         TripleMixPrng(BlockRng::new(core))
     }
 }
-const ONES: Simd<u64, 4> = u64x4::splat(1);
-const ZEROES: Simd<u64, 4> = u64x4::splat(0);
+const SIMD_WIDTH: usize = 8;
+const OUTPUT_LEN: usize = 4 * SIMD_WIDTH;
+const ONES: u64x8 = u64x8::splat(1);
+const ZEROES: u64x8 = u64x8::splat(0);
 
 impl SeedableRng for TripleMixPrng {
-    type Seed = GenericArray<u8, typenum::U256>;
+    type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
 
     fn from_seed(seed: Self::Seed) -> Self {
-        let mut xr0_s = [0u64; 4];
-        let mut xr1_s = [0u64; 4];
-        let mut tm0_s = [0u64; 4];
-        let mut tm1_s = [0u64; 4];
-        let mut w_lo_s = [0u64; 4];
-        let mut w_hi_s = [0u64; 4];
-        let mut i_lo_s = [0u64; 4];
-        let mut i_hi_s = [0u64; 4];
+        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
+        let mut xr0_s = [0u64; SIMD_WIDTH];
+        let mut xr1_s = [0u64; SIMD_WIDTH];
+        let mut tm0_s = [0u64; SIMD_WIDTH];
+        let mut tm1_s = [0u64; SIMD_WIDTH];
+        let mut w_lo_s = [0u64; SIMD_WIDTH];
+        let mut w_hi_s = [0u64; SIMD_WIDTH];
+        let mut i_lo_s = [0u64; SIMD_WIDTH];
+        let mut i_hi_s = [0u64; SIMD_WIDTH];
 
         let mut master_hasher = Shake256Hasher::<64>::default();
         master_hasher.write(b"TripleMix V11");
@@ -81,7 +86,7 @@ impl SeedableRng for TripleMixPrng {
             // 4. Re-absorb the lane-specific chunk of the seed.
             // This breaks the 1600-bit bottleneck of the master_hasher state,
             // allowing us to reach the full 2048-bit state space of the PRNG.
-            lane_hasher.write(&seed[i * 64 .. (i + 1) * 64]);
+            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE .. (i + 1) * LANE_CHUNK_SIZE]);
             loop {
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
@@ -102,14 +107,14 @@ impl SeedableRng for TripleMixPrng {
         }
 
         let core = TripleMixSimdCore {
-            xr0: u64x4::from_array(xr0_s),
-            xr1: u64x4::from_array(xr1_s),
-            tm0: u64x4::from_array(tm0_s),
-            tm1: u64x4::from_array(tm1_s),
-            weyl_lo: u64x4::from_array(w_lo_s),
-            weyl_hi: u64x4::from_array(w_hi_s),
-            inc_lo: u64x4::from_array(i_lo_s),
-            inc_hi: u64x4::from_array(i_hi_s),
+            xr0: u64x8::from_array(xr0_s),
+            xr1: u64x8::from_array(xr1_s),
+            tm0: u64x8::from_array(tm0_s),
+            tm1: u64x8::from_array(tm1_s),
+            weyl_lo: u64x8::from_array(w_lo_s),
+            weyl_hi: u64x8::from_array(w_hi_s),
+            inc_lo: u64x8::from_array(i_lo_s),
+            inc_hi: u64x8::from_array(i_hi_s),
         };
         TripleMixPrng(BlockRng::new(core))
     }
@@ -142,7 +147,7 @@ impl SeedableRng for TripleMixPrng {
         if unlikely(xr_zero.any() || tm_zero.any()) {
             // In the astronomical event of a zero-trap, we just fallback to full re-seeding
             // to maintain absolute robustness.
-            let mut seed = [0u8; 256];
+            let mut seed = [0u8; Self::SEED_SIZE];
             self.0.fill_bytes(&mut seed);
             return Self::from_seed(GenericArray::from(seed));
         }
@@ -180,28 +185,34 @@ impl TryRng for TripleMixPrng {
 }
 
 impl Generator for TripleMixSimdCore {
-    type Output = [u64; 16];
+    type Output = [u64; OUTPUT_LEN];
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEYS: [u64x4; 4] = [
-            u64x4::splat(0x9E3779B97F4A7C15),
-            u64x4::splat(0xBF58476D1CE4E5B9),
-            u64x4::splat(0x94D049BB133111EB),
-            u64x4::splat(0xFF51AFD7ED558CCD)
+        const FEISTEL_KEYS: [u64x8; 4] = [
+            u64x8::splat(0x9E3779B97F4A7C15),
+            u64x8::splat(0xBF58476D1CE4E5B9),
+            u64x8::splat(0x94D049BB133111EB),
+            u64x8::splat(0xFF51AFD7ED558CCD)
         ];
-        const TINYMT64_SH0: u64x4 = u64x4::splat(12);
-        const TINYMT64_SH1: u64x4 = u64x4::splat(11);
-        const TINYMT64_SH2: u64x4 = u64x4::splat(32);
-        const TINYMT64_SH8: u64x4 = u64x4::splat(8);
+        const TINYMT64_SH0: u64x8 = u64x8::splat(12);
+        const TINYMT64_SH1: u64x8 = u64x8::splat(11);
+        const TINYMT64_SH2: u64x8 = u64x8::splat(32);
+        const TINYMT64_SH8: u64x8 = u64x8::splat(8);
 
-        // These constants are taken from the hexadecimal expansion of pi * 1<<252, but with the
+        // These constants are taken from the hexadecimal expansion of pi, but with the
         // most significant bit set to one on lanes 0 and 2 (it'd otherwise always be zero).
-        const LANE_CONSTANTS: u64x4 = u64x4::from_array(
-        [0xd243_f6a8_885a_308d,
+        // 79216d5d98979fb1bd1310ba698dfb5ac2ffd72dbd01adfb7b8e1afed6a267e96ba7c9045f12c7f9924a19947b3916cf70801f2e2858efc16636920d871574e69a458fea3f4933d7e0d95748f728eb658718bcd5882154aee7b54a41dc25a59b59c30d5392af26013c5d1b023286085f0ca417918b8db38ef8e79dcb0603a180e6c9e0e8bb01e8a3ed71577c1bd314b2778af2fda55605c60e65525f3aa55ab945748986263e8144055ca396a2aab10b6b4cc5c341141e8cea15486af7c72e993b3ee1411636fbc2a2ba9c55d741831f6ce5c3e169b87931eafd6ba336c24cf5c7a325381289586773b8f48986b4bb9afc4bfe81b6628219361d809ccfb21a991487cac605dec8032ef845d5de98575b1dc262302eb651b8823893e81d396acc50f6d6ff383f442392e0b4482a484200469c8f04a9e1f9b5e21c66842f6e96c9a670c9c61abd388f06a51a0d2d8542f68960fa728ab5133a36eef0b6c137a3be4ba3bf0507efb2a98a1f1651d39af017666ca593e82430e888cee8619456f9fb47d84a5c33b8b5ebee06f75d885c12073401a449f56c16aa64ed3aa62363f77061bfedf72429b023d37d0d724d00a1248db0fead349f1c09b075372c980991..._16
+        const LANE_CONSTANTS: u64x8 = u64x8::from_array(
+        [0x3243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x0082_efa9_8ec4_e6c8]
+            0x4a40_9382_2299_f31d,
+            0x0082_efa9_8ec4_e6c8,
+            0x9452_821e_638d_0137,
+            0x7be5_466c_f34e_90c6,
+            0xcc0a_c29b_7c97_c50d,
+            0xd3f8_4d5b_5b54_7091
+        ]
         );
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
@@ -212,17 +223,17 @@ impl Generator for TripleMixSimdCore {
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
 
-        const XORSHIFT_SH1: Simd<u64, 4> = u64x4::splat(55);
-        const XORSHIFT_SH1_REVERSE: Simd<u64, 4> = u64x4::splat(9);
-        const XORSHIFT_SH2: Simd<u64, 4> = u64x4::splat(14);
-        const XORSHIFT_SH3: Simd<u64, 4> = u64x4::splat(36);
-        const XORSHIFT_SH3_REVERSE: Simd<u64, 4> = u64x4::splat(28);
-        const MIX_SHIFT_1: Simd<u64, 4> = u64x4::splat(23);
-        const MIX_SHIFT_1_REVERSE: Simd<u64, 4> = u64x4::splat(41);
-        const MIX_SHIFT_2: Simd<u64, 4> = u64x4::splat(33);
-        const MIX_SHIFT_2_REVERSE: Simd<u64, 4> = u64x4::splat(31);
-        const MIX_SHIFT_3: Simd<u64, 4> = u64x4::splat(29);
-        const MIX_SHIFT_3_REVERSE: Simd<u64, 4> = u64x4::splat(35);
+        const XORSHIFT_SH1: u64x8 = u64x8::splat(55);
+        const XORSHIFT_SH1_REVERSE: u64x8 = u64x8::splat(9);
+        const XORSHIFT_SH2: u64x8 = u64x8::splat(14);
+        const XORSHIFT_SH3: u64x8 = u64x8::splat(36);
+        const XORSHIFT_SH3_REVERSE: u64x8 = u64x8::splat(28);
+        const MIX_SHIFT_1: u64x8 = u64x8::splat(23);
+        const MIX_SHIFT_1_REVERSE: u64x8 = u64x8::splat(41);
+        const MIX_SHIFT_2: u64x8 = u64x8::splat(33);
+        const MIX_SHIFT_2_REVERSE: u64x8 = u64x8::splat(31);
+        const MIX_SHIFT_3: u64x8 = u64x8::splat(29);
+        const MIX_SHIFT_3_REVERSE: u64x8 = u64x8::splat(35);
         for step in 0..4 {
             // 1. Source Generation
 
@@ -265,7 +276,7 @@ impl Generator for TripleMixSimdCore {
             let mut cur_r0 = b_r0;
             let mut cur_r1 = b_r1;
 
-            for r in 0..4 {
+            for r in 0..SIMD_WIDTH {
                 let m0 = cur_r0 ^ ((cur_r1 >> MIX_SHIFT_1) | (cur_r1 << MIX_SHIFT_1_REVERSE));
                 let mut h0 = m0 * FEISTEL_KEYS[r%4];
                 h0 ^= h0 >> MIX_SHIFT_2_REVERSE;
@@ -279,21 +290,17 @@ impl Generator for TripleMixSimdCore {
                 cur_r0 ^= h0;
                 cur_r1 ^= h1;
 
-                match r {
-                    0 => { cur_r1 = simd_swizzle!(cur_r1, [3, 0, 1, 2]); }
-                    1 => { cur_r0 = simd_swizzle!(cur_r0, [2, 3, 0, 1]); }
-                    2 => { cur_l1 = simd_swizzle!(cur_l1, [1, 2, 3, 0]); }
-                    3 => { cur_l0 = simd_swizzle!(cur_l0, [3, 2, 1, 0]); }
+                match r%4 {
+                    0 => { cur_r1 = simd_swizzle!(cur_r1, [1, 3, 5, 7, 0, 2, 4, 6]); }
+                    1 => { cur_r0 = simd_swizzle!(cur_r0, [4, 5, 6, 7, 0, 1, 2, 3]); }
+                    2 => { cur_l1 = simd_swizzle!(cur_l1, [0, 4, 2, 6, 5, 1, 7, 3]); }
+                    3 => { cur_l0 = simd_swizzle!(cur_l0, [7, 6, 5, 4, 3, 2, 1, 0]); }
                     _ => unsafe { unreachable_unchecked() }
                 }
             }
 
             let res = (cur_r0 ^ cur_l0) + (cur_r1 ^ !cur_l1);
-            let arr = res.to_array();
-            output[step * 4] = arr[0];
-            output[step * 4 + 1] = arr[1];
-            output[step * 4 + 2] = arr[2];
-            output[step * 4 + 3] = arr[3];
+            res.copy_to_slice(&mut output[(step * SIMD_WIDTH)..((step + 1) * SIMD_WIDTH)]);
         }
 
         self.xr0 = xr0;
@@ -395,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_equivalence() {
-        let seed = [0u8; 256];
+        let seed = [0u8; TripleMixPrng::SEED_SIZE];
         let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
 
@@ -429,10 +436,8 @@ mod tests {
     }
     #[test]
     fn test_avalanche() {
-        let rng = TripleMixPrng::from_seed(GenericArray::from([0u8; 256]));
+        let rng = TripleMixPrng::from_seed(GenericArray::from([0u8; TripleMixPrng::SEED_SIZE]));
         let mut core = rng.0.core.clone();
-
-        const OUTPUT_LEN: usize = 16;
 
         let iterations = 20; // 20 iterations * 2048 bits = 40,960 checks.
 
@@ -440,7 +445,7 @@ mod tests {
         let mut max_flips = 0;
         let mut total_flips: u64 = 0;
         let mut count: u64 = 0;
-        let mut flips_per_bit = [[[0; 64]; 4]; 8];
+        let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
         for _ in 0..iterations {
             // Generate baseline for this state
             let mut output1 = [0u64; OUTPUT_LEN];
@@ -449,7 +454,7 @@ mod tests {
 
             // Access core as mutable slice of u64s
             // We need to be careful with safety here or just use a safe introspection if possible.
-            // TripleMixSimdCore has 8 u64x4 fields. 
+            // TripleMixSimdCore has 8 u64x8 fields.
             // We can treat it as [u64; 32] via transmute for the test, 
             // or just iterate fields manually to be safe.
             // Let's use a safe field iterator approach.
@@ -463,11 +468,11 @@ mod tests {
 
             // Better strategy: Serialization/Deserialization or direct access.
             // Let's just use `unsafe` to treat `core` as `[u64; 32]` for bit flipping since `TripleMixSimdCore` is `repr(C)`? No it's not.
-            // But it's all u64x4s.
+            // But it's all u64x8s.
             // Let's just manually iterate the logic.
 
             for field_idx in 0..8 {
-                for lane_idx in 0..4 {
+                for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0usize..64 {
                         // TinyMT tm0 MSB (field_idx 2, bit 63) is masked out.
                         if field_idx == 2 && bit_idx == 63 { continue; }
@@ -486,42 +491,42 @@ mod tests {
                             0 => {
                                 let mut arr = core2.xr0.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr0 = u64x4::from_array(arr);
+                                core2.xr0 = u64x8::from_array(arr);
                             }
                             1 => {
                                 let mut arr = core2.xr1.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr1 = u64x4::from_array(arr);
+                                core2.xr1 = u64x8::from_array(arr);
                             }
                             2 => {
                                 let mut arr = core2.tm0.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm0 = u64x4::from_array(arr);
+                                core2.tm0 = u64x8::from_array(arr);
                             }
                             3 => {
                                 let mut arr = core2.tm1.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm1 = u64x4::from_array(arr);
+                                core2.tm1 = u64x8::from_array(arr);
                             }
                             4 => {
                                 let mut arr = core2.weyl_lo.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = u64x4::from_array(arr);
+                                core2.weyl_lo = u64x8::from_array(arr);
                             }
                             5 => {
                                 let mut arr = core2.weyl_hi.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = u64x4::from_array(arr);
+                                core2.weyl_hi = u64x8::from_array(arr);
                             }
                             6 => {
                                 let mut arr = core2.inc_lo.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = u64x4::from_array(arr);
+                                core2.inc_lo = u64x8::from_array(arr);
                             }
                             7 => {
                                 let mut arr = core2.inc_hi.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = u64x4::from_array(arr);
+                                core2.inc_hi = u64x8::from_array(arr);
                             }
                             _ => unreachable!()
                         }
@@ -562,8 +567,9 @@ mod tests {
                  count, avg_flips, min_flips, max_flips);
 
         // 512 is ideal. Allow 10% deviation.
-        assert!(avg_flips >= 460.0, "Average diffusion too low");
-        assert!(avg_flips <= 564.0, "Average diffusion too high?"); // Just sanity
+        const DEVIATION: f64 = 0.1;
+        assert!(avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too low");
+        assert!(avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too high?"); // Just sanity
 
         // Critical check: Ensure NO bit flip caused zero diffusion (independence failure)
         // With swizzle fix, min flips is around 337 (33%).

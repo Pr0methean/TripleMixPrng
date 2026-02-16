@@ -13,6 +13,7 @@ hex = { version = "0.4.3", optional = true }
 rdrand = { version = "0.8.3", optional = true }
 tss-esapi = { version = "7.6.0", optional = true }
 aws-lc-rs = { version = "1.15.4", optional = true }
+typenum = { version = "1.19.0", features = ["const-generics"] }
 
 [[bin]]
 name = "triple_mix_prng"
