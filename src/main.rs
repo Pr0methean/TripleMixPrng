@@ -1,6 +1,7 @@
-use std::env;
+use std::{env, thread};
 use std::io::{stdout, Write};
 use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::rand::SecureRandom;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use triple_mix_prng::TripleMixPrng;
@@ -13,29 +14,38 @@ fn main() {
     if let Some(seed_arg) = args.get(1) && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes()) {
         seed[0..(TripleMixPrng::SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
     } else {
-        #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
-        let mut seeded = false;
-        SysRng.try_fill_bytes(&mut seed[0..OS_ENTROPY_BYTES]).unwrap();
-        #[cfg(feature = "rdrand")]
-        if let Ok(mut rd_seed) = rdrand::RdSeed::new() && rd_seed.try_fill_bytes(&mut seed[32..]).is_ok() {
-            eprintln!("Seed generated mostly using RDSEED");
-            seeded = true;
-        } else {
-            eprintln!("RDSEED failed.");
-        }
-        #[cfg(feature = "tss-esapi")]
-        if !seeded && let Ok(mut ctx) = tss_esapi::Context::new_with_tabrmd(tss_esapi::tcti_ldr::TabrmdConfig::default())
-            .or_else(|_| tss_esapi::Context::new(tss_esapi::Tcti::Device(tss_esapi::tcti_ldr::DeviceConfig::default())))
-        && let Ok(random) = ctx.get_random(crate::REMAINING_BYTES) {
-            seed[crate::OS_ENTROPY_BYTES..].copy_from_slice(&random);
-            eprintln!("Seed generated mostly using TPM GetRandom");
-            seeded = true;
-        } else {
-            eprintln!("TPM GetRandom failed.");
-        }
-        if !seeded {
-            SystemRandom::default().fill_bytes(&mut seed[crate::OS_ENTROPY_BYTES..]);
-            eprintln!("Seed generated mostly using aws_lc_rs.");
+        for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
+            #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
+            let mut seeded = false;
+            if index >= 2 {
+                #[cfg(feature = "rdrand")]
+                if let Ok(mut rd_seed) = rdrand::RdSeed::new() && rd_seed.try_fill_bytes(chunk).is_ok() {
+                    eprintln!("Generated a seed chunk using RDSEED");
+                    seeded = true;
+                } else {
+                    eprintln!("RDSEED failed.");
+                }
+                #[cfg(feature = "tss-esapi")]
+                if !seeded && let Ok(mut ctx) = tss_esapi::Context::new_with_tabrmd(tss_esapi::tcti_ldr::TabrmdConfig::default())
+                    .or_else(|_| tss_esapi::Context::new(tss_esapi::Tcti::Device(tss_esapi::tcti_ldr::DeviceConfig::default())))
+                    && let Ok(random) = ctx.get_random(OS_ENTROPY_BYTES) {
+                    chunk.copy_from_slice(&random);
+                    eprintln!("Generated a seed chunk using TPM GetRandom");
+                    seeded = true;
+                } else {
+                    eprintln!("TPM GetRandom failed.");
+                }
+            }
+            if !seeded {
+                if index.is_multiple_of(2) {
+                    SysRng.try_fill_bytes(chunk).unwrap();
+                    eprintln!("Generated a seed chunk using OS RNG");
+                } else {
+                    SystemRandom::default().fill(chunk).unwrap();
+                    eprintln!("Generated a seed chunk using aws-lc");
+                }
+                thread::yield_now();
+            }
         }
     }
     eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
