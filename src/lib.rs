@@ -2,20 +2,20 @@
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features)]
 
-use typenum::{U};
 use core::convert::Infallible;
-use generic_array::{typenum, GenericArray};
-use rs_shake256::{Shake256Hasher};
-use rs_hasher_ctx::{HasherContext, ByteArrayWrapper};
-use std::hash::Hasher;
-use std::hint::{unlikely};
-use rand_core::{SeedableRng, TryRng};
-use rand_core::block::{BlockRng, Generator};
-use std::simd::*;
-use std::simd::num::SimdUint;
-use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use generic_array::{GenericArray, typenum};
 use rand::RngExt;
+use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
+use rand_core::{SeedableRng, TryRng};
+use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
+use rs_shake256::Shake256Hasher;
+use std::hash::Hasher;
+use std::hint::unlikely;
+use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use std::simd::num::SimdUint;
+use std::simd::*;
+use typenum::U;
 
 #[derive(Debug, Clone)]
 pub struct TripleMixSimdCore {
@@ -87,7 +87,7 @@ impl SeedableRng for TripleMixPrng {
             // 4. Re-absorb the lane-specific chunk of the seed.
             // This breaks the 1600-bit bottleneck of the master_hasher state,
             // allowing us to reach the full 2048-bit state space of the PRNG.
-            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE .. (i + 1) * LANE_CHUNK_SIZE]);
+            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
             loop {
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
@@ -119,7 +119,6 @@ impl SeedableRng for TripleMixPrng {
         };
         TripleMixPrng(BlockRng::new(core))
     }
-
 
     /// Splits the PRNG into two independent instances.
     /// The current instance remains valid, and a new one is returned.
@@ -197,12 +196,12 @@ impl Generator for TripleMixSimdCore {
 
         // These constants are taken from the hexadecimal expansion of pi * 1<<252, but with the
         // most significant bit set to one on lanes 0 and 2 (it'd otherwise always be zero).
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array(
-        [0xd243_f6a8_885a_308d,
+        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+            0xd243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
             0xca40_9382_2299_f31d,
-            0x0082_efa9_8ec4_e6c8]
-        );
+            0x0082_efa9_8ec4_e6c8,
+        ]);
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
@@ -212,7 +211,8 @@ impl Generator for TripleMixSimdCore {
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
 
-        #[inline(always)] fn rotl(x: Simd<u64, 4>, k: u32) -> Simd<u64, 4> {
+        #[inline(always)]
+        fn rotl(x: Simd<u64, 4>, k: u32) -> Simd<u64, 4> {
             (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
         }
         for step in 0..4 {
@@ -261,23 +261,25 @@ impl Generator for TripleMixSimdCore {
             #[allow(unused_mut)]
             let mut r1_s = b_r1;
 
-                macro_rules! feistel_round {
-                    ($const1:expr, $const2:expr) => {{
-                        let m0 = r0_s ^ rotl(r1_s, 23);
-                        let mut h0 = m0 * Simd::splat($const1);
-                        h0 ^= h0 >> Simd::splat(31);
+            macro_rules! feistel_round {
+                ($const1:expr, $const2:expr) => {{
+                    let m0 = r0_s ^ rotl(r1_s, 23);
+                    let mut h0 = m0 * Simd::splat($const1);
+                    h0 ^= h0 >> Simd::splat(31);
 
-                        let m1 = r1_s ^ rotl(r0_s, 33);
-                        let mut h1 = m1 + Simd::splat($const2);
-                        h1 += rotl(h0, 29);
+                    let m1 = r1_s ^ rotl(r0_s, 33);
+                    let mut h1 = m1 + Simd::splat($const2);
+                    h1 += rotl(h0, 29);
 
-                        let (nl0, nr0) = (r0_s, l0_s ^ h0);
-                        let (nl1, nr1) = (r1_s, l1_s ^ h1);
-                        l0_s = nl0; r0_s = nr0;
-                        l1_s = nl1; r1_s = nr1;
-                    }};
-                }
-                            // ---- round 0 ----
+                    let (nl0, nr0) = (r0_s, l0_s ^ h0);
+                    let (nl1, nr1) = (r1_s, l1_s ^ h1);
+                    l0_s = nl0;
+                    r0_s = nr0;
+                    l1_s = nl1;
+                    r1_s = nr1;
+                }};
+            }
+            // ---- round 0 ----
             feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
             // swizzle for r=0: cur_r1 = [3,0,1,2]
             r1_s = simd_swizzle!(r1_s, [3, 0, 1, 2]);
@@ -312,12 +314,12 @@ impl Generator for TripleMixSimdCore {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::iter::repeat;
+    use super::*;
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
-    use super::*;
     use rand_core::{Rng, SeedableRng};
+    use std::collections::HashSet;
+    use std::iter::repeat;
 
     fn almost_all_zeroes_state() -> TripleMixPrng {
         TripleMixPrng::from_core(TripleMixSimdCore {
@@ -341,7 +343,12 @@ mod tests {
             let byte: u8 = prng.random();
             frequencies[byte as usize] += 1;
         }
-        let chi_square = goodness_of_fit(frequencies.map(f64::from), repeat((1 << 20) as f64).take(u8::MAX as usize + 1), 0.01).unwrap();
+        let chi_square = goodness_of_fit(
+            frequencies.map(f64::from),
+            repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
+            0.01,
+        )
+        .unwrap();
         println!("{:?}", chi_square);
         assert!(!chi_square.reject_null);
     }
@@ -354,7 +361,12 @@ mod tests {
             let word: u16 = prng.random();
             frequencies[word as usize] += 1;
         }
-        let chi_square = goodness_of_fit(frequencies.into_iter().map(f64::from), repeat((1 << 12) as f64).take(u16::MAX as usize + 1), 0.01).unwrap();
+        let chi_square = goodness_of_fit(
+            frequencies.into_iter().map(f64::from),
+            repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
+            0.01,
+        )
+        .unwrap();
         println!("{:?}", chi_square);
         assert!(!chi_square.reject_null);
     }
@@ -395,7 +407,10 @@ mod tests {
                 }
             }
         }
-        println!("Lowest lagged bin: {}, Highest lagged bin: {}", lowest_lagged_bin, highest_lagged_bin);
+        println!(
+            "Lowest lagged bin: {}, Highest lagged bin: {}",
+            lowest_lagged_bin, highest_lagged_bin
+        );
     }
 
     #[test]
@@ -453,7 +468,7 @@ mod tests {
             // Access core as mutable slice of u64s
             // We need to be careful with safety here or just use a safe introspection if possible.
             // TripleMixSimdCore has 8 Simd64 fields.
-            // We can treat it as [u64; 32] via transmute for the test, 
+            // We can treat it as [u64; 32] via transmute for the test,
             // or just iterate fields manually to be safe.
             // Let's use a safe field iterator approach.
 
@@ -473,15 +488,20 @@ mod tests {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0usize..64 {
                         // TinyMT tm0 MSB (field_idx 2, bit 63) is masked out.
-                        if field_idx == 2 && bit_idx == 63 { continue; }
+                        if field_idx == 2 && bit_idx == 63 {
+                            continue;
+                        }
 
                         // Weyl Increment Low (field_idx 6) bit 0 must be 1. Flipping it breaks valid state assumption.
-                        if field_idx == 6 && bit_idx == 0 { continue; }
+                        if field_idx == 6 && bit_idx == 0 {
+                            continue;
+                        }
 
                         // Weyl Increment High (field_idx 7) bit 63 has period 2 in additive update (d, 2d=0, 3d, 4d=0).
                         // It effectively affects only half the rounds, leading to lower diffusion (~250). Skip it.
-                        if field_idx == 7 && bit_idx >= 62 { continue; }
-
+                        if field_idx == 7 && bit_idx >= 62 {
+                            continue;
+                        }
 
                         let mut core2 = core.clone();
                         // Mutate specific bit
@@ -526,7 +546,7 @@ mod tests {
                                 arr[lane_idx] ^= 1 << bit_idx;
                                 core2.inc_hi = Simd64::from_array(arr);
                             }
-                            _ => unreachable!()
+                            _ => unreachable!(),
                         }
 
                         let mut output2 = [0u64; OUTPUT_LEN];
@@ -534,7 +554,10 @@ mod tests {
 
                         // Check for similar states leading to related outputs
                         for cell in 1..OUTPUT_LEN {
-                            assert_ne!(output2[cell].wrapping_sub(output2[0]), output1[cell].wrapping_sub(output1[0]));
+                            assert_ne!(
+                                output2[cell].wrapping_sub(output2[0]),
+                                output1[cell].wrapping_sub(output1[0])
+                            );
                             assert_ne!(output2[cell] ^ output2[0], output1[cell] ^ output1[0]);
                         }
 
@@ -557,21 +580,35 @@ mod tests {
         }
         for field_idx in 0..8 {
             for lane_idx in 0..SIMD_WIDTH {
-                println!("Field {} lane {}: Flips: {:?}", field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]);
+                println!(
+                    "Field {} lane {}: Flips: {:?}",
+                    field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]
+                );
             }
         }
         let avg_flips = total_flips as f64 / count as f64;
-        println!("Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
-                 count, avg_flips, min_flips, max_flips);
+        println!(
+            "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
+            count, avg_flips, min_flips, max_flips
+        );
 
         // 512 is ideal. Allow 10% deviation.
         const DEVIATION: f64 = 0.1;
-        assert!(avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too low");
-        assert!(avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too high?"); // Just sanity
+        assert!(
+            avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64),
+            "Average diffusion too low"
+        );
+        assert!(
+            avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64),
+            "Average diffusion too high?"
+        ); // Just sanity
 
         // Critical check: Ensure NO bit flip caused zero diffusion (independence failure)
         // With swizzle fix, min flips is around 337 (33%).
         // We accept this as sufficiently mixed (no obvious blind spots).
-        assert!(min_flips as usize >= 96 * SIMD_WIDTH, "Minimum diffusion too low, possible blind spot!");
+        assert!(
+            min_flips as usize >= 96 * SIMD_WIDTH,
+            "Minimum diffusion too low, possible blind spot!"
+        );
     }
 }
