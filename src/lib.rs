@@ -24,7 +24,197 @@ use std::simd::num::SimdUint;
 use std::simd::*;
 use typenum::U;
 
-#[derive(Debug, Clone)]
+const SIMD_WIDTH: usize = 4;
+const OUTPUT_LEN: usize = 4 * SIMD_WIDTH;
+
+// On AVX2 targets, Simd64 = __m256i for zero-conversion in the hot path.
+// On other targets, Simd64 = Simd<u64, 4> (portable SIMD).
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+))]
+pub type Simd64 = core::arch::x86_64::__m256i;
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+)))]
+pub type Simd64 = Simd<u64, SIMD_WIDTH>;
+
+/// Portable SIMD type — always Simd<u64, 4> regardless of target.
+type S = Simd<u64, SIMD_WIDTH>;
+
+// ============================================================================
+// Simd64 adapter functions (for cold paths: fork, from_seed, tests)
+// ============================================================================
+
+#[inline(always)]
+fn simd64_from_array(arr: [u64; SIMD_WIDTH]) -> Simd64 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::from_array(arr) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { Simd64::from_array(arr) }
+}
+
+#[inline(always)]
+fn simd64_to_array(x: Simd64) -> [u64; SIMD_WIDTH] {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::to_array(x) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { x.to_array() }
+}
+
+#[inline(always)]
+fn simd64_as_mut_u64_array(x: &mut Simd64) -> &mut [u64; SIMD_WIDTH] {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::as_mut_u64_array(x) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { x.as_mut_array() }
+}
+
+#[inline(always)]
+fn simd64_xor(a: Simd64, b: Simd64) -> Simd64 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::xor(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a ^ b }
+}
+
+#[inline(always)]
+fn simd64_and(a: Simd64, b: Simd64) -> Simd64 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::and(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a & b }
+}
+
+#[inline(always)]
+fn simd64_or(a: Simd64, b: Simd64) -> Simd64 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::or(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a | b }
+}
+
+#[inline(always)]
+fn simd64_lane(x: Simd64, i: usize) -> u64 {
+    simd64_to_array(x)[i]
+}
+
+#[inline(always)]
+fn simd64_any_eq(a: Simd64, b: Simd64) -> bool {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::any_eq(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a.simd_eq(b).any() }
+}
+
+/// Zero-cost conversion: Simd64 → portable Simd<u64, 4>
+#[inline(always)]
+fn simd64_to_portable(x: Simd64) -> S {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::to_portable(x) }  // transmute — zero cost
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { x }  // identity — zero cost
+}
+
+/// Zero-cost conversion: portable Simd<u64, 4> → Simd64
+#[inline(always)]
+fn portable_to_simd64(x: S) -> Simd64 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::from_portable(x) }  // transmute — zero cost
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { x }  // identity — zero cost
+}
+
+#[inline(always)]
+fn simd64_eq(a: &Simd64, b: &Simd64) -> bool {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::eq(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a == b }
+}
+
+// ============================================================================
+// Multiplication dispatch — the ONLY operation where AVX2 differs
+// ============================================================================
+
+/// SIMD multiply: uses AVX2 mullo (in-register) or portable * (scalarized).
+#[inline(always)]
+fn simd_mul(a: S, b: S) -> S {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::mullo(a, b) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a * b }
+}
+
+/// SIMD multiply by scalar constant.
+#[inline(always)]
+fn simd_mul_const(a: S, c: u64) -> S {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+    { avx2::mullo_const(a, c) }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+    { a * S::splat(c) }
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+const TINYMT64_MASK: Simd64 = unsafe { std::mem::transmute([TINYMT64_LANE_MASK; 4]) };
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+const TINYMT64_MASK: Simd64 = Simd64::splat(TINYMT64_LANE_MASK);
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+const ONES: Simd64 = unsafe { std::mem::transmute([1u64; 4]) };
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+const ONES: Simd64 = Simd64::splat(1);
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
+const ZEROES: Simd64 = unsafe { std::mem::transmute([0u64; 4]) };
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
+const ZEROES: Simd64 = Simd64::splat(0);
+
+// ============================================================================
+// Core struct
+// ============================================================================
+
+#[derive(Clone)]
 struct TripleMixSimdCore {
     xr0: Simd64,
     xr1: Simd64,
@@ -36,6 +226,21 @@ struct TripleMixSimdCore {
     inc_hi: Simd64,
 }
 
+impl std::fmt::Debug for TripleMixSimdCore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TripleMixSimdCore")
+            .field("xr0", &simd64_to_array(self.xr0))
+            .field("xr1", &simd64_to_array(self.xr1))
+            .field("tm0", &simd64_to_array(self.tm0))
+            .field("tm1", &simd64_to_array(self.tm1))
+            .field("weyl_lo", &simd64_to_array(self.weyl_lo))
+            .field("weyl_hi", &simd64_to_array(self.weyl_hi))
+            .field("inc_lo", &simd64_to_array(self.inc_lo))
+            .field("inc_hi", &simd64_to_array(self.inc_hi))
+            .finish()
+    }
+}
+
 impl TripleMixSimdCore {
     const TINYMT_MAT1: u64 = 0xdaa51b54;
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
@@ -44,9 +249,6 @@ impl TripleMixSimdCore {
 
 #[derive(Clone)]
 pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
-const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
-
-const TINYMT64_MASK: Simd64 = Simd64::splat(TINYMT64_LANE_MASK);
 
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
@@ -55,29 +257,20 @@ impl TripleMixPrng {
         TripleMixPrng(BlockRng::new(core))
     }
 
-    const SMALLEST_DISTINCT_ODD: Simd64 = Simd::from_array([1, 3, 5, 7]);
-    const SMALLEST_DISTINCT_POSITIVE: Simd64 = Simd::from_array([1, 2, 3, 4]);
-
     /// Creates an instance in a relatively predictable state. Intended only for testing.
     pub fn almost_all_zeroes_state() -> TripleMixPrng {
         TripleMixPrng::from_core(TripleMixSimdCore {
             xr0: ZEROES,
-            xr1: Self::SMALLEST_DISTINCT_POSITIVE,
-
+            xr1: simd64_from_array([1, 2, 3, 4]),
             tm0: ZEROES,
-            tm1: Self::SMALLEST_DISTINCT_POSITIVE,
+            tm1: simd64_from_array([1, 2, 3, 4]),
             weyl_lo: ZEROES,
             weyl_hi: ZEROES,
-            inc_lo: Self::SMALLEST_DISTINCT_ODD,
+            inc_lo: simd64_from_array([1, 3, 5, 7]),
             inc_hi: ZEROES,
         })
     }
 }
-const SIMD_WIDTH: usize = 4;
-const OUTPUT_LEN: usize = 4 * SIMD_WIDTH;
-pub type Simd64 = Simd<u64, SIMD_WIDTH>;
-const ONES: Simd64 = Simd64::splat(1);
-const ZEROES: Simd64 = Simd64::splat(0);
 
 impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
@@ -95,33 +288,20 @@ impl SeedableRng for TripleMixPrng {
 
         let mut master_hasher = Shake256Hasher::<64>::default();
         master_hasher.write(b"TripleMix V11");
-
-        // 1. Absorb the FULL seed into the master hasher
-        // This ensures every lane depends on every bit of the 2048-bit seed.
         master_hasher.write(&seed);
 
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
-            // 2. Clone the master_hasher to prevent "polluting" the prefix state
-            //    with lane-specific domain strings or retry counters.
             let mut lane_hasher = master_hasher.clone();
-
-            // 3. Lane ID: Feed the lane index FIRST as a "Salt" or "Config".
             lane_hasher.write(&[i as u8]);
-
-            // 4. Re-absorb the lane-specific chunk of the seed.
-            // This breaks the 1600-bit bottleneck of the master_hasher state,
-            // allowing us to reach the full 2048-bit state space of the PRNG.
             lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
             'generate: loop {
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
 
-                // Extract states for current lane
                 [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
                 tm0_s[i] &= TINYMT64_LANE_MASK;
 
-                // Rejection sampling for trap states
                 if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
                     lane_hasher.write(&count.to_ne_bytes());
                     count += 1;
@@ -150,55 +330,48 @@ impl SeedableRng for TripleMixPrng {
         }
 
         let core = TripleMixSimdCore {
-            xr0: Simd64::from_array(xr0_s),
-            xr1: Simd64::from_array(xr1_s),
-            tm0: Simd64::from_array(tm0_s),
-            tm1: Simd64::from_array(tm1_s),
-            weyl_lo: Simd64::from_array(w_lo_s),
-            weyl_hi: Simd64::from_array(w_hi_s),
-            inc_lo: Simd64::from_array(i_lo_s),
-            inc_hi: Simd64::from_array(i_hi_s),
+            xr0: simd64_from_array(xr0_s),
+            xr1: simd64_from_array(xr1_s),
+            tm0: simd64_from_array(tm0_s),
+            tm1: simd64_from_array(tm1_s),
+            weyl_lo: simd64_from_array(w_lo_s),
+            weyl_hi: simd64_from_array(w_hi_s),
+            inc_lo: simd64_from_array(i_lo_s),
+            inc_hi: simd64_from_array(i_hi_s),
         };
         TripleMixPrng(BlockRng::new(core))
     }
 
-    /// Splits the PRNG into two independent instances.
-    /// The current instance remains valid, and a new one is returned.
-    /// This is an O(1) operation that avoids the expensive SHAKE256 seeding process.
     fn fork(&mut self) -> Self {
         let mut entropy = [ZEROES; 8];
         for cell in entropy.iter_mut() {
-            self.fill(cell.as_mut_array());
+            self.fill(simd64_as_mut_u64_array(cell));
         }
 
         let mut child_core = self.0.core.clone();
 
-        // 1. State Masking: XOR most of the entropy into the existing states.
-        // This ensures the child instance starts at a completely different point in the state space.
-        child_core.xr0 ^= entropy[2];
-        child_core.xr1 ^= entropy[3];
-        child_core.tm0 ^= entropy[4];
-        child_core.tm1 ^= entropy[5];
-        child_core.tm0 &= TINYMT64_MASK;
+        child_core.xr0 = simd64_xor(child_core.xr0, entropy[2]);
+        child_core.xr1 = simd64_xor(child_core.xr1, entropy[3]);
+        child_core.tm0 = simd64_xor(child_core.tm0, entropy[4]);
+        child_core.tm1 = simd64_xor(child_core.tm1, entropy[5]);
+        child_core.tm0 = simd64_and(child_core.tm0, TINYMT64_MASK);
 
-        // 2. Rejection Check (TinyMT / Xoroshiro protection)
-        // Ensure no lane ended up in an all-zero trap state.
-        let xr_zero = (child_core.xr0 | child_core.xr1).simd_eq(ZEROES);
-        let tm_zero = (child_core.tm0 | child_core.tm1).simd_eq(ZEROES);
+        let xr_combined = simd64_or(child_core.xr0, child_core.xr1);
+        let tm_combined = simd64_or(child_core.tm0, child_core.tm1);
 
         let mut rejected = false;
-        if unlikely(xr_zero.any() || tm_zero.any()) {
+        if unlikely(simd64_any_eq(xr_combined, ZEROES) || simd64_any_eq(tm_combined, ZEROES)) {
             rejected = true;
         } else {
             for i in 1..SIMD_WIDTH {
                 for j in 0..i {
                     if unlikely(
-                        (child_core.xr0[j] == child_core.xr0[i]
-                            && child_core.xr1[j] == child_core.xr1[i])
-                            || (child_core.tm0[j] == child_core.tm0[i]
-                                && child_core.tm1[j] == child_core.tm1[i])
-                            || child_core.weyl_lo[j] == child_core.weyl_lo[i]
-                            || child_core.inc_lo[j] == child_core.inc_lo[i],
+                        (simd64_lane(child_core.xr0, j) == simd64_lane(child_core.xr0, i)
+                            && simd64_lane(child_core.xr1, j) == simd64_lane(child_core.xr1, i))
+                            || (simd64_lane(child_core.tm0, j) == simd64_lane(child_core.tm0, i)
+                                && simd64_lane(child_core.tm1, j) == simd64_lane(child_core.tm1, i))
+                            || simd64_lane(child_core.weyl_lo, j) == simd64_lane(child_core.weyl_lo, i)
+                            || simd64_lane(child_core.inc_lo, j) == simd64_lane(child_core.inc_lo, i),
                     ) {
                         rejected = true;
                         break;
@@ -207,18 +380,14 @@ impl SeedableRng for TripleMixPrng {
             }
         }
         if unlikely(rejected) {
-            // In the rare event of a zero-trap or an identical state in two lanes, we fall back to
-            // full re-seeding to maintain absolute robustness.
             let mut seed = [0u8; Self::SEED_SIZE];
             self.0.fill_bytes(&mut seed);
             return Self::from_seed(GenericArray::from(seed));
         }
-        // 3. Unique Increments: Replace the child's Weyl increments with new entropy.
-        // We ensure inc_lo is odd to guarantee a full-period 128-bit Weyl sequence.
-        child_core.inc_lo = entropy[0] | ONES;
+        child_core.inc_lo = simd64_or(entropy[0], ONES);
         child_core.inc_hi = entropy[1];
-        child_core.weyl_lo ^= entropy[6];
-        child_core.weyl_hi ^= entropy[7];
+        child_core.weyl_lo = simd64_xor(child_core.weyl_lo, entropy[6]);
+        child_core.weyl_hi = simd64_xor(child_core.weyl_hi, entropy[7]);
 
         TripleMixPrng(BlockRng::new(child_core))
     }
@@ -245,214 +414,143 @@ impl TryRng for TripleMixPrng {
     }
 }
 
+// ============================================================================
+// Generator impl — SINGLE unified implementation
+//
+// All operations use portable Simd<u64, 4> operators, which compile to the
+// same AVX2 instructions on AVX2 targets. The ONLY dispatch is for multiply,
+// which portable SIMD scalarizes but AVX2 keeps in-register via mullo.
+// ============================================================================
+
 impl Generator for TripleMixSimdCore {
     type Output = [u64; OUTPUT_LEN];
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
-        const FEISTEL_KEY_2: u64 = 0xBF58476D1CE4E5B9;
-        const FEISTEL_KEY_3: u64 = 0x94D049BB133111EB;
-        const FEISTEL_KEY_4: u64 = 0xFF51AFD7ED558CCD;
-
-        // These constants are taken from the hexadecimal expansion of pi * 1<<252, but with the
-        // most significant bit set to one on lanes 0 and 2 (it'd otherwise always be zero).
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-            0xd243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x0082_efa9_8ec4_e6c8,
-        ]);
-
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-        ))]
-        unsafe {
-            let mut xr0 = avx2::simd_u64x4_to_m256i(self.xr0);
-            let mut xr1 = avx2::simd_u64x4_to_m256i(self.xr1);
-            let mut tm0 = avx2::simd_u64x4_to_m256i(self.tm0);
-            let mut tm1 = avx2::simd_u64x4_to_m256i(self.tm1);
-            let mut w_lo = avx2::simd_u64x4_to_m256i(self.weyl_lo);
-            let mut w_hi = avx2::simd_u64x4_to_m256i(self.weyl_hi);
-            let i_lo = avx2::simd_u64x4_to_m256i(self.inc_lo);
-            let i_hi = avx2::simd_u64x4_to_m256i(self.inc_hi);
-            let lane_constants = avx2::simd_u64x4_to_m256i(LANE_CONSTANTS);
-            let tinymt_mask = avx2::simd_u64x4_to_m256i(TINYMT64_MASK);
-
-            macro_rules! do_step_avx2 {
-                ($step:expr) => {{
-                    // 1. Source Generation (AVX2)
-                    let (mut l0, mut l1, mut r0, mut r1) = avx2::source_generation_avx2(
-                        &mut xr0, &mut xr1,
-                        &mut tm0, &mut tm1,
-                        &mut w_lo, &mut w_hi,
-                        i_lo, i_hi,
-                        lane_constants,
-                        tinymt_mask,
-                        Self::TINYMT_MAT1,
-                        Self::TINYMT_MAT2,
-                        Self::TINYMT_TMAT,
-                    );
-
-                    // 2. Mixing (AVX2 Feistel network)
-                    avx2::feistel_round_avx2(
-                        &mut l0, &mut l1, &mut r0, &mut r1,
-                        FEISTEL_KEY_1, FEISTEL_KEY_2,
-                    );
-                    r1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 0, 1, 2>()}>(r1);
-
-                    avx2::feistel_round_avx2(
-                        &mut l0, &mut l1, &mut r0, &mut r1,
-                        FEISTEL_KEY_2, FEISTEL_KEY_3,
-                    );
-                    r0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<2, 3, 0, 1>()}>(r0);
-
-                    avx2::feistel_round_avx2(
-                        &mut l0, &mut l1, &mut r0, &mut r1,
-                        FEISTEL_KEY_3, FEISTEL_KEY_4,
-                    );
-                    l1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<1, 2, 3, 0>()}>(l1);
-
-                    avx2::feistel_round_avx2(
-                        &mut l0, &mut l1, &mut r0, &mut r1,
-                        FEISTEL_KEY_4, FEISTEL_KEY_1,
-                    );
-                    l0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 2, 1, 0>()}>(l0);
-
-                    avx2::finish_and_store_u64x4(l0, l1, r0, r1, output, $step);
-                }};
-            }
-
-            do_step_avx2!(0);
-            do_step_avx2!(1);
-            do_step_avx2!(2);
-            do_step_avx2!(3);
-
-            self.xr0 = avx2::m256i_to_simd_u64x4(xr0);
-            self.xr1 = avx2::m256i_to_simd_u64x4(xr1);
-            self.tm0 = avx2::m256i_to_simd_u64x4(tm0);
-            self.tm1 = avx2::m256i_to_simd_u64x4(tm1);
-            self.weyl_lo = avx2::m256i_to_simd_u64x4(w_lo);
-            self.weyl_hi = avx2::m256i_to_simd_u64x4(w_hi);
-        }
-
-        #[cfg(not(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-        )))]
-        {
-            self.generate_portable(output);
-        }
+        self.generate_with_avx2_mul(output);
     }
 }
 
-#[cfg(any(test, not(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-        ),
-        allow(unused_mut)
-    )))]
 impl TripleMixSimdCore {
-    /// Portable SIMD implementation of generate(), always available in tests
-    /// for cross-verification against the AVX2 path.
-    fn generate_portable(&mut self, output: &mut [u64; OUTPUT_LEN]) {
+    /// Main generate implementation using AVX2 mullo when available.
+    #[inline(always)]
+    fn generate_with_avx2_mul(&mut self, output: &mut [u64; OUTPUT_LEN]) {
+        self.generate_impl(output, simd_mul, simd_mul_const);
+    }
+
+    /// Core generate logic, parameterized by multiplication functions.
+    /// All other operations use portable Simd<u64, 4> which compiles to
+    /// identical AVX2 instructions on AVX2 targets.
+    #[inline(always)]
+    fn generate_impl(
+        &mut self,
+        output: &mut [u64; OUTPUT_LEN],
+        mul: fn(S, S) -> S,
+        mul_const: fn(S, u64) -> S,
+    ) {
         const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
         const FEISTEL_KEY_2: u64 = 0xBF58476D1CE4E5B9;
         const FEISTEL_KEY_3: u64 = 0x94D049BB133111EB;
         const FEISTEL_KEY_4: u64 = 0xFF51AFD7ED558CCD;
 
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+        const LANE_CONSTANTS: S = S::from_array([
             0xd243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
             0xca40_9382_2299_f31d,
             0x0082_efa9_8ec4_e6c8,
         ]);
+        const P_ONES: S = S::splat(1);
+        const P_ZEROES: S = S::splat(0);
+        const P_TINYMT64_MASK: S = S::splat(TINYMT64_LANE_MASK);
 
-        let mut xr0 = self.xr0;
-        let mut xr1 = self.xr1;
-        let mut tm0 = self.tm0;
-        let mut tm1 = self.tm1;
-        let mut w_lo = self.weyl_lo;
-        let mut w_hi = self.weyl_hi;
-        let i_lo = self.inc_lo;
-        let i_hi = self.inc_hi;
+        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
+        let mut xr0 = simd64_to_portable(self.xr0);
+        let mut xr1 = simd64_to_portable(self.xr1);
+        let mut tm0 = simd64_to_portable(self.tm0);
+        let mut tm1 = simd64_to_portable(self.tm1);
+        let mut w_lo = simd64_to_portable(self.weyl_lo);
+        let mut w_hi = simd64_to_portable(self.weyl_hi);
+        let i_lo = simd64_to_portable(self.inc_lo);
+        let i_hi = simd64_to_portable(self.inc_hi);
 
         #[inline(always)]
-        fn rotl(x: Simd<u64, 4>, k: u32) -> Simd<u64, 4> {
-            (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
+        fn rotl(x: S, k: u32) -> S {
+            (x << S::splat(k as u64)) | (x >> S::splat((64 - k) as u64))
         }
 
         macro_rules! do_step {
             ($step:expr) => {{
-                // 1. Source Generation
+                // === 1. Source Generation ===
+
+                // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
                 let next_w_lo = w_lo + i_lo;
-                let high_product = w_lo * LANE_CONSTANTS;
-                let carry = next_w_lo.simd_lt(w_lo).select(ONES, ZEROES);
+                let high_product = mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+                let carry = next_w_lo.simd_lt(w_lo).select(P_ONES, P_ZEROES);
                 w_hi = w_hi + high_product + i_hi + carry;
                 w_lo = next_w_lo;
                 let b_l0 = w_lo + LANE_CONSTANTS;
                 let b_r1 = w_hi;
 
+                // Xoroshiro update
                 let b_l1 = xr0 + xr1;
                 let t = xr0 ^ xr1;
-                xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
+                xr0 = rotl(xr0, 9) ^ t ^ (t << S::splat(14));
                 xr1 = rotl(t, 36);
 
-                tm0 &= TINYMT64_MASK;
+                // TinyMT64 update
+                tm0 &= P_TINYMT64_MASK;
                 let mut x = tm0 ^ tm1;
-                x ^= x << Simd64::splat(12);
-                x ^= x >> Simd64::splat(32);
-                x ^= x << Simd64::splat(32);
-                x ^= x << Simd64::splat(11);
+                x ^= x << S::splat(12);
+                x ^= x >> S::splat(32);
+                x ^= x << S::splat(32);
+                x ^= x << S::splat(11);
 
-                let mask = (x & ONES).wrapping_neg();
-                let next_tm0 = tm1 ^ (mask & Simd64::splat(Self::TINYMT_MAT1));
-                let next_tm1 = x ^ (mask & Simd64::splat(Self::TINYMT_MAT2));
+                let mask = (x & P_ONES).wrapping_neg();
+                let next_tm0 = tm1 ^ (mask & S::splat(Self::TINYMT_MAT1));
+                let next_tm1 = x ^ (mask & S::splat(Self::TINYMT_MAT2));
                 tm0 = next_tm0;
                 tm1 = next_tm1;
 
                 let mut ty = tm0 + tm1;
-                ty ^= tm0 >> Simd64::splat(8);
-                let b_r0 = ty ^ ((ty & ONES).wrapping_neg() & Simd64::splat(Self::TINYMT_TMAT));
+                ty ^= tm0 >> S::splat(8);
+                let b_r0 = ty ^ ((ty & P_ONES).wrapping_neg() & S::splat(Self::TINYMT_TMAT));
 
-                // 2. Mixing
-                let mut l0_s = b_l0;
-                let mut l1_s = b_l1;
-                let mut r0_s = b_r0;
-                let mut r1_s = b_r1;
+                // === 2. Mixing (Feistel network) ===
+                let mut l0 = b_l0;
+                let mut l1 = b_l1;
+                let mut r0 = b_r0;
+                let mut r1 = b_r1;
 
                 macro_rules! feistel_round {
                     ($const1:expr, $const2:expr) => {{
-                        let m0 = r0_s ^ rotl(r1_s, 23);
-                        let mut h0 = m0 * Simd::splat($const1);
-                        h0 ^= h0 >> Simd::splat(31);
+                        let m0 = r0 ^ rotl(r1, 23);
+                        let mut h0 = mul_const(m0, $const1); // ← only AVX2-dispatched op
+                        h0 ^= h0 >> S::splat(31);
 
-                        let m1 = r1_s ^ rotl(r0_s, 33);
-                        let mut h1 = m1 + Simd::splat($const2);
+                        let m1 = r1 ^ rotl(r0, 33);
+                        let mut h1 = m1 + S::splat($const2);
                         h1 += rotl(h0, 29);
 
-                        let (nl0, nr0) = (r0_s, l0_s ^ h0);
-                        let (nl1, nr1) = (r1_s, l1_s ^ h1);
-                        l0_s = nl0;
-                        r0_s = nr0;
-                        l1_s = nl1;
-                        r1_s = nr1;
+                        let (nl0, nr0) = (r0, l0 ^ h0);
+                        let (nl1, nr1) = (r1, l1 ^ h1);
+                        l0 = nl0;
+                        r0 = nr0;
+                        l1 = nl1;
+                        r1 = nr1;
                     }};
                 }
-                feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
-                r1_s = simd_swizzle!(r1_s, [3, 0, 1, 2]);
-                feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
-                r0_s = simd_swizzle!(r0_s, [2, 3, 0, 1]);
-                feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
-                l1_s = simd_swizzle!(l1_s, [1, 2, 3, 0]);
-                feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
-                l0_s = simd_swizzle!(l0_s, [3, 2, 1, 0]);
 
-                let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
+                feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
+                r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
+                feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
+                r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
+                feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
+                l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+                feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
+                l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
+
+                // === 3. Output ===
+                let res = (r0 ^ l0) + (r1 ^ !l1);
                 res.copy_to_slice(
                     &mut output[($step * SIMD_WIDTH)..(($step + 1) * SIMD_WIDTH)],
                 );
@@ -464,14 +562,34 @@ impl TripleMixSimdCore {
         do_step!(2);
         do_step!(3);
 
-        self.xr0 = xr0;
-        self.xr1 = xr1;
-        self.tm0 = tm0;
-        self.tm1 = tm1;
-        self.weyl_lo = w_lo;
-        self.weyl_hi = w_hi;
+        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
+        self.xr0 = portable_to_simd64(xr0);
+        self.xr1 = portable_to_simd64(xr1);
+        self.tm0 = portable_to_simd64(tm0);
+        self.tm1 = portable_to_simd64(tm1);
+        self.weyl_lo = portable_to_simd64(w_lo);
+        self.weyl_hi = portable_to_simd64(w_hi);
     }
 }
+
+// ============================================================================
+// Test-only portable implementation (uses scalar multiply for cross-verification)
+// ============================================================================
+
+#[cfg(test)]
+impl TripleMixSimdCore {
+    /// generate() but forcing portable (scalarized) multiplication.
+    /// Used by test_equivalence to verify AVX2 mullo matches scalar multiply.
+    fn generate_portable(&mut self, output: &mut [u64; OUTPUT_LEN]) {
+        fn portable_mul(a: S, b: S) -> S { a * b }
+        fn portable_mul_const(a: S, c: u64) -> S { a * S::splat(c) }
+        self.generate_impl(output, portable_mul, portable_mul_const);
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -560,12 +678,15 @@ mod tests {
         );
     }
 
+    fn assert_simd64_eq(a: Simd64, b: Simd64, msg: &str) {
+        assert!(simd64_eq(&a, &b), "{}: {:?} != {:?}",
+            msg, simd64_to_array(a), simd64_to_array(b));
+    }
+
     #[test]
     fn test_equivalence() {
-        // Compare the primary generate() (AVX2 on supported targets) against
-        // the portable SIMD generate_portable() to ensure they produce
-        // identical output and state transitions. Also check that two generators
-        // built from the same seed produce identical output and state transitions.
+        // Verify AVX2 mullo produces the same results as portable (scalarized) multiply
+        // by running both through the same generate_impl and comparing.
         let seed = [0u8; TripleMixPrng::SEED_SIZE];
         let rng = TripleMixPrng::from_seed(GenericArray::from(seed));
         let rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
@@ -585,18 +706,14 @@ mod tests {
             core_portable.generate_portable(&mut output_portable);
             core_portable_2.generate_portable(&mut output_portable_2);
 
-            assert_eq!(
-                output_avx2, output_portable,
-                "Output mismatch at step {step}"
-            );
+            assert_eq!(output_avx2, output_portable, "Output mismatch at step {step}");
 
-            // Also verify state is identical after each step
-            assert_eq!(core_avx2.xr0, core_portable.xr0, "xr0 state mismatch at step {step}");
-            assert_eq!(core_avx2.xr1, core_portable.xr1, "xr1 state mismatch at step {step}");
-            assert_eq!(core_avx2.tm0, core_portable.tm0, "tm0 state mismatch at step {step}");
-            assert_eq!(core_avx2.tm1, core_portable.tm1, "tm1 state mismatch at step {step}");
-            assert_eq!(core_avx2.weyl_lo, core_portable.weyl_lo, "weyl_lo state mismatch at step {step}");
-            assert_eq!(core_avx2.weyl_hi, core_portable.weyl_hi, "weyl_hi state mismatch at step {step}");
+            assert_simd64_eq(core_avx2.xr0, core_portable.xr0, &format!("xr0 mismatch at step {step}"));
+            assert_simd64_eq(core_avx2.xr1, core_portable.xr1, &format!("xr1 mismatch at step {step}"));
+            assert_simd64_eq(core_avx2.tm0, core_portable.tm0, &format!("tm0 mismatch at step {step}"));
+            assert_simd64_eq(core_avx2.tm1, core_portable.tm1, &format!("tm1 mismatch at step {step}"));
+            assert_simd64_eq(core_avx2.weyl_lo, core_portable.weyl_lo, &format!("weyl_lo mismatch at step {step}"));
+            assert_simd64_eq(core_avx2.weyl_hi, core_portable.weyl_hi, &format!("weyl_hi mismatch at step {step}"));
         }
     }
 
@@ -616,12 +733,13 @@ mod tests {
             prng = prng.fork();
         }
     }
+
     #[test]
     fn test_avalanche() {
         let rng = TripleMixPrng::from_seed(GenericArray::from([0u8; TripleMixPrng::SEED_SIZE]));
         let mut core = rng.0.core.clone();
 
-        let iterations = 20; // 20 iterations * 2048 bits = 40,960 checks.
+        let iterations = 20;
 
         let mut min_flips = u32::MAX;
         let mut max_flips = 0;
@@ -629,91 +747,58 @@ mod tests {
         let mut count: u64 = 0;
         let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
         for _ in 0..iterations {
-            // Generate baseline for this state
             let mut output1 = [0u64; OUTPUT_LEN];
             let mut core1 = core.clone();
             core1.generate(&mut output1);
 
-            // Access core as mutable slice of u64s
-            // We need to be careful with safety here or just use a safe introspection if possible.
-            // TripleMixSimdCore has 8 Simd64 fields.
-            // We can treat it as [u64; 32] via transmute for the test,
-            // or just iterate fields manually to be safe.
-            // Let's use a safe field iterator approach.
-
-            // Actually, to flip "every bit", we need to mutate the struct fields.
-            // Since they are private, we are in the module, so we can access them.
-            // Let's iterate over the 8 fields.
-
-            // Wait, we need to clone core for each flip AND mutate the clone.
-            // Iterating pointers to a clone is tricky in a loop.
-
-            // Better strategy: Serialization/Deserialization or direct access.
-            // Let's just use `unsafe` to treat `core` as `[u64; 32]` for bit flipping since `TripleMixSimdCore` is `repr(C)`? No it's not.
-            // But it's all Simd64s.
-            // Let's just manually iterate the logic.
-
             for field_idx in 0..8 {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0usize..64 {
-                        // TinyMT tm0 MSB (field_idx 2, bit 63) is masked out.
-                        if field_idx == 2 && bit_idx == 63 {
-                            continue;
-                        }
-
-                        // Weyl Increment Low (field_idx 6) bit 0 must be 1. Flipping it breaks valid state assumption.
-                        if field_idx == 6 && bit_idx == 0 {
-                            continue;
-                        }
-
-                        // Weyl Increment High (field_idx 7) bit 63 has period 2 in additive update (d, 2d=0, 3d, 4d=0).
-                        // It effectively affects only half the rounds, leading to lower diffusion (~250). Skip it.
-                        if field_idx == 7 && bit_idx >= 62 {
-                            continue;
-                        }
+                        if field_idx == 2 && bit_idx == 63 { continue; }
+                        if field_idx == 6 && bit_idx == 0 { continue; }
+                        if field_idx == 7 && bit_idx >= 62 { continue; }
 
                         let mut core2 = core.clone();
-                        // Mutate specific bit
                         match field_idx {
                             0 => {
-                                let mut arr = core2.xr0.to_array();
+                                let mut arr = simd64_to_array(core2.xr0);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr0 = Simd64::from_array(arr);
+                                core2.xr0 = simd64_from_array(arr);
                             }
                             1 => {
-                                let mut arr = core2.xr1.to_array();
+                                let mut arr = simd64_to_array(core2.xr1);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr1 = Simd64::from_array(arr);
+                                core2.xr1 = simd64_from_array(arr);
                             }
                             2 => {
-                                let mut arr = core2.tm0.to_array();
+                                let mut arr = simd64_to_array(core2.tm0);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm0 = Simd64::from_array(arr);
+                                core2.tm0 = simd64_from_array(arr);
                             }
                             3 => {
-                                let mut arr = core2.tm1.to_array();
+                                let mut arr = simd64_to_array(core2.tm1);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm1 = Simd64::from_array(arr);
+                                core2.tm1 = simd64_from_array(arr);
                             }
                             4 => {
-                                let mut arr = core2.weyl_lo.to_array();
+                                let mut arr = simd64_to_array(core2.weyl_lo);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = Simd64::from_array(arr);
+                                core2.weyl_lo = simd64_from_array(arr);
                             }
                             5 => {
-                                let mut arr = core2.weyl_hi.to_array();
+                                let mut arr = simd64_to_array(core2.weyl_hi);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = Simd64::from_array(arr);
+                                core2.weyl_hi = simd64_from_array(arr);
                             }
                             6 => {
-                                let mut arr = core2.inc_lo.to_array();
+                                let mut arr = simd64_to_array(core2.inc_lo);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = Simd64::from_array(arr);
+                                core2.inc_lo = simd64_from_array(arr);
                             }
                             7 => {
-                                let mut arr = core2.inc_hi.to_array();
+                                let mut arr = simd64_to_array(core2.inc_hi);
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = Simd64::from_array(arr);
+                                core2.inc_hi = simd64_from_array(arr);
                             }
                             _ => unreachable!(),
                         }
@@ -721,7 +806,6 @@ mod tests {
                         let mut output2 = [0u64; OUTPUT_LEN];
                         core2.generate(&mut output2);
 
-                        // Check for similar states leading to related outputs
                         for cell in 1..OUTPUT_LEN {
                             assert_ne!(
                                 output2[cell].wrapping_sub(output2[0]),
@@ -745,7 +829,6 @@ mod tests {
                 }
             }
 
-            // Advance state
             let mut dummy = [0u64; OUTPUT_LEN];
             core.generate(&mut dummy);
         }
@@ -763,24 +846,10 @@ mod tests {
             count, avg_flips, min_flips, max_flips
         );
 
-        // 512 is ideal. Allow 10% deviation.
         const DEVIATION: f64 = 0.1;
-        assert!(
-            avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64),
-            "Average diffusion too low"
-        );
-        assert!(
-            avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64),
-            "Average diffusion too high?"
-        ); // Just sanity
-
-        // Critical check: Ensure NO bit flip caused zero diffusion (independence failure)
-        // With swizzle fix, min flips is around 337 (33%).
-        // We accept this as sufficiently mixed (no obvious blind spots).
-        assert!(
-            min_flips as usize >= 96 * SIMD_WIDTH,
-            "Minimum diffusion too low, possible blind spot!"
-        );
+        assert!(avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too low");
+        assert!(avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too high?");
+        assert!(min_flips as usize >= 96 * SIMD_WIDTH, "Minimum diffusion too low, possible blind spot!");
     }
 
     #[test]
@@ -789,8 +858,6 @@ mod tests {
         let mut rng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let start_val1 = rng1.try_next_u64().unwrap();
 
-        // In the old implementation (incremental absorb), changing the LAST byte would NOT affect the
-        // first lane, because the first lane was generated after only absorbing the first 64 bytes.
         for byte_index in 0..TripleMixPrng::SEED_SIZE {
             for bit_index in 0..=7 {
                 let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
