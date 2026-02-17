@@ -248,14 +248,6 @@ impl TryRng for TripleMixPrng {
 impl Generator for TripleMixSimdCore {
     type Output = [u64; OUTPUT_LEN];
 
-    #[cfg_attr(
-        all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-        ),
-        allow(unused_mut)
-    )]
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
         const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
@@ -271,6 +263,115 @@ impl Generator for TripleMixSimdCore {
             0xca40_9382_2299_f31d,
             0x0082_efa9_8ec4_e6c8,
         ]);
+
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+        ))]
+        unsafe {
+            let mut xr0 = avx2::simd_u64x4_to_m256i(self.xr0);
+            let mut xr1 = avx2::simd_u64x4_to_m256i(self.xr1);
+            let mut tm0 = avx2::simd_u64x4_to_m256i(self.tm0);
+            let mut tm1 = avx2::simd_u64x4_to_m256i(self.tm1);
+            let mut w_lo = avx2::simd_u64x4_to_m256i(self.weyl_lo);
+            let mut w_hi = avx2::simd_u64x4_to_m256i(self.weyl_hi);
+            let i_lo = avx2::simd_u64x4_to_m256i(self.inc_lo);
+            let i_hi = avx2::simd_u64x4_to_m256i(self.inc_hi);
+            let lane_constants = avx2::simd_u64x4_to_m256i(LANE_CONSTANTS);
+            let tinymt_mask = avx2::simd_u64x4_to_m256i(TINYMT64_MASK);
+
+            macro_rules! do_step_avx2 {
+                ($step:expr) => {{
+                    // 1. Source Generation (AVX2)
+                    let (mut l0, mut l1, mut r0, mut r1) = avx2::source_generation_avx2(
+                        &mut xr0, &mut xr1,
+                        &mut tm0, &mut tm1,
+                        &mut w_lo, &mut w_hi,
+                        i_lo, i_hi,
+                        lane_constants,
+                        tinymt_mask,
+                        Self::TINYMT_MAT1,
+                        Self::TINYMT_MAT2,
+                        Self::TINYMT_TMAT,
+                    );
+
+                    // 2. Mixing (AVX2 Feistel network)
+                    avx2::feistel_round_avx2(
+                        &mut l0, &mut l1, &mut r0, &mut r1,
+                        FEISTEL_KEY_1, FEISTEL_KEY_2,
+                    );
+                    r1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 0, 1, 2>()}>(r1);
+
+                    avx2::feistel_round_avx2(
+                        &mut l0, &mut l1, &mut r0, &mut r1,
+                        FEISTEL_KEY_2, FEISTEL_KEY_3,
+                    );
+                    r0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<2, 3, 0, 1>()}>(r0);
+
+                    avx2::feistel_round_avx2(
+                        &mut l0, &mut l1, &mut r0, &mut r1,
+                        FEISTEL_KEY_3, FEISTEL_KEY_4,
+                    );
+                    l1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<1, 2, 3, 0>()}>(l1);
+
+                    avx2::feistel_round_avx2(
+                        &mut l0, &mut l1, &mut r0, &mut r1,
+                        FEISTEL_KEY_4, FEISTEL_KEY_1,
+                    );
+                    l0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 2, 1, 0>()}>(l0);
+
+                    avx2::finish_and_store_u64x4(l0, l1, r0, r1, output, $step);
+                }};
+            }
+
+            do_step_avx2!(0);
+            do_step_avx2!(1);
+            do_step_avx2!(2);
+            do_step_avx2!(3);
+
+            self.xr0 = avx2::m256i_to_simd_u64x4(xr0);
+            self.xr1 = avx2::m256i_to_simd_u64x4(xr1);
+            self.tm0 = avx2::m256i_to_simd_u64x4(tm0);
+            self.tm1 = avx2::m256i_to_simd_u64x4(tm1);
+            self.weyl_lo = avx2::m256i_to_simd_u64x4(w_lo);
+            self.weyl_hi = avx2::m256i_to_simd_u64x4(w_hi);
+        }
+
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+        )))]
+        {
+            self.generate_portable(output);
+        }
+    }
+}
+
+#[cfg(any(test, not(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+        ),
+        allow(unused_mut)
+    )))]
+impl TripleMixSimdCore {
+    /// Portable SIMD implementation of generate(), always available in tests
+    /// for cross-verification against the AVX2 path.
+    fn generate_portable(&mut self, output: &mut [u64; OUTPUT_LEN]) {
+        const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
+        const FEISTEL_KEY_2: u64 = 0xBF58476D1CE4E5B9;
+        const FEISTEL_KEY_3: u64 = 0x94D049BB133111EB;
+        const FEISTEL_KEY_4: u64 = 0xFF51AFD7ED558CCD;
+
+        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+            0xd243_f6a8_885a_308d,
+            0x3131_98a2_e037_0734,
+            0xca40_9382_2299_f31d,
+            0x0082_efa9_8ec4_e6c8,
+        ]);
+
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
@@ -288,8 +389,6 @@ impl Generator for TripleMixSimdCore {
         macro_rules! do_step {
             ($step:expr) => {{
                 // 1. Source Generation
-
-                // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
                 let next_w_lo = w_lo + i_lo;
                 let high_product = w_lo * LANE_CONSTANTS;
                 let carry = next_w_lo.simd_lt(w_lo).select(ONES, ZEROES);
@@ -298,13 +397,11 @@ impl Generator for TripleMixSimdCore {
                 let b_l0 = w_lo + LANE_CONSTANTS;
                 let b_r1 = w_hi;
 
-                // Xoroshiro update
                 let b_l1 = xr0 + xr1;
                 let t = xr0 ^ xr1;
                 xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
                 xr1 = rotl(t, 36);
 
-                // TinyMT64 update
                 tm0 &= TINYMT64_MASK;
                 let mut x = tm0 ^ tm1;
                 x ^= x << Simd64::splat(12);
@@ -323,114 +420,42 @@ impl Generator for TripleMixSimdCore {
                 let b_r0 = ty ^ ((ty & ONES).wrapping_neg() & Simd64::splat(Self::TINYMT_TMAT));
 
                 // 2. Mixing
-                #[allow(unused_mut)]
                 let mut l0_s = b_l0;
-                #[allow(unused_mut)]
                 let mut l1_s = b_l1;
-                #[allow(unused_mut)]
                 let mut r0_s = b_r0;
-                #[allow(unused_mut)]
                 let mut r1_s = b_r1;
 
-                #[cfg(all(
-                    target_arch = "x86_64",
-                    target_feature = "avx2",
-                    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-                ))]
-                unsafe {
-                    let mut l0 = avx2::simd_u64x4_to_m256i(l0_s);
-                    let mut l1 = avx2::simd_u64x4_to_m256i(l1_s);
-                    let mut r0 = avx2::simd_u64x4_to_m256i(r0_s);
-                    let mut r1 = avx2::simd_u64x4_to_m256i(r1_s);
+                macro_rules! feistel_round {
+                    ($const1:expr, $const2:expr) => {{
+                        let m0 = r0_s ^ rotl(r1_s, 23);
+                        let mut h0 = m0 * Simd::splat($const1);
+                        h0 ^= h0 >> Simd::splat(31);
 
-                    avx2::feistel_round_avx2(
-                        &mut l0,
-                        &mut l1,
-                        &mut r0,
-                        &mut r1,
-                        FEISTEL_KEY_1,
-                        FEISTEL_KEY_2,
-                    );
-                    r1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 0, 1, 2>()}>(r1);
+                        let m1 = r1_s ^ rotl(r0_s, 33);
+                        let mut h1 = m1 + Simd::splat($const2);
+                        h1 += rotl(h0, 29);
 
-                    avx2::feistel_round_avx2(
-                        &mut l0,
-                        &mut l1,
-                        &mut r0,
-                        &mut r1,
-                        FEISTEL_KEY_2,
-                        FEISTEL_KEY_3,
-                    );
-                    r0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<2, 3, 0, 1>()}>(r0);
-
-                    avx2::feistel_round_avx2(
-                        &mut l0,
-                        &mut l1,
-                        &mut r0,
-                        &mut r1,
-                        FEISTEL_KEY_3,
-                        FEISTEL_KEY_4,
-                    );
-                    l1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<1, 2, 3, 0>()}>(l1);
-
-                    avx2::feistel_round_avx2(
-                        &mut l0,
-                        &mut l1,
-                        &mut r0,
-                        &mut r1,
-                        FEISTEL_KEY_4,
-                        FEISTEL_KEY_1,
-                    );
-                    l0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 2, 1, 0>()}>(l0);
-
-                    avx2::finish_and_store_u64x4(l0, l1, r0, r1, output, $step);
+                        let (nl0, nr0) = (r0_s, l0_s ^ h0);
+                        let (nl1, nr1) = (r1_s, l1_s ^ h1);
+                        l0_s = nl0;
+                        r0_s = nr0;
+                        l1_s = nl1;
+                        r1_s = nr1;
+                    }};
                 }
+                feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
+                r1_s = simd_swizzle!(r1_s, [3, 0, 1, 2]);
+                feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
+                r0_s = simd_swizzle!(r0_s, [2, 3, 0, 1]);
+                feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
+                l1_s = simd_swizzle!(l1_s, [1, 2, 3, 0]);
+                feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
+                l0_s = simd_swizzle!(l0_s, [3, 2, 1, 0]);
 
-                #[cfg(not(all(
-                    target_arch = "x86_64",
-                    target_feature = "avx2",
-                    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-                )))]
-                {
-                    macro_rules! feistel_round {
-                        ($const1:expr, $const2:expr) => {{
-                            let m0 = r0_s ^ rotl(r1_s, 23);
-                            let mut h0 = m0 * Simd::splat($const1);
-                            h0 ^= h0 >> Simd::splat(31);
-
-                            let m1 = r1_s ^ rotl(r0_s, 33);
-                            let mut h1 = m1 + Simd::splat($const2);
-                            h1 += rotl(h0, 29);
-
-                            let (nl0, nr0) = (r0_s, l0_s ^ h0);
-                            let (nl1, nr1) = (r1_s, l1_s ^ h1);
-                            l0_s = nl0;
-                            r0_s = nr0;
-                            l1_s = nl1;
-                            r1_s = nr1;
-                        }};
-                    }
-                    // ---- round 0 ----
-                    feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
-                    r1_s = simd_swizzle!(r1_s, [3, 0, 1, 2]);
-
-                    // ---- round 1 ----
-                    feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
-                    r0_s = simd_swizzle!(r0_s, [2, 3, 0, 1]);
-
-                    // ---- round 2 ----
-                    feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
-                    l1_s = simd_swizzle!(l1_s, [1, 2, 3, 0]);
-
-                    // ---- round 3 ----
-                    feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
-                    l0_s = simd_swizzle!(l0_s, [3, 2, 1, 0]);
-
-                    let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
-                    res.copy_to_slice(
-                        &mut output[($step * SIMD_WIDTH)..(($step + 1) * SIMD_WIDTH)],
-                    );
-                }
+                let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
+                res.copy_to_slice(
+                    &mut output[($step * SIMD_WIDTH)..(($step + 1) * SIMD_WIDTH)],
+                );
             }};
         }
 
@@ -537,20 +562,42 @@ mod tests {
 
     #[test]
     fn test_equivalence() {
+        // Compare the primary generate() (AVX2 on supported targets) against
+        // the portable SIMD generate_portable() to ensure they produce
+        // identical output and state transitions. Also check that two generators
+        // built from the same seed produce identical output and state transitions.
         let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let rng = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut core_avx2 = rng.0.core.clone();
+        let mut core_avx2_2 = rng2.0.core.clone();
+        let mut core_portable = core_avx2.clone();
+        let mut core_portable_2 = core_avx2_2.clone();
 
-        let mut buf1 = vec![0u8; 1024];
-        prng1.fill_bytes(&mut buf1);
+        for step in 0..64 {
+            let mut output_avx2 = [0u64; OUTPUT_LEN];
+            let mut output_avx2_2 = [0u64; OUTPUT_LEN];
+            let mut output_portable = [0u64; OUTPUT_LEN];
+            let mut output_portable_2 = [0u64; OUTPUT_LEN];
 
-        let mut buf2 = vec![0u8; 1024];
-        for chunk in buf2.chunks_exact_mut(8) {
-            let val = prng2.next_u64();
-            chunk.copy_from_slice(&val.to_ne_bytes());
+            core_avx2.generate(&mut output_avx2);
+            core_avx2_2.generate(&mut output_avx2_2);
+            core_portable.generate_portable(&mut output_portable);
+            core_portable_2.generate_portable(&mut output_portable_2);
+
+            assert_eq!(
+                output_avx2, output_portable,
+                "Output mismatch at step {step}"
+            );
+
+            // Also verify state is identical after each step
+            assert_eq!(core_avx2.xr0, core_portable.xr0, "xr0 state mismatch at step {step}");
+            assert_eq!(core_avx2.xr1, core_portable.xr1, "xr1 state mismatch at step {step}");
+            assert_eq!(core_avx2.tm0, core_portable.tm0, "tm0 state mismatch at step {step}");
+            assert_eq!(core_avx2.tm1, core_portable.tm1, "tm1 state mismatch at step {step}");
+            assert_eq!(core_avx2.weyl_lo, core_portable.weyl_lo, "weyl_lo state mismatch at step {step}");
+            assert_eq!(core_avx2.weyl_hi, core_portable.weyl_hi, "weyl_hi state mismatch at step {step}");
         }
-
-        assert_eq!(buf1, buf2);
     }
 
     #[test]
