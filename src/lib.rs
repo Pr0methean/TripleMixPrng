@@ -95,7 +95,7 @@ impl SeedableRng for TripleMixPrng {
             // This breaks the 1600-bit bottleneck of the master_hasher state,
             // allowing us to reach the full 2048-bit state space of the PRNG.
             lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
-            loop {
+            'generate: loop {
                 let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
                 let out_bytes: &[u8] = output.as_ref();
 
@@ -109,7 +109,22 @@ impl SeedableRng for TripleMixPrng {
                     count += 1;
                     continue;
                 }
+                for j in 0..i {
+                    if unlikely((xr0_s[j] == xr0_s[i] && xr1_s[j] == xr1_s[i])
+                           || (tm0_s[j] == tm0_s[i] && tm1_s[j] == tm1_s[i])) {
+                        lane_hasher.write(&count.to_ne_bytes());
+                        count += 1;
+                        continue 'generate;
+                    }
+                }
                 [w_lo_s[i], w_hi_s[i], i_lo_s[i], i_hi_s[i]] = read_words(&out_bytes[32..64]);
+                for j in 0..i {
+                    if unlikely(w_lo_s[j] == w_lo_s[i] || i_lo_s[j] == i_lo_s[i]) {
+                        lane_hasher.write(&count.to_ne_bytes());
+                        count += 1;
+                        continue 'generate;
+                    }
+                }
                 break;
             }
         }
@@ -381,7 +396,7 @@ impl Generator for TripleMixSimdCore {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
@@ -389,16 +404,19 @@ mod tests {
     use std::collections::HashSet;
     use std::iter::repeat;
 
-    fn almost_all_zeroes_state() -> TripleMixPrng {
+    const SMALLEST_DISTINCT_ODD: Simd64 = Simd::from_array([1, 3, 5, 7]);
+    const SMALLEST_DISTINCT_POSITIVE: Simd64 = Simd::from_array([1, 2, 3, 4]);
+
+    pub fn almost_all_zeroes_state() -> TripleMixPrng {
         TripleMixPrng::from_core(TripleMixSimdCore {
             xr0: ZEROES,
-            xr1: ONES,
+            xr1: SMALLEST_DISTINCT_POSITIVE,
 
             tm0: ZEROES,
-            tm1: ONES,
+            tm1: SMALLEST_DISTINCT_POSITIVE,
             weyl_lo: ZEROES,
             weyl_hi: ZEROES,
-            inc_lo: ONES,
+            inc_lo: SMALLEST_DISTINCT_ODD,
             inc_hi: ZEROES,
         })
     }
