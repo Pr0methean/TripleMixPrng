@@ -100,7 +100,7 @@ pub unsafe fn permute_u64x4_avx2<const IMM8: i32>(x: __m256i) -> __m256i {
 }
 
 #[inline(always)]
-pub const fn mm_shuffle<const A3: i32, const A2: i32, const A1: i32, const A0: i32>() -> i32 {
+pub const fn mm_shuffle<const A0: i32, const A1: i32, const A2: i32, const A3: i32>() -> i32 {
     (A3 << 6) | (A2 << 4) | (A1 << 2) | A0
 }
 

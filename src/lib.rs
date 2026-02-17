@@ -412,22 +412,18 @@ impl Generator for TripleMixSimdCore {
                     }
                     // ---- round 0 ----
                     feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
-                    // swizzle for r=0: cur_r1 = [3,0,1,2]
                     r1_s = simd_swizzle!(r1_s, [3, 0, 1, 2]);
 
                     // ---- round 1 ----
                     feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
-                    // swizzle for r=1: cur_r0 = [2,3,0,1]
                     r0_s = simd_swizzle!(r0_s, [2, 3, 0, 1]);
 
                     // ---- round 2 ----
                     feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
-                    // swizzle for r=2: cur_l1 = [1,2,3,0]
                     l1_s = simd_swizzle!(l1_s, [1, 2, 3, 0]);
 
                     // ---- round 3 ----
                     feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
-                    // swizzle for r=3: cur_l0 = [3,2,1,0]
                     l0_s = simd_swizzle!(l0_s, [3, 2, 1, 0]);
 
                     let res = (r0_s ^ l0_s) + (r1_s ^ !l1_s);
