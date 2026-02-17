@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
-use triple_mix_prng::{tests, Simd64, TripleMixPrng, TripleMixSimdCore};
+use triple_mix_prng::TripleMixPrng;
 
 const OS_ENTROPY_BYTES: usize = 32;
 
@@ -23,7 +23,7 @@ fn main() {
         eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
         prng = TripleMixPrng::from_seed(seed.into());
     } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
-        prng = tests::almost_all_zeroes_state();
+        prng = TripleMixPrng::almost_all_zeroes_state();
     } else {
         let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
         for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {

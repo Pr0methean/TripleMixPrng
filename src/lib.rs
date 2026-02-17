@@ -25,15 +25,15 @@ use std::simd::*;
 use typenum::U;
 
 #[derive(Debug, Clone)]
-pub struct TripleMixSimdCore {
-    pub xr0: Simd64,
-    pub xr1: Simd64,
-    pub tm0: Simd64,
-    pub tm1: Simd64,
-    pub weyl_lo: Simd64,
-    pub weyl_hi: Simd64,
-    pub inc_lo: Simd64,
-    pub inc_hi: Simd64,
+struct TripleMixSimdCore {
+    xr0: Simd64,
+    xr1: Simd64,
+    tm0: Simd64,
+    tm1: Simd64,
+    weyl_lo: Simd64,
+    weyl_hi: Simd64,
+    inc_lo: Simd64,
+    inc_hi: Simd64,
 }
 
 impl TripleMixSimdCore {
@@ -51,8 +51,26 @@ const TINYMT64_MASK: Simd64 = Simd64::splat(TINYMT64_LANE_MASK);
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 
-    pub fn from_core(core: TripleMixSimdCore) -> Self {
+    pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
         TripleMixPrng(BlockRng::new(core))
+    }
+
+    const SMALLEST_DISTINCT_ODD: Simd64 = Simd::from_array([1, 3, 5, 7]);
+    const SMALLEST_DISTINCT_POSITIVE: Simd64 = Simd::from_array([1, 2, 3, 4]);
+
+    /// Creates an instance in a relatively predictable state. Intended only for testing.
+    pub fn almost_all_zeroes_state() -> TripleMixPrng {
+        TripleMixPrng::from_core(TripleMixSimdCore {
+            xr0: ZEROES,
+            xr1: Self::SMALLEST_DISTINCT_POSITIVE,
+
+            tm0: ZEROES,
+            tm1: Self::SMALLEST_DISTINCT_POSITIVE,
+            weyl_lo: ZEROES,
+            weyl_hi: ZEROES,
+            inc_lo: Self::SMALLEST_DISTINCT_ODD,
+            inc_hi: ZEROES,
+        })
     }
 }
 const SIMD_WIDTH: usize = 4;
@@ -166,14 +184,30 @@ impl SeedableRng for TripleMixPrng {
         let xr_zero = (child_core.xr0 | child_core.xr1).simd_eq(ZEROES);
         let tm_zero = (child_core.tm0 | child_core.tm1).simd_eq(ZEROES);
 
+        let mut rejected = false;
         if unlikely(xr_zero.any() || tm_zero.any()) {
-            // In the astronomical event of a zero-trap, we just fallback to full re-seeding
-            // to maintain absolute robustness.
+            rejected = true;
+        } else {
+            for i in 1..SIMD_WIDTH {
+                for j in 0..i {
+                    if unlikely(
+                        (child_core.xr0[j] == child_core.xr0[i] && child_core.xr1[j] == child_core.xr1[i])
+                        || (child_core.tm0[j] == child_core.tm0[i] && child_core.tm1[j] == child_core.tm1[i])
+                        || child_core.weyl_lo[j] == child_core.weyl_lo[i]
+                        || child_core.inc_lo[j] == child_core.inc_lo[i]) {
+                        rejected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if unlikely(rejected) {
+            // In the rare event of a zero-trap or an identical state in two lanes, we fall back to
+            // full re-seeding to maintain absolute robustness.
             let mut seed = [0u8; Self::SEED_SIZE];
             self.0.fill_bytes(&mut seed);
             return Self::from_seed(GenericArray::from(seed));
         }
-
         // 3. Unique Increments: Replace the child's Weyl increments with new entropy.
         // We ensure inc_lo is odd to guarantee a full-period 128-bit Weyl sequence.
         child_core.inc_lo = entropy[0] | ONES;
@@ -403,23 +437,6 @@ pub mod tests {
     use rand_core::{Rng, SeedableRng};
     use std::collections::HashSet;
     use std::iter::repeat;
-
-    const SMALLEST_DISTINCT_ODD: Simd64 = Simd::from_array([1, 3, 5, 7]);
-    const SMALLEST_DISTINCT_POSITIVE: Simd64 = Simd::from_array([1, 2, 3, 4]);
-
-    pub fn almost_all_zeroes_state() -> TripleMixPrng {
-        TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: ZEROES,
-            xr1: SMALLEST_DISTINCT_POSITIVE,
-
-            tm0: ZEROES,
-            tm1: SMALLEST_DISTINCT_POSITIVE,
-            weyl_lo: ZEROES,
-            weyl_hi: ZEROES,
-            inc_lo: SMALLEST_DISTINCT_ODD,
-            inc_hi: ZEROES,
-        })
-    }
 
     #[test]
     fn test_byte_frequencies() {
