@@ -7,7 +7,7 @@
     target_feature = "avx2",
     not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
 ))]
-mod x86;
+mod avx2;
 
 use core::convert::Infallible;
 use generic_array::{GenericArray, typenum};
@@ -323,12 +323,12 @@ impl Generator for TripleMixSimdCore {
                 not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
             ))]
             unsafe {
-                let mut l0 = x86::simd_u64x4_to_m256i(l0_s);
-                let mut l1 = x86::simd_u64x4_to_m256i(l1_s);
-                let mut r0 = x86::simd_u64x4_to_m256i(r0_s);
-                let mut r1 = x86::simd_u64x4_to_m256i(r1_s);
+                let mut l0 = avx2::simd_u64x4_to_m256i(l0_s);
+                let mut l1 = avx2::simd_u64x4_to_m256i(l1_s);
+                let mut r0 = avx2::simd_u64x4_to_m256i(r0_s);
+                let mut r1 = avx2::simd_u64x4_to_m256i(r1_s);
 
-                x86::feistel_round_avx2(
+                avx2::feistel_round_avx2(
                     &mut l0,
                     &mut l1,
                     &mut r0,
@@ -336,9 +336,9 @@ impl Generator for TripleMixSimdCore {
                     FEISTEL_KEY_1,
                     FEISTEL_KEY_2,
                 );
-                r1 = x86::permute_u64x4_avx2::<0x93>(r1);
+                r1 = avx2::permute_u64x4_avx2::<0x93>(r1);
 
-                x86::feistel_round_avx2(
+                avx2::feistel_round_avx2(
                     &mut l0,
                     &mut l1,
                     &mut r0,
@@ -346,9 +346,9 @@ impl Generator for TripleMixSimdCore {
                     FEISTEL_KEY_2,
                     FEISTEL_KEY_3,
                 );
-                r0 = x86::permute_u64x4_avx2::<0x4E>(r0);
+                r0 = avx2::permute_u64x4_avx2::<0x4E>(r0);
 
-                x86::feistel_round_avx2(
+                avx2::feistel_round_avx2(
                     &mut l0,
                     &mut l1,
                     &mut r0,
@@ -356,9 +356,9 @@ impl Generator for TripleMixSimdCore {
                     FEISTEL_KEY_3,
                     FEISTEL_KEY_4,
                 );
-                l1 = x86::permute_u64x4_avx2::<0x39>(l1);
+                l1 = avx2::permute_u64x4_avx2::<0x39>(l1);
 
-                x86::feistel_round_avx2(
+                avx2::feistel_round_avx2(
                     &mut l0,
                     &mut l1,
                     &mut r0,
@@ -366,9 +366,9 @@ impl Generator for TripleMixSimdCore {
                     FEISTEL_KEY_4,
                     FEISTEL_KEY_1,
                 );
-                l0 = x86::permute_u64x4_avx2::<0x1B>(l0);
+                l0 = avx2::permute_u64x4_avx2::<0x1B>(l0);
 
-                x86::finish_and_store_u64x4(l0, l1, r0, r1, output, step);
+                avx2::finish_and_store_u64x4(l0, l1, r0, r1, output, step);
             }
 
             #[cfg(not(all(
