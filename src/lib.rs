@@ -430,7 +430,7 @@ impl Generator for TripleMixSimdCore {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
@@ -440,7 +440,7 @@ pub mod tests {
 
     #[test]
     fn test_byte_frequencies() {
-        let mut prng = almost_all_zeroes_state();
+        let mut prng = TripleMixPrng::almost_all_zeroes_state();
         let mut frequencies = [0u32; u8::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let byte: u8 = prng.random();
@@ -458,7 +458,7 @@ pub mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        let mut prng = almost_all_zeroes_state();
+        let mut prng = TripleMixPrng::almost_all_zeroes_state();
         let mut frequencies = vec![0u32; u16::MAX as usize + 1];
         for _ in 0..(1 << 28) {
             let word: u16 = prng.random();
@@ -476,7 +476,7 @@ pub mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        let mut prng = almost_all_zeroes_state();
+        let mut prng = TripleMixPrng::almost_all_zeroes_state();
         let mut samples = vec![0u64; 1 << 24];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
@@ -539,7 +539,7 @@ pub mod tests {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        let mut prng = almost_all_zeroes_state();
+        let mut prng = TripleMixPrng::almost_all_zeroes_state();
         for _ in 0..FORKS {
             for _ in 0..SAMPLES_PER_FORK {
                 let next = prng.next_u64();
