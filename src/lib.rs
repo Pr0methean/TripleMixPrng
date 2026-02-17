@@ -248,6 +248,14 @@ impl TryRng for TripleMixPrng {
 impl Generator for TripleMixSimdCore {
     type Output = [u64; OUTPUT_LEN];
 
+    #[cfg_attr(
+        all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+        ),
+        allow(unused_mut)
+    )]
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
         const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
