@@ -351,7 +351,7 @@ impl Generator for TripleMixSimdCore {
                         FEISTEL_KEY_1,
                         FEISTEL_KEY_2,
                     );
-                    r1 = avx2::permute_u64x4_avx2::<0x93>(r1);
+                    r1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 0, 1, 2>()}>(r1);
 
                     avx2::feistel_round_avx2(
                         &mut l0,
@@ -361,7 +361,7 @@ impl Generator for TripleMixSimdCore {
                         FEISTEL_KEY_2,
                         FEISTEL_KEY_3,
                     );
-                    r0 = avx2::permute_u64x4_avx2::<0x4E>(r0);
+                    r0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<2, 3, 0, 1>()}>(r0);
 
                     avx2::feistel_round_avx2(
                         &mut l0,
@@ -371,7 +371,7 @@ impl Generator for TripleMixSimdCore {
                         FEISTEL_KEY_3,
                         FEISTEL_KEY_4,
                     );
-                    l1 = avx2::permute_u64x4_avx2::<0x39>(l1);
+                    l1 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<1, 2, 3, 0>()}>(l1);
 
                     avx2::feistel_round_avx2(
                         &mut l0,
@@ -381,7 +381,7 @@ impl Generator for TripleMixSimdCore {
                         FEISTEL_KEY_4,
                         FEISTEL_KEY_1,
                     );
-                    l0 = avx2::permute_u64x4_avx2::<0x1B>(l0);
+                    l0 = avx2::permute_u64x4_avx2::<{avx2::mm_shuffle::<3, 2, 1, 0>()}>(l0);
 
                     avx2::finish_and_store_u64x4(l0, l1, r0, r1, output, $step);
                 }

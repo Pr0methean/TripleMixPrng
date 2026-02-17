@@ -99,6 +99,11 @@ pub unsafe fn permute_u64x4_avx2<const IMM8: i32>(x: __m256i) -> __m256i {
     _mm256_permute4x64_epi64(x, IMM8)
 }
 
+#[inline(always)]
+pub const fn mm_shuffle<const A3: i32, const A2: i32, const A1: i32, const A0: i32>() -> i32 {
+    (A3 << 6) | (A2 << 4) | (A1 << 2) | A0
+}
+
 #[target_feature(enable = "avx2")]
 #[inline(always)]
 pub unsafe fn finish_and_store_u64x4(
