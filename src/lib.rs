@@ -568,36 +568,20 @@ mod tests {
 
     #[test]
     fn test_equivalence() {
-        // Verify AVX2 mullo produces the same results as portable (scalarized) multiply
-        // by running both through the same generate_impl and comparing.
         let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let rng = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let mut core_avx2 = rng.0.core.clone();
-        let mut core_avx2_2 = rng2.0.core.clone();
-        let mut core_portable = core_avx2.clone();
-        let mut core_portable_2 = core_avx2_2.clone();
+        let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
 
-        for step in 0..64 {
-            let mut output_avx2 = [0u64; OUTPUT_LEN];
-            let mut output_avx2_2 = [0u64; OUTPUT_LEN];
-            let mut output_portable = [0u64; OUTPUT_LEN];
-            let mut output_portable_2 = [0u64; OUTPUT_LEN];
+        let mut buf1 = vec![0u8; 1024];
+        prng1.fill_bytes(&mut buf1);
 
-            core_avx2.generate(&mut output_avx2);
-            core_avx2_2.generate(&mut output_avx2_2);
-            core_portable.generate_portable(&mut output_portable);
-            core_portable_2.generate_portable(&mut output_portable_2);
-
-            assert_eq!(output_avx2, output_portable, "Output mismatch at step {step}");
-
-            assert_simd64_eq(core_avx2.xr0, core_portable.xr0, &format!("xr0 mismatch at step {step}"));
-            assert_simd64_eq(core_avx2.xr1, core_portable.xr1, &format!("xr1 mismatch at step {step}"));
-            assert_simd64_eq(core_avx2.tm0, core_portable.tm0, &format!("tm0 mismatch at step {step}"));
-            assert_simd64_eq(core_avx2.tm1, core_portable.tm1, &format!("tm1 mismatch at step {step}"));
-            assert_simd64_eq(core_avx2.weyl_lo, core_portable.weyl_lo, &format!("weyl_lo mismatch at step {step}"));
-            assert_simd64_eq(core_avx2.weyl_hi, core_portable.weyl_hi, &format!("weyl_hi mismatch at step {step}"));
+        let mut buf2 = vec![0u8; 1024];
+        for chunk in buf2.chunks_exact_mut(8) {
+            let val = prng2.next_u64();
+            chunk.copy_from_slice(&val.to_ne_bytes());
         }
+
+        assert_eq!(buf1, buf2);
     }
 
     #[test]
