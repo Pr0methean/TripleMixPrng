@@ -345,7 +345,6 @@ impl TripleMixSimdCore {
             0xca40_9382_2299_f31d,
             0x0082_efa9_8ec4_e6c8,
         ]);
-        const P_TINYMT64_MASK: Simd64 = Simd64::splat(TINYMT64_LANE_MASK);
 
         // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
         let mut xr0 = self.xr0;
@@ -382,7 +381,7 @@ impl TripleMixSimdCore {
                 xr1 = rotl(t, 36);
 
                 // TinyMT64 update
-                tm0 &= P_TINYMT64_MASK;
+                tm0 &= Simd64::splat(TINYMT64_LANE_MASK);
                 let mut x = tm0 ^ tm1;
                 x ^= x << Simd64::splat(12);
                 x ^= x >> Simd64::splat(32);
