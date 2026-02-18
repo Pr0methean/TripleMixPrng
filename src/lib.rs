@@ -456,21 +456,6 @@ impl TripleMixSimdCore {
 }
 
 // ============================================================================
-// Test-only portable implementation (uses scalar multiply for cross-verification)
-// ============================================================================
-
-#[cfg(test)]
-impl TripleMixSimdCore {
-    /// generate() but forcing portable (scalarized) multiplication.
-    /// Used by test_equivalence to verify AVX2 mullo matches scalar multiply.
-    fn generate_portable(&mut self, output: &mut [u64; OUTPUT_LEN]) {
-        fn portable_mul(a: Simd64, b: Simd64) -> Simd64 { a * b }
-        fn portable_mul_const(a: Simd64, c: u64) -> Simd64 { a * Simd64::splat(c) }
-        self.generate_impl(output, portable_mul, portable_mul_const);
-    }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -559,11 +544,6 @@ mod tests {
             "Lowest lagged bin: {}, Highest lagged bin: {}",
             lowest_lagged_bin, highest_lagged_bin
         );
-    }
-
-    fn assert_simd64_eq(a: Simd64, b: Simd64, msg: &str) {
-        assert!(&a == &b, "{}: {:?} != {:?}",
-                msg, a.to_array(), b.to_array());
     }
 
     #[test]
