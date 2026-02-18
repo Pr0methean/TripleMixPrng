@@ -52,7 +52,7 @@ fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
     { avx2::mullo_const(a, c) }
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
         not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
-    { a * Simd64::splat(c) }
+    { a * Simd::splat(c) }
 }
 
 // ============================================================================
@@ -121,14 +121,14 @@ impl TripleMixPrng {
         const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
         TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd64::splat(0),
+            xr0: Simd::splat(0),
             xr1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            tm0: Simd64::splat(0),
+            tm0: Simd::splat(0),
             tm1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            weyl_lo: Simd64::splat(0),
-            weyl_hi: Simd64::splat(0),
+            weyl_lo: Simd::splat(0),
+            weyl_hi: Simd::splat(0),
             inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd64::splat(0),
+            inc_hi: Simd::splat(0),
         })
     }
 }
@@ -204,7 +204,7 @@ impl SeedableRng for TripleMixPrng {
     }
 
     fn fork(&mut self) -> Self {
-        let mut entropy = [Simd64::splat(0); 8];
+        let mut entropy = [Simd::splat(0); 8];
         for cell in entropy.iter_mut() {
             self.fill(cell.as_mut_array());
         }
@@ -234,7 +234,7 @@ impl SeedableRng for TripleMixPrng {
         let tm_combined = a2 | b1;
 
         let mut rejected = false;
-        if unlikely(xr_combined.simd_eq(Simd64::splat(0)).any() || tm_combined.simd_eq(Simd64::splat(0)).any()) {
+        if unlikely(xr_combined.simd_eq(Simd::splat(0)).any() || tm_combined.simd_eq(Simd::splat(0)).any()) {
             rejected = true;
         } else {
             for i in 1..SIMD_WIDTH {
@@ -313,27 +313,6 @@ impl Generator for TripleMixSimdCore {
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        self.generate_with_avx2_mul(output);
-    }
-}
-
-impl TripleMixSimdCore {
-    /// Main generate implementation using AVX2 mullo when available.
-    #[inline(always)]
-    fn generate_with_avx2_mul(&mut self, output: &mut [u64; OUTPUT_LEN]) {
-        self.generate_impl(output, simd_mul, simd_mul_const);
-    }
-
-    /// Core generate logic, parameterized by multiplication functions.
-    /// All other operations use portable Simd<u64, 4> which compiles to
-    /// identical AVX2 instructions on AVX2 targets.
-    #[inline(always)]
-    fn generate_impl<M: Fn(Simd64, Simd64) -> Simd64, MC: Fn(Simd64, u64) -> Simd64>(
-        &mut self,
-        output: &mut [u64; OUTPUT_LEN],
-        mul: M,
-        mul_const: MC,
-    ) {
         const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
         const FEISTEL_KEY_2: u64 = 0xBF58476D1CE4E5B9;
         const FEISTEL_KEY_3: u64 = 0x94D049BB133111EB;
@@ -358,7 +337,7 @@ impl TripleMixSimdCore {
 
         #[inline(always)]
         fn rotl(x: Simd64, k: u32) -> Simd64 {
-            (x << Simd64::splat(k as u64)) | (x >> Simd64::splat((64 - k) as u64))
+            (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
         }
 
         macro_rules! do_step {
@@ -367,8 +346,8 @@ impl TripleMixSimdCore {
 
                 // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
                 let next_w_lo = w_lo + i_lo;
-                let high_product = mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
-                let carry = next_w_lo.simd_lt(w_lo).select(Simd64::splat(1), Simd64::splat(0));
+                let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+                let carry = next_w_lo.simd_lt(w_lo).select(Simd::splat(1), Simd::splat(0));
                 w_hi = w_hi + high_product + i_hi + carry;
                 w_lo = next_w_lo;
                 let b_l0 = w_lo + LANE_CONSTANTS;
@@ -377,26 +356,26 @@ impl TripleMixSimdCore {
                 // Xoroshiro update
                 let b_l1 = xr0 + xr1;
                 let t = xr0 ^ xr1;
-                xr0 = rotl(xr0, 9) ^ t ^ (t << Simd64::splat(14));
+                xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
                 xr1 = rotl(t, 36);
 
                 // TinyMT64 update
-                tm0 &= Simd64::splat(TINYMT64_LANE_MASK);
+                tm0 &= Simd::splat(TINYMT64_LANE_MASK);
                 let mut x = tm0 ^ tm1;
-                x ^= x << Simd64::splat(12);
-                x ^= x >> Simd64::splat(32);
-                x ^= x << Simd64::splat(32);
-                x ^= x << Simd64::splat(11);
+                x ^= x << Simd::splat(12);
+                x ^= x >> Simd::splat(32);
+                x ^= x << Simd::splat(32);
+                x ^= x << Simd::splat(11);
 
-                let mask = (x & Simd64::splat(1)).wrapping_neg();
-                let next_tm0 = tm1 ^ (mask & Simd64::splat(Self::TINYMT_MAT1));
-                let next_tm1 = x ^ (mask & Simd64::splat(Self::TINYMT_MAT2));
+                let mask = (x & Simd::splat(1)).wrapping_neg();
+                let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
+                let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
                 tm0 = next_tm0;
                 tm1 = next_tm1;
 
                 let mut ty = tm0 + tm1;
-                ty ^= tm0 >> Simd64::splat(8);
-                let b_r0 = ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd64::splat(Self::TINYMT_TMAT));
+                ty ^= tm0 >> Simd::splat(8);
+                let b_r0 = ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
                 // === 2. Mixing (Feistel network) ===
                 let mut l0 = b_l0;
@@ -407,7 +386,7 @@ impl TripleMixSimdCore {
                 macro_rules! feistel_round {
                     ($const1:expr, $const2:expr) => {{
                         let m0 = r0 ^ rotl(r1, 23);
-                        let mut h0 = mul_const(m0, $const1); // ← only AVX2-dispatched op
+                        let mut h0 = simd_mul_const(m0, $const1); // ← only AVX2-dispatched op
                         h0 ^= h0 >> Simd::splat(31);
 
                         let m1 = r1 ^ rotl(r0, 33);
