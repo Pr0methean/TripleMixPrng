@@ -19,4 +19,5 @@ This is a vectorized pseudorandom number generator that combines xoroshiro128, T
 * Created using a 2048-bit seed; seeding uses SHAKE256 with multiple absorbs/squeezes to maximize the chance that
   every valid state corresponds to at least one seed.
 * Speed is about 500 GiB/hour on one performance core of an Intel Core i9-14900K.
-* Passes PractRand 0.96 for at least 4 TiB.
+* Passes PractRand 0.96 for at least 16 TiB (tested with 4 seeds) and with `-tf 2` option for at least 64 GiB (tested
+  with 32 seeds).
