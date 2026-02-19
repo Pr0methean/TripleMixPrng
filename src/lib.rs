@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_avalanche() {
-        let rng = TripleMixPrng::from_seed(GenericArray::from([0u8; TripleMixPrng::SEED_SIZE]));
+        let rng = TripleMixPrng::almost_all_zeroes_state();
         let mut core = rng.0.core.clone();
 
         let iterations = 20;
@@ -716,10 +716,14 @@ mod tests {
                 seed[byte_index] = 1 << bit_index;
                 let mut rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
                 let start_val2 = rng2.try_next_u64().unwrap();
-
-                assert_ne!(
-                    start_val1, start_val2,
+                let flipped_bits = (start_val1 ^ start_val2).count_ones();
+                assert!(
+                    flipped_bits > 1,
                     "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure."
+                );
+                assert!(
+                    flipped_bits < 63,
+                    "Changing byte {byte_index} bit {bit_index} of the seed just inverted the first output! Diffusion failure."
                 );
                 assert_ne!(start_val1, 0, "Output shouldn't be zero");
             }
