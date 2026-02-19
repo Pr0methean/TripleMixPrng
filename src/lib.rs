@@ -10,7 +10,7 @@
 mod avx2;
 
 use core::convert::Infallible;
-use generic_array::{GenericArray, typenum};
+use generic_array::{typenum, GenericArray};
 use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -725,4 +725,193 @@ mod tests {
             }
         }
     }
+
+    const SAMPLES: usize = 1 << 22; // ~4M outputs
+    const BLOCK: usize = 8;         // 8x8 projection
+
+    fn extract_bitplane(words: &[u64], bit: u32) -> Vec<i8> {
+        words.iter()
+            .map(|w| if ((w >> bit) & 1) != 0 { 1 } else { -1 })
+            .collect()
+    }
+
+    fn xor_successive(words: &mut [u64]) {
+        for i in 0..words.len() - 1 {
+            words[i] ^= words[i + 1];
+        }
+    }
+
+    fn random_projection_kernel() -> [[i8; BLOCK]; BLOCK] {
+        // Fixed deterministic ±1 kernel
+        let mut k = [[0i8; BLOCK]; BLOCK];
+        let mut x: u64 = 0x12345678abcdef01;
+        for i in 0..BLOCK {
+            for j in 0..BLOCK {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                k[i][j] = if x & 1 == 0 { 1 } else { -1 };
+            }
+        }
+        k
+    }
+
+    fn projection_test(data: &[i8]) -> f64 {
+        let kernel = random_projection_kernel();
+        let mut sum = 0f64;
+        let mut sum_sq = 0f64;
+        let mut count = 0f64;
+
+        let side = (data.len() as f64).sqrt() as usize;
+        for y in 0..side - BLOCK {
+            for x in 0..side - BLOCK {
+                let mut acc = 0i32;
+                for ky in 0..BLOCK {
+                    for kx in 0..BLOCK {
+                        let idx = (y + ky) * side + (x + kx);
+                        acc += data[idx] as i32 * kernel[ky][kx] as i32;
+                    }
+                }
+                let val = acc as f64;
+                sum += val;
+                sum_sq += val * val;
+                count += 1.0;
+            }
+        }
+
+        let mean = sum / count;
+        let var = (sum_sq / count) - mean * mean;
+        mean.abs() + (var - 64.0).abs() // 64 expected variance for 8x8 ±1
+    }
+
+    #[test]
+    fn test_bitplane_projection() {
+        let mut rng = TripleMixPrng::almost_all_zeroes_state();
+        let mut buf = vec![0u64; SAMPLES];
+        rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
+
+        xor_successive(&mut buf);
+
+        for bit in 0..64 {
+            let plane = extract_bitplane(&buf, bit);
+            let score = projection_test(&plane);
+
+            assert!(score < 1.0, "Projection deviation too large for bit {bit}: {}", score);
+        }
+    }
+
+    #[test]
+    fn test_lane_cross_correlation_bitplane() {
+        let mut rng = TripleMixPrng::almost_all_zeroes_state();
+        const N: usize = 1 << 22;
+
+        let mut sums = [0i64; 64];
+
+        let mut lanes = [0u64; 4];
+        for target_lane in 1..4 {
+            for _ in 0..N {
+           rng.fill(&mut lanes);
+                for bit in 0..64 {
+                    // use lowest bit; can also test bit 0..63 in loop
+                    let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
+                    let b = if (lanes[target_lane] >> bit) & 1 == 1 { 1 } else { -1 };
+
+                    sums[bit] += (a * b) as i64;
+                }
+            }
+            for sum in sums {
+                let corr = sum as f64 / N as f64;
+
+                // For random ±1 variables, stddev ≈ 1/sqrt(N)
+                let sigma = 1.0 / (N as f64).sqrt();
+
+                assert!(
+                    corr.abs() < 5.0 * sigma,
+                    "Lane bit correlation detected: {} (σ={})",
+                    corr,
+                    sigma
+                );
+            }
+        }
+    }
+
+
+    fn gf2_rank(mut rows: [u64; 64]) -> u32 {
+        let mut rank = 0;
+        for col in (0..64).rev() {
+            if let Some(pivot) = (rank..64).find(|&r| (rows[r] >> col) & 1 == 1) {
+                rows.swap(rank, pivot);
+                for r in 0..64 {
+                    if r != rank && ((rows[r] >> col) & 1) == 1 {
+                        rows[r] ^= rows[rank];
+                    }
+                }
+                rank += 1;
+            }
+        }
+        rank.try_into().unwrap()
+    }
+
+    #[test]
+    fn test_lowbit_rank() {
+        let mut rng = TripleMixPrng::almost_all_zeroes_state();
+
+        for _ in 0..10000 {
+            let mut matrix = [0u64; 64];
+            for r in 0..64 {
+                matrix[r] = rng.next_u64();
+            }
+            let rank = gf2_rank(matrix);
+            assert!(rank > 60, "Low-bit rank deficiency: {}", rank);
+        }
+    }
+
+    #[test]
+    fn test_double_differential() {
+        let mut rng = TripleMixPrng::almost_all_zeroes_state();
+        const N: usize = 1 << 21;
+
+        let mut x = vec![0u64; N];
+        for i in 0..N {
+            x[i] = rng.next_u64();
+        }
+
+        // first difference
+        for i in 0..N-1 {
+            x[i] ^= x[i+1];
+        }
+
+        // second difference
+        for i in 0..N-2 {
+            x[i] ^= x[i+2];
+        }
+
+        // check bit bias
+        let ones = x.iter().map(|v| v.count_ones() as u64).sum::<u64>();
+        let total_bits = (N as u64) * 64;
+        let bias = (ones as f64 / total_bits as f64) - 0.5;
+
+        assert!(bias.abs() < 1e-3, "Differential bias detected: {}", bias);
+    }
+
+    #[test]
+    fn test_fractional_spectral() {
+        let mut rng = TripleMixPrng::almost_all_zeroes_state();
+        const N: usize = 1 << 21;
+
+        let mut prev = rng.next_u64();
+        let mut min_gap = f64::MAX;
+
+        for _ in 0..N {
+            let curr = rng.next_u64();
+            let diff = (curr.wrapping_sub(prev) as f64).abs();
+            if diff < min_gap {
+                min_gap = diff;
+            }
+            prev = curr;
+        }
+
+        assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
+    }
+
 }
