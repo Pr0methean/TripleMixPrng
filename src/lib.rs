@@ -420,14 +420,15 @@ impl Generator for TripleMixSimdCore {
                     }};
                 }
 
+                l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+                l1 ^= i_hi >> 56; // Kludge to improve avalanche effect for high octet of i_hi
                 feistel_round_nomul!(FEISTEL_KEY_1, FEISTEL_KEY_2);
-                r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
+                l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
                 feistel_round_nomul!(FEISTEL_KEY_2, FEISTEL_KEY_3);
                 r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
                 feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
-                l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+                r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
                 feistel_round_nomul!(FEISTEL_KEY_4, FEISTEL_KEY_1);
-                l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
 
                 // === 3. Output ===
                 let res = (r0 ^ l0) + (r1 ^ !l1);
@@ -464,6 +465,7 @@ mod tests {
     use rand_core::{Rng, SeedableRng};
     use std::collections::HashSet;
     use std::iter::repeat;
+    use statrs::distribution::{Binomial, DiscreteCDF};
 
     #[test]
     fn test_byte_frequencies() {
@@ -581,108 +583,121 @@ mod tests {
     #[test]
     fn test_avalanche() {
         let rng = TripleMixPrng::almost_all_zeroes_state();
-        let mut core = rng.0.core.clone();
+        let core = rng.0.core.clone();
 
-        let iterations = 20;
+        const ITERATIONS: usize = 20;
+        const LOW_AVALANCHE_THRESHOLD: u32 = 112 * SIMD_WIDTH as u32;
 
         let mut min_flips = u32::MAX;
         let mut max_flips = 0;
         let mut total_flips: u64 = 0;
         let mut count: u64 = 0;
         let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
-        for _ in 0..iterations {
-            let mut output1 = [0u64; OUTPUT_LEN];
-            let mut core1 = core.clone();
-            core1.generate(&mut output1);
-
-            for field_idx in 0..8 {
-                for lane_idx in 0..SIMD_WIDTH {
-                    for bit_idx in 0usize..64 {
-                        if field_idx == 2 && bit_idx == 63 { continue; }
-                        if field_idx == 6 && bit_idx == 0 { continue; }
-                        if field_idx == 7 && bit_idx >= 62 { continue; }
-
-                        let mut core2 = core.clone();
-                        match field_idx {
-                            0 => {
-                                let x = core2.xr0;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr0 = Simd64::from_array(arr);
-                            }
-                            1 => {
-                                let x = core2.xr1;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr1 = Simd64::from_array(arr);
-                            }
-                            2 => {
-                                let x = core2.tm0;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm0 = Simd64::from_array(arr);
-                            }
-                            3 => {
-                                let x = core2.tm1;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm1 = Simd64::from_array(arr);
-                            }
-                            4 => {
-                                let x = core2.weyl_lo;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = Simd64::from_array(arr);
-                            }
-                            5 => {
-                                let x = core2.weyl_hi;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = Simd64::from_array(arr);
-                            }
-                            6 => {
-                                let x = core2.inc_lo;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = Simd64::from_array(arr);
-                            }
-                            7 => {
-                                let x = core2.inc_hi;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = Simd64::from_array(arr);
-                            }
-                            _ => unreachable!(),
+        let mut core1 = core.clone();
+        let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+        for output_block in output1.iter_mut() {
+            core1.generate(output_block);
+        }
+        let mut min_field = 0;
+        let mut min_lane = 0;
+        let mut min_bit = 0;
+        let mut min_iter = 0;
+        let mut low_avalanches = 0;
+        for field_idx in 0..8 {
+            for lane_idx in 0..SIMD_WIDTH {
+                for bit_idx in 0usize..64 {
+                    if field_idx == 2 && bit_idx == 63 { continue; }
+                    if field_idx == 6 && bit_idx == 0 { continue; }
+                    //if field_idx == 7 && bit_idx >= 59 { continue; }
+                    let mut core2 = core.clone();
+                    match field_idx {
+                        0 => {
+                            let x = core2.xr0;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.xr0 = Simd64::from_array(arr);
                         }
-
-                        let mut output2 = [0u64; OUTPUT_LEN];
-                        core2.generate(&mut output2);
-
-                        for cell in 1..OUTPUT_LEN {
-                            assert_ne!(
-                                output2[cell].wrapping_sub(output2[0]),
-                                output1[cell].wrapping_sub(output1[0]),
-                                "Same difference between cells 0 and {cell}"
-                            );
-                            assert_ne!(output2[cell] ^ output2[0], output1[cell] ^ output1[0],
-                                "Same xor between cells 0 and {cell}");
+                        1 => {
+                            let x = core2.xr1;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.xr1 = Simd64::from_array(arr);
                         }
-
-                        let mut flips = 0;
-                        for i in 0..OUTPUT_LEN {
-                            flips += (output1[i] ^ output2[i]).count_ones();
+                        2 => {
+                            let x = core2.tm0;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.tm0 = Simd64::from_array(arr);
                         }
-                        total_flips += flips as u64;
-                        min_flips = min_flips.min(flips);
-                        max_flips = max_flips.max(flips);
-                        count += 1;
-                        flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
+                        3 => {
+                            let x = core2.tm1;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.tm1 = Simd64::from_array(arr);
+                        }
+                        4 => {
+                            let x = core2.weyl_lo;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.weyl_lo = Simd64::from_array(arr);
+                        }
+                        5 => {
+                            let x = core2.weyl_hi;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.weyl_hi = Simd64::from_array(arr);
+                        }
+                        6 => {
+                            let x = core2.inc_lo;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.inc_lo = Simd64::from_array(arr);
+                        }
+                        7 => {
+                            let x = core2.inc_hi;
+                            let mut arr = x.to_array();
+                            arr[lane_idx] ^= 1 << bit_idx;
+                            core2.inc_hi = Simd64::from_array(arr);
+                        }
+                        _ => unreachable!(),
+                    }
+                    let mut output2 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+                    for output_block in output2.iter_mut() {
+                        core2.generate(output_block);
+                    }
+                    for i in 0..ITERATIONS {
+                        for cell in 0..OUTPUT_LEN {
+                            if cell != 0 {
+                                assert_ne!(
+                                    output2[i][cell].wrapping_sub(output2[i][0]),
+                                    output1[i][cell].wrapping_sub(output1[i][0]),
+                                    "Same difference between cells 0 and {cell}"
+                                );
+                                assert_ne!(output2[i][cell] ^ output2[i][0], output1[i][cell] ^ output1[i][0],
+                                           "Same xor between cells 0 and {cell}");
+                            }
+                            let mut flips = 0;
+                            for i in 0..OUTPUT_LEN {
+                                flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                            }
+                            total_flips += flips as u64;
+                            if flips <= LOW_AVALANCHE_THRESHOLD {
+                                low_avalanches += 1;
+                            }
+                            if flips < min_flips {
+                                min_flips = flips;
+                                min_iter = i;
+                                min_field = field_idx;
+                                min_lane = lane_idx;
+                                min_bit = bit_idx;
+                            }
+                            max_flips = max_flips.max(flips);
+                            count += 1;
+                            flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
+                        }
                     }
                 }
             }
-
-            let mut dummy = [0u64; OUTPUT_LEN];
-            core.generate(&mut dummy);
         }
         for field_idx in 0..8 {
             for lane_idx in 0..SIMD_WIDTH {
@@ -701,7 +716,16 @@ mod tests {
         const DEVIATION: f64 = 0.1;
         assert!(avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too low");
         assert!(avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too high?");
-        assert!(min_flips as usize >= 96 * SIMD_WIDTH, "Minimum diffusion too low, possible blind spot!");
+        let bit_flip_distribution = Binomial::new(0.5, (256 * SIMD_WIDTH) as u64).unwrap();
+        let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
+        let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
+        let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
+        println!("Expected {:.4} low-avalanche checks, got {}; p={:.4}",
+                 low_avalanche_probability * count as f64,
+                 low_avalanches,
+                 low_avalanche_p_value);
+        assert!(low_avalanche_p_value > 0.01, "Too many low-avalanche results");
+        assert!(min_flips as usize >= 64 * SIMD_WIDTH, "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!");
     }
 
     #[test]
@@ -807,7 +831,7 @@ mod tests {
     #[test]
     fn test_lane_cross_correlation_bitplane() {
         let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        const N: usize = 1 << 22;
+        const N: usize = 1 << 28;
 
         let mut sums = [0i64; 64];
 

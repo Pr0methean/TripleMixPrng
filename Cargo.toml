@@ -27,3 +27,4 @@ codegen-units = 1
 rand = "0.10.0"
 hypors = "0.3.0"
 bytemuck = "1.25.0"
+statrs = "0.18.0"
