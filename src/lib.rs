@@ -313,11 +313,10 @@ impl Generator for TripleMixSimdCore {
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEY_1: u64 = 0x9E3779B97F4A7C15;
-        const FEISTEL_KEY_2: u64 = 0xBF58476D1CE4E5B9;
-        const FEISTEL_KEY_3: u64 = 0x94D049BB133111EB;
-        const FEISTEL_KEY_4: u64 = 0xFF51AFD7ED558CCD;
-
+        const FEISTEL_KEY_1: u64 = 0xFF51AFD7ED558CCD;
+        const FEISTEL_KEY_2: u64 = 0x94D049BB133111EB;
+        const FEISTEL_KEY_3: u64 = 0xBF58476D1CE4E5B9;
+        const FEISTEL_KEY_4: u64 = 0x9E3779B97F4A7C15;
         const LANE_CONSTANTS: Simd64 = Simd64::from_array([
             0xd243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
@@ -402,13 +401,32 @@ impl Generator for TripleMixSimdCore {
                     }};
                 }
 
-                feistel_round!(FEISTEL_KEY_1, FEISTEL_KEY_2);
+                macro_rules! feistel_round_nomul {
+                    ($const1:expr, $const2:expr) => {{
+                        let m0 = r0 ^ rotl(r1, 23);
+                        let mut h0 = m0 + Simd::splat($const1); // ← only AVX2-dispatched op
+                        h0 ^= h0 >> Simd::splat(31);
+
+                        let m1 = r1 ^ rotl(r0, 33);
+                        let mut h1 = m1 + Simd::splat($const2);
+                        h1 += rotl(h0, 29);
+
+                        let (nl0, nr0) = (r0, l0 ^ h0);
+                        let (nl1, nr1) = (r1, l1 ^ h1);
+                        l0 = nl0;
+                        r0 = nr0;
+                        l1 = nl1;
+                        r1 = nr1;
+                    }};
+                }
+
+                feistel_round_nomul!(FEISTEL_KEY_1, FEISTEL_KEY_2);
                 r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
-                feistel_round!(FEISTEL_KEY_2, FEISTEL_KEY_3);
+                feistel_round_nomul!(FEISTEL_KEY_2, FEISTEL_KEY_3);
                 r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
                 feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
                 l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-                feistel_round!(FEISTEL_KEY_4, FEISTEL_KEY_1);
+                feistel_round_nomul!(FEISTEL_KEY_4, FEISTEL_KEY_1);
                 l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
 
                 // === 3. Output ===
