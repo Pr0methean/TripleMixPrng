@@ -15,6 +15,9 @@ const OS_ENTROPY_BYTES: usize = 32;
 fn main() {
     let args: Vec<_> = env::args_os().collect();
     let mut prng: TripleMixPrng<NotReproducible>;
+    const BUFFER_SIZE: usize = 1 << 16;
+    const OUTPUT_SIZE: usize = 1 << 30;
+    const BATCHES: usize = OUTPUT_SIZE / BUFFER_SIZE;
     if let Some(seed_arg) = args.get(1)
         && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
     {
@@ -72,8 +75,8 @@ fn main() {
         eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
         prng = TripleMixPrng::from_seed(seed.into());
     }
-    loop {
-        let mut buffer = [0u8; 1 << 16];
+    for _ in 0..BATCHES {
+        let mut buffer = [0u8; BUFFER_SIZE];
         prng.fill_bytes(&mut buffer);
         if let Err(e) = stdout().write_all(&buffer) {
             eprintln!("Error writing to stdout: {}", e);
