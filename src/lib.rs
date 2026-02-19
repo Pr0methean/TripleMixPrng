@@ -317,11 +317,14 @@ impl Generator for TripleMixSimdCore {
         const FEISTEL_KEY_2: u64 = 0x94D049BB133111EB;
         const FEISTEL_KEY_3: u64 = 0xBF58476D1CE4E5B9;
         const FEISTEL_KEY_4: u64 = 0x9E3779B97F4A7C15;
+
+        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
+        // first and last constant to increase low-bit rank and avalanche effect.
         const LANE_CONSTANTS: Simd64 = Simd64::from_array([
             0xd243_f6a8_885a_308d,
             0x3131_98a2_e037_0734,
             0xca40_9382_2299_f31d,
-            0x0082_efa9_8ec4_e6c8,
+            0x7082_efa9_8ec4_e6c8,
         ]);
 
         // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
@@ -505,8 +508,10 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
+        const SAMPLE_COUNT: usize = 1 << 24;
+        let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
         let mut prng = TripleMixPrng::almost_all_zeroes_state();
-        let mut samples = vec![0u64; 1 << 24];
+        let mut samples = vec![0u64; SAMPLE_COUNT];
         prng.fill(samples.as_mut());
         let mut lowest_bin = u64::MAX;
         let mut highest_bin = 0;
@@ -516,7 +521,10 @@ mod tests {
                 for sample in &samples {
                     bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                 }
-                for bin in bins {
+                for (index, bin) in bins.into_iter().enumerate() {
+                    let p = bin_count_distribution.cdf(bin);
+                    assert!(p >= 0.00001, "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
+                    assert!(p <= 0.99999, "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
                     lowest_bin = lowest_bin.min(bin);
                     highest_bin = highest_bin.max(bin);
                 }
@@ -533,7 +541,10 @@ mod tests {
                     let second = pair[1];
                     lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                 }
-                for bin in lagged_bins {
+                for (index, bin) in lagged_bins.into_iter().enumerate() {
+                    let p = bin_count_distribution.cdf(bin);
+                    assert!(p >= 0.00001, "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
+                    assert!(p <= 0.99999, "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
                     lowest_lagged_bin = lowest_lagged_bin.min(bin);
                     highest_lagged_bin = highest_lagged_bin.max(bin);
                 }
