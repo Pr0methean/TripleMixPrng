@@ -80,7 +80,7 @@ mod tests {
         // Products that overflow 64 bits (only low 64 bits should be kept)
         assert_mullo_eq(
             [u64::MAX, u64::MAX, 0x8000_0000_0000_0000, 0xFFFF_FFFF],
-            [2,        u64::MAX, 2,                      0xFFFF_FFFF],
+            [2, u64::MAX, 2, 0xFFFF_FFFF],
         );
     }
 
@@ -145,8 +145,18 @@ mod tests {
     fn test_mullo_mixed_hi_lo_bits() {
         // Specifically exercises the cross-term (a_hi*b_lo + a_lo*b_hi) logic
         assert_mullo_eq(
-            [0x0000_0001_0000_0000, 0x0000_0000_0000_0001, 0x8000_0000_8000_0000, 0x1_0000_0001],
-            [0x0000_0000_0000_0002, 0x0000_0001_0000_0000, 0x0000_0002_0000_0002, 0x1_0000_0001],
+            [
+                0x0000_0001_0000_0000,
+                0x0000_0000_0000_0001,
+                0x8000_0000_8000_0000,
+                0x1_0000_0001,
+            ],
+            [
+                0x0000_0000_0000_0002,
+                0x0000_0001_0000_0000,
+                0x0000_0002_0000_0002,
+                0x1_0000_0001,
+            ],
         );
     }
 }

@@ -10,7 +10,7 @@
 mod avx2;
 
 use core::convert::Infallible;
-use generic_array::{typenum, GenericArray};
+use generic_array::{GenericArray, typenum};
 use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -36,23 +36,43 @@ pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 /// SIMD multiply: uses AVX2 mullo (in-register) or portable * (scalarized).
 #[inline(always)]
 fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
-    { avx2::mullo(a, b) }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
-    { a * b }
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    ))]
+    {
+        avx2::mullo(a, b)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    )))]
+    {
+        a * b
+    }
 }
 
 /// SIMD multiply by scalar constant.
 #[inline(always)]
 fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))))]
-    { avx2::mullo_const(a, c) }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl")))))]
-    { a * Simd::splat(c) }
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    ))]
+    {
+        avx2::mullo_const(a, c)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    )))]
+    {
+        a * Simd::splat(c)
+    }
 }
 
 // ============================================================================
@@ -234,7 +254,9 @@ impl SeedableRng for TripleMixPrng {
         let tm_combined = a2 | b1;
 
         let mut rejected = false;
-        if unlikely(xr_combined.simd_eq(Simd::splat(0)).any() || tm_combined.simd_eq(Simd::splat(0)).any()) {
+        if unlikely(
+            xr_combined.simd_eq(Simd::splat(0)).any() || tm_combined.simd_eq(Simd::splat(0)).any(),
+        ) {
             rejected = true;
         } else {
             for i in 1..SIMD_WIDTH {
@@ -349,7 +371,9 @@ impl Generator for TripleMixSimdCore {
                 // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
                 let next_w_lo = w_lo + i_lo;
                 let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
-                let carry = next_w_lo.simd_lt(w_lo).select(Simd::splat(1), Simd::splat(0));
+                let carry = next_w_lo
+                    .simd_lt(w_lo)
+                    .select(Simd::splat(1), Simd::splat(0));
                 w_hi = w_hi + high_product + i_hi + carry;
                 w_lo = next_w_lo;
                 let b_l0 = w_lo + LANE_CONSTANTS;
@@ -377,7 +401,8 @@ impl Generator for TripleMixSimdCore {
 
                 let mut ty = tm0 + tm1;
                 ty ^= tm0 >> Simd::splat(8);
-                let b_r0 = ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+                let b_r0 =
+                    ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
                 // === 2. Mixing (Feistel network) ===
                 let mut l0 = b_l0;
@@ -435,9 +460,7 @@ impl Generator for TripleMixSimdCore {
 
                 // === 3. Output ===
                 let res = (r0 ^ l0) + (r1 ^ !l1);
-                res.copy_to_slice(
-                    &mut output[($step * SIMD_WIDTH)..(($step + 1) * SIMD_WIDTH)],
-                );
+                res.copy_to_slice(&mut output[($step * SIMD_WIDTH)..(($step + 1) * SIMD_WIDTH)]);
             }};
         }
 
@@ -466,9 +489,9 @@ mod tests {
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
     use rand_core::{Rng, SeedableRng};
+    use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
-    use statrs::distribution::{Binomial, DiscreteCDF};
 
     #[test]
     fn test_byte_frequencies() {
@@ -523,8 +546,14 @@ mod tests {
                 }
                 for (index, bin) in bins.into_iter().enumerate() {
                     let p = bin_count_distribution.cdf(bin);
-                    assert!(p >= 0.00001, "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
-                    assert!(p <= 0.99999, "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
+                    assert!(
+                        p >= 0.00001,
+                        "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                    );
+                    assert!(
+                        p <= 0.99999,
+                        "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                    );
                     lowest_bin = lowest_bin.min(bin);
                     highest_bin = highest_bin.max(bin);
                 }
@@ -543,8 +572,14 @@ mod tests {
                 }
                 for (index, bin) in lagged_bins.into_iter().enumerate() {
                     let p = bin_count_distribution.cdf(bin);
-                    assert!(p >= 0.00001, "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
-                    assert!(p <= 0.99999, "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}");
+                    assert!(
+                        p >= 0.00001,
+                        "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                    );
+                    assert!(
+                        p <= 0.99999,
+                        "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                    );
                     lowest_lagged_bin = lowest_lagged_bin.min(bin);
                     highest_lagged_bin = highest_lagged_bin.max(bin);
                 }
@@ -617,8 +652,12 @@ mod tests {
         for field_idx in 0..8 {
             for lane_idx in 0..SIMD_WIDTH {
                 for bit_idx in 0usize..64 {
-                    if field_idx == 2 && bit_idx == 63 { continue; }
-                    if field_idx == 6 && bit_idx == 0 { continue; }
+                    if field_idx == 2 && bit_idx == 63 {
+                        continue;
+                    }
+                    if field_idx == 6 && bit_idx == 0 {
+                        continue;
+                    }
                     //if field_idx == 7 && bit_idx >= 59 { continue; }
                     let mut core2 = core.clone();
                     match field_idx {
@@ -684,8 +723,11 @@ mod tests {
                                     output1[i][cell].wrapping_sub(output1[i][0]),
                                     "Same difference between cells 0 and {cell}"
                                 );
-                                assert_ne!(output2[i][cell] ^ output2[i][0], output1[i][cell] ^ output1[i][0],
-                                           "Same xor between cells 0 and {cell}");
+                                assert_ne!(
+                                    output2[i][cell] ^ output2[i][0],
+                                    output1[i][cell] ^ output1[i][0],
+                                    "Same xor between cells 0 and {cell}"
+                                );
                             }
                             let mut flips = 0;
                             for i in 0..OUTPUT_LEN {
@@ -725,18 +767,32 @@ mod tests {
         );
 
         const DEVIATION: f64 = 0.1;
-        assert!(avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too low");
-        assert!(avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64), "Average diffusion too high?");
+        assert!(
+            avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64),
+            "Average diffusion too low"
+        );
+        assert!(
+            avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64),
+            "Average diffusion too high?"
+        );
         let bit_flip_distribution = Binomial::new(0.5, (256 * SIMD_WIDTH) as u64).unwrap();
         let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
         let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
         let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
-        println!("Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-                 low_avalanche_probability * count as f64,
-                 low_avalanches,
-                 low_avalanche_p_value);
-        assert!(low_avalanche_p_value > 0.01, "Too many low-avalanche results");
-        assert!(min_flips as usize >= 64 * SIMD_WIDTH, "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!");
+        println!(
+            "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
+            low_avalanche_probability * count as f64,
+            low_avalanches,
+            low_avalanche_p_value
+        );
+        assert!(
+            low_avalanche_p_value > 0.01,
+            "Too many low-avalanche results"
+        );
+        assert!(
+            min_flips as usize >= 64 * SIMD_WIDTH,
+            "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
+        );
     }
 
     #[test]
@@ -766,10 +822,11 @@ mod tests {
     }
 
     const SAMPLES: usize = 1 << 22; // ~4M outputs
-    const BLOCK: usize = 8;         // 8x8 projection
+    const BLOCK: usize = 8; // 8x8 projection
 
     fn extract_bitplane(words: &[u64], bit: u32) -> Vec<i8> {
-        words.iter()
+        words
+            .iter()
             .map(|w| if ((w >> bit) & 1) != 0 { 1 } else { -1 })
             .collect()
     }
@@ -835,7 +892,11 @@ mod tests {
             let plane = extract_bitplane(&buf, bit);
             let score = projection_test(&plane);
 
-            assert!(score < 1.0, "Projection deviation too large for bit {bit}: {}", score);
+            assert!(
+                score < 1.0,
+                "Projection deviation too large for bit {bit}: {}",
+                score
+            );
         }
     }
 
@@ -849,11 +910,15 @@ mod tests {
         let mut lanes = [0u64; 4];
         for target_lane in 1..4 {
             for _ in 0..N {
-           rng.fill(&mut lanes);
+                rng.fill(&mut lanes);
                 for bit in 0..64 {
                     // use lowest bit; can also test bit 0..63 in loop
                     let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
-                    let b = if (lanes[target_lane] >> bit) & 1 == 1 { 1 } else { -1 };
+                    let b = if (lanes[target_lane] >> bit) & 1 == 1 {
+                        1
+                    } else {
+                        -1
+                    };
 
                     sums[bit] += (a * b) as i64;
                 }
@@ -873,7 +938,6 @@ mod tests {
             }
         }
     }
-
 
     fn gf2_rank(mut rows: [u64; 64]) -> u32 {
         let mut rank = 0;
@@ -916,13 +980,13 @@ mod tests {
         }
 
         // first difference
-        for i in 0..N-1 {
-            x[i] ^= x[i+1];
+        for i in 0..N - 1 {
+            x[i] ^= x[i + 1];
         }
 
         // second difference
-        for i in 0..N-2 {
-            x[i] ^= x[i+2];
+        for i in 0..N - 2 {
+            x[i] ^= x[i + 2];
         }
 
         // check bit bias
@@ -952,5 +1016,4 @@ mod tests {
 
         assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
     }
-
 }
