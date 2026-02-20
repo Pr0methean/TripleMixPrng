@@ -432,7 +432,7 @@ impl Generator for TripleMixSimdCore {
                 macro_rules! feistel_round_nomul {
                     ($const1:expr, $const2:expr) => {{
                         let m0 = r0 ^ rotl(r1, 23);
-                        let mut h0 = m0 + Simd::splat($const1); // ← only AVX2-dispatched op
+                        let mut h0 = m0 + $const1; // ← only AVX2-dispatched op
                         h0 ^= h0 >> Simd::splat(31);
 
                         let m1 = r1 ^ rotl(r0, 33);
@@ -449,14 +449,13 @@ impl Generator for TripleMixSimdCore {
                 }
 
                 l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-                l1 ^= i_hi >> 56; // Kludge to improve avalanche effect for high octet of i_hi
-                feistel_round_nomul!(FEISTEL_KEY_1, FEISTEL_KEY_2);
+                feistel_round_nomul!(Simd::splat(FEISTEL_KEY_1) ^ i_hi, FEISTEL_KEY_2);
                 l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
-                feistel_round_nomul!(FEISTEL_KEY_2, FEISTEL_KEY_3);
+                feistel_round_nomul!(Simd::splat(FEISTEL_KEY_2), FEISTEL_KEY_3);
                 r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
                 feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
                 r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
-                feistel_round_nomul!(FEISTEL_KEY_4, FEISTEL_KEY_1);
+                feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
 
                 // === 3. Output ===
                 let res = (r0 ^ l0) + (r1 ^ !l1);
