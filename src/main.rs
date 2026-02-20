@@ -16,7 +16,7 @@ fn main() {
     let args: Vec<_> = env::args_os().collect();
     let mut prng: TripleMixPrng<NotReproducible>;
     const BUFFER_SIZE: usize = 1 << 16;
-    const OUTPUT_SIZE: usize = 1 << 30;
+    const OUTPUT_SIZE: usize = 1 << 34;
     const BATCHES: usize = OUTPUT_SIZE / BUFFER_SIZE;
     if let Some(seed_arg) = args.get(1)
         && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
