@@ -603,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_independence() {
+    fn test_fork_independence_descendants() {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
@@ -616,6 +616,23 @@ mod tests {
             }
             println!();
             prng = prng.fork();
+        }
+    }
+
+    #[test]
+    fn test_fork_independence_siblings() {
+        const SAMPLES_PER_FORK: usize = 32;
+        const FORKS: usize = 64;
+        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        let mut parent_prng = TripleMixPrng::almost_all_zeroes_state();
+        for _ in 0..FORKS {
+            let mut prng = parent_prng.fork();
+            for _ in 0..SAMPLES_PER_FORK {
+                let next = prng.next_u64();
+                print!("{next:016X}");
+                assert!(random.insert(next));
+            }
+            println!();
         }
     }
 
