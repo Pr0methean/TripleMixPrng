@@ -23,5 +23,6 @@ This is a vectorized pseudorandom number generator that combines xoroshiro128, T
   H0:     7.999 999 991 0 bits/byte
   H1|0:   7.999 997 259 562 522 bits/byte
   H2|1,0: 7.999 298 578 529 284 bits/byte
-* Passes PractRand 0.96 for at least 16 TiB (tested with 4 seeds) and with `-tf 2` option for at least 64 GiB (tested
+  Hurst exponent: 0.502 458 857 934 026
+* Passes PractRand 0.96 for at least 32 TiB (tested with 4 seeds) and with `-tf 2` option for at least 64 GiB (tested
   with 32 seeds).
