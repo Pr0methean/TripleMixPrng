@@ -19,6 +19,10 @@ typenum = { version = "1.19.0", features = ["const-generics"] }
 name = "triple_mix_prng"
 required-features = ["hex","aws-lc-rs"]
 
+[[bench]]
+name = "benchmarks"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
@@ -28,3 +32,4 @@ rand = "0.10.0"
 hypors = "0.3.0"
 bytemuck = "1.25.0"
 statrs = "0.18.0"
+criterion = "0.8.2"
