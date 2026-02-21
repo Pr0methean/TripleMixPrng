@@ -77,7 +77,8 @@ fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 const SIMD_WIDTH: usize = 4;
 const STEPS_PER_BLOCK: usize = 4;
-const OUTPUT_LEN: usize = STEPS_PER_BLOCK * SIMD_WIDTH;
+const OUTPUTS_PER_STEP: usize = 2;
+const OUTPUT_LEN: usize = STEPS_PER_BLOCK * SIMD_WIDTH * OUTPUTS_PER_STEP;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 
@@ -458,8 +459,10 @@ impl Generator for TripleMixSimdCore {
             feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
 
             // === 3. Output ===
-            let res = (r0 ^ l0) + (r1 ^ !l1);
-            res.copy_to_slice(&mut output[(step * SIMD_WIDTH)..((step + 1) * SIMD_WIDTH)]);
+            let res0 = r0 ^ l0;
+            res0.copy_to_slice(&mut output[(step * SIMD_WIDTH * OUTPUTS_PER_STEP)..((step * OUTPUTS_PER_STEP + 1) * SIMD_WIDTH)]);
+            let res1 = r1 + !l1;
+            res1.copy_to_slice(&mut output[((step * OUTPUTS_PER_STEP + 1) * SIMD_WIDTH)..((step * OUTPUTS_PER_STEP + 2) * SIMD_WIDTH)]);
         }
 
         // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
@@ -604,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_fork_independence_descendants() {
-        const SAMPLES_PER_FORK: usize = 32;
+        const SAMPLES_PER_FORK: usize = OUTPUT_LEN * 4;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         let mut prng = TripleMixPrng::almost_all_zeroes_state();
@@ -642,7 +645,7 @@ mod tests {
         let core = rng.0.core.clone();
 
         const ITERATIONS: usize = 20;
-        const LOW_AVALANCHE_THRESHOLD: u32 = 112 * SIMD_WIDTH as u32;
+        const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
 
         let mut min_flips = u32::MAX;
         let mut max_flips = 0;
@@ -726,6 +729,7 @@ mod tests {
                         core2.generate(output_block);
                     }
                     for i in 0..ITERATIONS {
+                        let mut flips = 0;
                         for cell in 0..OUTPUT_LEN {
                             if cell != 0 {
                                 assert_ne!(
@@ -739,25 +743,22 @@ mod tests {
                                     "Same xor between cells 0 and {cell}"
                                 );
                             }
-                            let mut flips = 0;
-                            for i in 0..OUTPUT_LEN {
-                                flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
-                            }
-                            total_flips += flips as u64;
-                            if flips <= LOW_AVALANCHE_THRESHOLD {
-                                low_avalanches += 1;
-                            }
-                            if flips < min_flips {
-                                min_flips = flips;
-                                min_iter = i;
-                                min_field = field_idx;
-                                min_lane = lane_idx;
-                                min_bit = bit_idx;
-                            }
-                            max_flips = max_flips.max(flips);
-                            count += 1;
-                            flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
+                            flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
                         }
+                        total_flips += flips as u64;
+                        if flips <= LOW_AVALANCHE_THRESHOLD {
+                            low_avalanches += 1;
+                        }
+                        if flips < min_flips {
+                            min_flips = flips;
+                            min_iter = i;
+                            min_field = field_idx;
+                            min_lane = lane_idx;
+                            min_bit = bit_idx;
+                        }
+                        max_flips = max_flips.max(flips);
+                        count += 1;
+                        flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
                     }
                 }
             }
@@ -778,11 +779,11 @@ mod tests {
 
         const DEVIATION: f64 = 0.1;
         assert!(
-            avg_flips >= 128.0 * (1.0 - DEVIATION) * (SIMD_WIDTH as f64),
+            avg_flips >= 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64),
             "Average diffusion too low"
         );
         assert!(
-            avg_flips <= 128.0 * (1.0 + DEVIATION) * (SIMD_WIDTH as f64),
+            avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
             "Average diffusion too high?"
         );
         let bit_flip_distribution = Binomial::new(0.5, (256 * SIMD_WIDTH) as u64).unwrap();
