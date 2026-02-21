@@ -1,6 +1,4 @@
-#![feature(likely_unlikely, portable_simd)]
-#![feature(generic_const_exprs)]
-#![feature(target_feature_inline_always)]
+#![feature(likely_unlikely, portable_simd, generic_const_exprs, target_feature_inline_always)]
 #![allow(incomplete_features)]
 #[cfg(all(
     target_arch = "x86_64",
@@ -76,9 +74,7 @@ fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
 
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 const SIMD_WIDTH: usize = 4;
-const STEPS_PER_BLOCK: usize = 4;
 const OUTPUTS_PER_STEP: usize = 2;
-const OUTPUT_LEN: usize = STEPS_PER_BLOCK * SIMD_WIDTH * OUTPUTS_PER_STEP;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 
@@ -126,6 +122,148 @@ impl TripleMixSimdCore {
     const TINYMT_MAT1: u64 = 0xdaa51b54;
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
+
+    pub(crate) fn fill_blocks<'a>(&mut self, blocks: &'a mut [[u64; OUTPUTS_PER_STEP * SIMD_WIDTH]]) {
+        if blocks.is_empty() {
+            return;
+        }
+        const FEISTEL_KEY_1: u64 = 0xFF51AFD7ED558CCD;
+        const FEISTEL_KEY_2: u64 = 0x94D049BB133111EB;
+        const FEISTEL_KEY_3: u64 = 0xBF58476D1CE4E5B9;
+        const FEISTEL_KEY_4: u64 = 0x9E3779B97F4A7C15;
+
+        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
+        // first and last constant to increase low-bit rank and avalanche effect.
+        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+            0xd243_f6a8_885a_308d,
+            0x3131_98a2_e037_0734,
+            0xca40_9382_2299_f31d,
+            0x7082_efa9_8ec4_e6c8,
+        ]);
+
+        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
+        let mut xr0 = self.xr0;
+        let mut xr1 = self.xr1;
+        let mut tm0 = self.tm0;
+        let mut tm1 = self.tm1;
+        let mut w_lo = self.weyl_lo;
+        let mut w_hi = self.weyl_hi;
+        let i_lo = self.inc_lo;
+        let i_hi = self.inc_hi;
+        let first_round_key = Simd::splat(FEISTEL_KEY_1) ^ Simd::splat(FEISTEL_KEY_1) ^ i_hi;
+
+        #[inline(always)]
+        fn rotl(x: Simd64, k: u32) -> Simd64 {
+            (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
+        }
+
+        for block in blocks {
+            // === 1. Source Generation ===
+
+            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
+            let next_w_lo = w_lo + i_lo;
+            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+            let carry = next_w_lo
+                .simd_lt(w_lo)
+                .select(Simd::splat(1), Simd::splat(0));
+            w_hi = w_hi + high_product + i_hi + carry;
+            w_lo = next_w_lo;
+            let b_l0 = w_lo + LANE_CONSTANTS;
+            let b_r1 = w_hi;
+
+            // Xoroshiro update
+            let b_l1 = xr0 + xr1;
+            let t = xr0 ^ xr1;
+            xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
+            xr1 = rotl(t, 36);
+
+            // TinyMT64 update
+            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
+            let mut x = tm0 ^ tm1;
+            x ^= x << Simd::splat(12);
+            x ^= x >> Simd::splat(32);
+            x ^= x << Simd::splat(32);
+            x ^= x << Simd::splat(11);
+
+            let mask = (x & Simd::splat(1)).wrapping_neg();
+            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
+            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
+            tm0 = next_tm0;
+            tm1 = next_tm1;
+
+            let mut ty = tm0 + tm1;
+            ty ^= tm0 >> Simd::splat(8);
+            let b_r0 =
+                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+
+            // === 2. Mixing (Feistel network) ===
+            let mut l0 = b_l0;
+            let mut l1 = b_l1;
+            let mut r0 = b_r0;
+            let mut r1 = b_r1;
+
+            macro_rules! feistel_round {
+                ($const1:expr, $const2:expr) => {{
+                    let m0 = r0 ^ rotl(r1, 23);
+                    let mut h0 = simd_mul_const(m0, $const1); // ← only AVX2-dispatched op
+                    h0 ^= h0 >> Simd::splat(31);
+
+                    let m1 = r1 ^ rotl(r0, 33);
+                    let mut h1 = m1 + Simd::splat($const2);
+                    h1 += rotl(h0, 29);
+
+                    let (nl0, nr0) = (r0, l0 ^ h0);
+                    let (nl1, nr1) = (r1, l1 ^ h1);
+                    l0 = nl0;
+                    r0 = nr0;
+                    l1 = nl1;
+                    r1 = nr1;
+                }};
+            }
+
+            macro_rules! feistel_round_nomul {
+                ($const1:expr, $const2:expr) => {{
+                    let m0 = r0 ^ rotl(r1, 23);
+                    let mut h0 = m0 + $const1; // ← only AVX2-dispatched op
+                    h0 ^= h0 >> Simd::splat(31);
+
+                    let m1 = r1 ^ rotl(r0, 33);
+                    let mut h1 = m1 + Simd::splat($const2);
+                    h1 += rotl(h0, 29);
+
+                    let (nl0, nr0) = (r0, l0 ^ h0);
+                    let (nl1, nr1) = (r1, l1 ^ h1);
+                    l0 = nl0;
+                    r0 = nr0;
+                    l1 = nl1;
+                    r1 = nr1;
+                }};
+            }
+
+            l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+            feistel_round_nomul!(first_round_key, FEISTEL_KEY_2);
+            l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
+            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_2), FEISTEL_KEY_3);
+            r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
+            feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
+            r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
+            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
+
+            // === 3. Output ===
+            let res0 = r0 ^ l0;
+            res0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
+            let res1 = r1 + !l1;
+            res1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+        }
+
+        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
+        self.xr0 = xr0;
+        self.xr1 = xr1;
+        self.tm0 = tm0;
+        self.tm1 = tm1;
+        self.weyl_lo = w_lo;
+        self.weyl_hi = w_hi;
+    }
 }
 
 #[derive(Clone)]
@@ -319,7 +457,17 @@ impl TryRng for TripleMixPrng {
 
     #[inline(always)]
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.fill_bytes(dst);
+        let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
+        self.0.fill_bytes(prefix);
+        let (dst_blocks, tail) = u64s.as_chunks_mut();
+        if !dst_blocks.is_empty() {
+            self.0.reset_and_skip(0);
+            self.0.core.fill_blocks(dst_blocks);
+        }
+        for tail_u64 in tail {
+            *tail_u64 = self.0.next_word();
+        }
+        self.0.fill_bytes(suffix);
         Ok(())
     }
 }
@@ -333,145 +481,11 @@ impl TryRng for TripleMixPrng {
 // ============================================================================
 
 impl Generator for TripleMixSimdCore {
-    type Output = [u64; OUTPUT_LEN];
+    type Output = [u64; SIMD_WIDTH * OUTPUTS_PER_STEP];
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        const FEISTEL_KEY_1: u64 = 0xFF51AFD7ED558CCD;
-        const FEISTEL_KEY_2: u64 = 0x94D049BB133111EB;
-        const FEISTEL_KEY_3: u64 = 0xBF58476D1CE4E5B9;
-        const FEISTEL_KEY_4: u64 = 0x9E3779B97F4A7C15;
-
-        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
-        // first and last constant to increase low-bit rank and avalanche effect.
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-            0xd243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x7082_efa9_8ec4_e6c8,
-        ]);
-
-        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
-        let mut xr0 = self.xr0;
-        let mut xr1 = self.xr1;
-        let mut tm0 = self.tm0;
-        let mut tm1 = self.tm1;
-        let mut w_lo = self.weyl_lo;
-        let mut w_hi = self.weyl_hi;
-        let i_lo = self.inc_lo;
-        let i_hi = self.inc_hi;
-
-        #[inline(always)]
-        fn rotl(x: Simd64, k: u32) -> Simd64 {
-            (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
-        }
-
-        for step in 0..STEPS_PER_BLOCK {
-            // === 1. Source Generation ===
-
-            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            let next_w_lo = w_lo + i_lo;
-            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
-            let carry = next_w_lo
-                .simd_lt(w_lo)
-                .select(Simd::splat(1), Simd::splat(0));
-            w_hi = w_hi + high_product + i_hi + carry;
-            w_lo = next_w_lo;
-            let b_l0 = w_lo + LANE_CONSTANTS;
-            let b_r1 = w_hi;
-
-            // Xoroshiro update
-            let b_l1 = xr0 + xr1;
-            let t = xr0 ^ xr1;
-            xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
-            xr1 = rotl(t, 36);
-
-            // TinyMT64 update
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
-            let mut x = tm0 ^ tm1;
-            x ^= x << Simd::splat(12);
-            x ^= x >> Simd::splat(32);
-            x ^= x << Simd::splat(32);
-            x ^= x << Simd::splat(11);
-
-            let mask = (x & Simd::splat(1)).wrapping_neg();
-            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
-            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
-            tm0 = next_tm0;
-            tm1 = next_tm1;
-
-            let mut ty = tm0 + tm1;
-            ty ^= tm0 >> Simd::splat(8);
-            let b_r0 =
-                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
-
-            // === 2. Mixing (Feistel network) ===
-            let mut l0 = b_l0;
-            let mut l1 = b_l1;
-            let mut r0 = b_r0;
-            let mut r1 = b_r1;
-
-            macro_rules! feistel_round {
-                ($const1:expr, $const2:expr) => {{
-                    let m0 = r0 ^ rotl(r1, 23);
-                    let mut h0 = simd_mul_const(m0, $const1); // ← only AVX2-dispatched op
-                    h0 ^= h0 >> Simd::splat(31);
-
-                    let m1 = r1 ^ rotl(r0, 33);
-                    let mut h1 = m1 + Simd::splat($const2);
-                    h1 += rotl(h0, 29);
-
-                    let (nl0, nr0) = (r0, l0 ^ h0);
-                    let (nl1, nr1) = (r1, l1 ^ h1);
-                    l0 = nl0;
-                    r0 = nr0;
-                    l1 = nl1;
-                    r1 = nr1;
-                }};
-            }
-
-            macro_rules! feistel_round_nomul {
-                ($const1:expr, $const2:expr) => {{
-                    let m0 = r0 ^ rotl(r1, 23);
-                    let mut h0 = m0 + $const1; // ← only AVX2-dispatched op
-                    h0 ^= h0 >> Simd::splat(31);
-
-                    let m1 = r1 ^ rotl(r0, 33);
-                    let mut h1 = m1 + Simd::splat($const2);
-                    h1 += rotl(h0, 29);
-
-                    let (nl0, nr0) = (r0, l0 ^ h0);
-                    let (nl1, nr1) = (r1, l1 ^ h1);
-                    l0 = nl0;
-                    r0 = nr0;
-                    l1 = nl1;
-                    r1 = nr1;
-                }};
-            }
-
-            l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_1) ^ i_hi, FEISTEL_KEY_2);
-            l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
-            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_2), FEISTEL_KEY_3);
-            r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
-            feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
-            r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
-            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
-
-            // === 3. Output ===
-            let res0 = r0 ^ l0;
-            res0.copy_to_slice(&mut output[(step * SIMD_WIDTH * OUTPUTS_PER_STEP)..((step * OUTPUTS_PER_STEP + 1) * SIMD_WIDTH)]);
-            let res1 = r1 + !l1;
-            res1.copy_to_slice(&mut output[((step * OUTPUTS_PER_STEP + 1) * SIMD_WIDTH)..((step * OUTPUTS_PER_STEP + 2) * SIMD_WIDTH)]);
-        }
-
-        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
-        self.xr0 = xr0;
-        self.xr1 = xr1;
-        self.tm0 = tm0;
-        self.tm1 = tm1;
-        self.weyl_lo = w_lo;
-        self.weyl_hi = w_hi;
+        self.fill_blocks(&mut [*output])
     }
 }
 
