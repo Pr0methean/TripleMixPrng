@@ -206,20 +206,23 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0, 23);
-            l1 += rotl(sr1, 11);
-            r0 ^= rotl(sl0, 37);
-            r1 += rotl(sl1, 53);
+            l0 = l0 ^ rotl(sr0, 23) ^ (sr1 >> 7);
+            l1 = (l1 + rotl(sr1, 11)) ^ sl0;
+            r0 = (r0 ^ rotl(sl0, 37)) + (sl1 >> 13);
+            r1 = r1 + rotl(sl1, 53) ^ sr0;
 
             // Round 3: Single multiplication round with cross-lane
             let m = simd_mul(r0 ^ r1 ^ l0 ^ l1, FEISTEL_CONSTANT_2); // One multiply for all
 
             let temp0 = l0;
             let temp1 = l1;
-            l0 = r0 ^ rotl(m, 19) ^ (r1 << 17);
-            l1 = r1 + rotl(m, 47) + (temp0 >> 27);
-            r0 = temp0 + (rotl(m, 13) ^ (l1 << 20));
-            r1 = temp1 ^ (rotl(m, 43) + (l0 >> 29));
+            let m1 = rotl(m, 19);
+            let m2 = rotl(m, 47);
+
+            l0 = r0 ^ m1;
+            l1 = r1 + m2;
+            r0 = temp0 + m1;
+            r1 = temp1 ^ m2;
 
             // Round 4
             let t0 = (simd_swizzle!(l0, [3, 1, 2, 0]) + rotl(r1, 59)) ^ FEISTEL_CONSTANT_1;
