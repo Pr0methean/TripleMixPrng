@@ -48,27 +48,6 @@ fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
     }
 }
 
-/// SIMD multiply by scalar constant.
-#[inline(always)]
-fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
-    #[cfg(all(
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-    ))]
-    {
-        avx2::mullo_const(a, c)
-    }
-    #[cfg(not(all(
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-    )))]
-    {
-        a * Simd::splat(c)
-    }
-}
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -130,10 +109,11 @@ impl TripleMixSimdCore {
         if blocks.is_empty() {
             return;
         }
-        const FEISTEL_KEY_1: u64 = 0xFF51AFD7ED558CCD;
-        const FEISTEL_KEY_2: u64 = 0x94D049BB133111EB;
-        const FEISTEL_KEY_3: u64 = 0xBF58476D1CE4E5B9;
-        const FEISTEL_KEY_4: u64 = 0x9E3779B97F4A7C15;
+        // The first 16 64-bit words of the Golden Ratio, transposed.
+        const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
+        const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
+        const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([0x1082276bf3a27251, 0x01886f0928403002, 0x64d325d1c5371682, 0x471c4ab3ed3d82a5]);
+        const FEISTEL_CONSTANT_4: Simd64 = Simd::from_array([0xf86c6a11d0c18e95, 0xc1d64ba40f335e36, 0xcadd0cccfdffbbe1, 0xfec507705e4ae6e5]);
 
         // These are the hexadecimal expansion of pi, except that the first digit is changed in the
         // first and last constant to increase low-bit rank and avalanche effect.
@@ -153,7 +133,6 @@ impl TripleMixSimdCore {
         let mut w_hi = self.weyl_hi;
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
-        let first_round_key = Simd::splat(FEISTEL_KEY_1) ^ Simd::splat(FEISTEL_KEY_1) ^ i_hi;
 
         #[inline(always)]
         fn rotl(x: Simd64, k: u32) -> Simd64 {
@@ -205,58 +184,58 @@ impl TripleMixSimdCore {
             let mut r0 = b_r0;
             let mut r1 = b_r1;
 
-            macro_rules! feistel_round {
-                ($const1:expr, $const2:expr) => {{
-                    let m0 = r0 ^ rotl(r1, 23);
-                    let mut h0 = simd_mul_const(m0, $const1); // ← only AVX2-dispatched op
-                    h0 ^= h0 >> Simd::splat(31);
+            macro_rules! feistel_arx_round {
+                ($rot1:expr, $rot2:expr, $rot3:expr, $rot4:expr, $const1:expr, $const2:expr) => {{
+                    let t0 = (r0 + rotl(r1, $rot1)) ^ $const1;
+                    let mut t1 = (r1 ^ rotl(r0, $rot2)) + $const2;
+                    let t2 = t0 + rotl(t1, $rot3);
+                    t1 += t0 >> Simd::splat($rot4);
 
-                    let m1 = r1 ^ rotl(r0, 33);
-                    let mut h1 = m1 + Simd::splat($const2);
-                    h1 += rotl(h0, 29);
-
-                    let (nl0, nr0) = (r0, l0 ^ h0);
-                    let (nl1, nr1) = (r1, l1 ^ h1);
-                    l0 = nl0;
-                    r0 = nr0;
-                    l1 = nl1;
-                    r1 = nr1;
+                    let (nl0, nr0) = (r0, l0 + t2);
+                    let (nl1, nr1) = (r1, l1 ^ t1);
+                    l0 = nl0; r0 = nr0;
+                    l1 = nl1; r1 = nr1;
                 }};
             }
 
-            macro_rules! feistel_round_nomul {
-                ($const1:expr, $const2:expr) => {{
-                    let m0 = r0 ^ rotl(r1, 23);
-                    let mut h0 = m0 + $const1; // ← only AVX2-dispatched op
-                    h0 ^= h0 >> Simd::splat(31);
+            macro_rules! feistel_mul_round {
+                ($rot1:expr, $rot2:expr, $rot3:expr, $rot4:expr, $const1:expr, $const2:expr) => {{
+                    // Pre-multiply: ADD/SIMD constant
+                    let m0 = (r0 ^ rotl(r1,$rot1)) + $const1;
+                    let mut h0 = simd_mul(m0, $const2);
+                    h0 ^= h0 >> Simd::splat($rot2);
 
-                    let m1 = r1 ^ rotl(r0, 33);
-                    let mut h1 = m1 + Simd::splat($const2);
-                    h1 += rotl(h0, 29);
+                    let m1 = r1 + rotl(h0,$rot3);
+                    let h1 = m1 + rotl(r0,$rot4);
 
                     let (nl0, nr0) = (r0, l0 ^ h0);
-                    let (nl1, nr1) = (r1, l1 ^ h1);
-                    l0 = nl0;
-                    r0 = nr0;
-                    l1 = nl1;
-                    r1 = nr1;
+                    let (nl1, nr1) = (r1, l1 + h1);
+                    l0 = nl0; r0 = nr0;
+                    l1 = nl1; r1 = nr1;
                 }};
             }
 
-            l1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-            feistel_round_nomul!(first_round_key, FEISTEL_KEY_2);
-            l0 = simd_swizzle!(l0, [3, 2, 1, 0]);
-            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_2), FEISTEL_KEY_3);
-            r0 = simd_swizzle!(r0, [2, 3, 0, 1]);
-            feistel_round!(FEISTEL_KEY_3, FEISTEL_KEY_4);
+            l1 = simd_swizzle!(l1, [3, 0, 1, 2]);
+            feistel_arx_round!(7, 23, 51, 31, FEISTEL_CONSTANT_1, FEISTEL_CONSTANT_2);
+            l0 = simd_swizzle!(l0, [3, 0, 1, 2]);
+            feistel_arx_round!(29, 47, 11, 37, FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_3);
+            r0 = simd_swizzle!(r0, [3, 0, 1, 2]);
+            feistel_mul_round!(19, 43, 17, 22, FEISTEL_CONSTANT_3, FEISTEL_CONSTANT_4);
             r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
-            feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
+            feistel_arx_round!(59, 13, 41, 61, FEISTEL_CONSTANT_4, FEISTEL_CONSTANT_1);
 
             // === 3. Output ===
-            let res0 = r0 ^ l0 - (r1 ^ l1);
-            res0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            let res1 = l0 ^ l1 - (r0 ^ rotl(r1, 29));
-            res1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+            let t0 = r0 ^ l0 ^ (r1 + l1);          // add across LCG lanes
+            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));          // add across Xoroshiro/TinyMT lanes
+
+            // First layer of cross-lane mixing via ARX
+            let mut out0 = (t0 ^ (t1 << 17)) + (t1 ^ (t0 >> 43));
+            let mut out1 = (t1 + (t0 << 31)) ^ (t0 + (t1 >> 13));
+let temp = out0;
+out0 = out0 ^ rotl(out1, 23) ^ (out1 << 19);
+out1 = out1 ^ rotl(temp, 37) ^ (temp >> 11);
+            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
+            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
 
         // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
@@ -756,12 +735,12 @@ mod tests {
                                 assert_ne!(
                                     output2[i][cell].wrapping_sub(output2[i][0]),
                                     output1[i][cell].wrapping_sub(output1[i][0]),
-                                    "Same difference between cells 0 and {cell} after flipping field {field_idx} lane {lane_idx} bit {bit_idx}"
+                                    "Same difference between cells 0 and {cell}"
                                 );
                                 assert_ne!(
                                     output2[i][cell] ^ output2[i][0],
                                     output1[i][cell] ^ output1[i][0],
-                                    "Same xor between cells 0 and {cell} after flipping lane {lane_idx} bit {bit_idx}"
+                                    "Same xor between cells 0 and {cell}"
                                 );
                             }
                             flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
@@ -955,7 +934,7 @@ mod tests {
                     sums[bit] += (a * b) as i64;
                 }
             }
-            for sum in sums {
+            for (bit, sum) in sums.into_iter().enumerate() {
                 let corr = sum as f64 / N as f64;
 
                 // For random ±1 variables, stddev ≈ 1/sqrt(N)
@@ -963,9 +942,7 @@ mod tests {
 
                 assert!(
                     corr.abs() < 5.0 * sigma,
-                    "Lane bit correlation detected: {} (σ={})",
-                    corr,
-                    sigma
+                    "Lane bit correlation detected on bit {bit}: {corr} (σ={sigma})",
                 );
             }
         }
