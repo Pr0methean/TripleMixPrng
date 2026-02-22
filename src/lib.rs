@@ -157,7 +157,6 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_02: u32 = 29;
         const MIXING_ROTATION_03: u32 = 31;
         const MIXING_ROTATION_04: u32 = 37;
-        const MIXING_ROTATION_17: u32 = 38;
         const MIXING_ROTATION_23: u64 = 39;
         const MIXING_ROTATION_01: u32 = 41;
         const MIXING_ROTATION_21: u32 = 43;
@@ -265,7 +264,7 @@ impl TripleMixSimdCore {
             let t0 = (sl0 + r1) ^ FEISTEL_CONSTANT_3;
             let t1 = (sl1 ^ r0) + FEISTEL_CONSTANT_4;
 
-            let l0 = r0 ^ rotl(t0, MIXING_ROTATION_17);
+            let l0 = r0 ^ t0;
             let l1 = r1 + rotl(t1, MIXING_ROTATION_18);
             let r0 = t0 + l1;
             let r1 = t1 ^ l0;
