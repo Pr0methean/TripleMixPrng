@@ -218,7 +218,7 @@ impl TripleMixSimdCore {
             // --------------------
             // Round 3 (nonlinear core)
             // --------------------
-            let x = r0 ^ rotl(r1, 7) ^ (l0 << 3) ^ (l1 >> 5);
+            let x = (r0 ^ rotl(r1, 7)) + ((l0 << 3) ^ (l1 >> 5));
             let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
 
             let m1 = rotl(m, 19);
@@ -227,8 +227,8 @@ impl TripleMixSimdCore {
             // asymmetric feedback (no duplicated structure)
             let nl0 = r0 ^ m1;
             let nl1 = r1 + m2;
-            let nr0 = l0 + m2 + (m1 >> 3);  // carry injection
-            let nr1 = l1 ^ m1 ^ (m2 >> 13);
+            let nr0 = l0 + m2 + (m1 >> 13);  // carry injection
+            let nr1 = l1 ^ m1 ^ m2;
 
             l0 = nl0;
             l1 = nl1;
