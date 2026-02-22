@@ -190,10 +190,10 @@ impl TripleMixSimdCore {
             let mut r1 = b_r1;
 
             // Round 1: Mix between pairs (ARX only)
-            let t0 = (r0 ^ r1) + second_mix_with_i_hi;
+            let t0 = (r0 ^ rotl(r1, 41)) + second_mix_with_i_hi;
             let t1 = (r1 + rotl(r0, 13)) ^ first_mix_with_i_hi;
             let t2 = (l0 ^ rotl(l1, 31)) + FEISTEL_CONSTANT_3;
-            let t3 = (l1 + l0) ^ FEISTEL_CONSTANT_4;
+            let t3 = (l1 + rotl(l0, 37)) ^ FEISTEL_CONSTANT_4;
 
             l0 = r0 ^ t2;
             l1 = r1 + t3;
@@ -206,7 +206,7 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0, 23) ^ sl1;
+            l0 ^= rotl(sr0, 23) ^ sl1 ^ (sr1 >> 7);
             l1 += rotl(sr1, 41) ^ sl0;
             r0 ^= rotl(sl1, 11) + sr1;
             r1 += rotl(sl0, 37) + sr0;
@@ -218,15 +218,16 @@ impl TripleMixSimdCore {
             let temp0 = l0;
             let temp1 = l1;
             let m1 = rotl(m, 19);
-            let m2 = rotl(m, 47);
+            let m2 = rotl(m ^ (m >> 17), 47);   // break rotational symmetry
 
             l0 = r0 ^ m1;
             l1 = r1 + m2;
-            r0 = temp0 + m1;
+
+            r0 = temp0 + m1 + (m2 >> 3);       // inject carry into LSB path
             r1 = temp1 ^ m2;
 
             // Round 4
-            let t0 = (simd_swizzle!(l0, [3, 1, 2, 0]) + r1) ^ FEISTEL_CONSTANT_3;
+            let t0 = (rotl(simd_swizzle!(l0, [3, 1, 2, 0]), 17) + r1) ^ FEISTEL_CONSTANT_3;
             let t1 = (simd_swizzle!(l1, [1, 2, 0, 3]) ^ r0) + FEISTEL_CONSTANT_4;
             let t2 = t0 + rotl(t1, 51);
 
@@ -238,8 +239,8 @@ impl TripleMixSimdCore {
             r1 = nr1;
 
             // === 3. Output ===
-            let t0 = r0 ^ l0 ^ (r1 + l1);          // Changed: XOR instead of subtract
-            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));  // Changed: XOR instead of subtract
+            let t0 = r0 ^ l0 ^ (r1 - l1);
+            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));
 
             // First layer of cross-lane mixing via ARX
             let mut out0 = (t0 ^ (t1 << 17)) + (t1 ^ (t0 >> 43));
@@ -247,8 +248,8 @@ impl TripleMixSimdCore {
 
             // Additional cross-mixing between out0 and out1
             let temp = out0;
-            out0 = out0 ^ rotl(out1, 23) ^ (out1 << 19);
-            out1 = out1 ^ rotl(temp, 37) ^ (temp >> 11);
+            out0 ^= out1 << 19;
+            out1 ^= temp >> 11;
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
