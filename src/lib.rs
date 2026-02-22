@@ -145,7 +145,6 @@ impl TripleMixSimdCore {
         }
 
         const MIXING_ROTATION_11: u64 = 3;
-        const MIXING_ROTATION_20: u32 = 4;
         const MIXING_ROTATION_12: u64 = 5;
         const MIXING_ROTATION_10: u32 = 9;
         const MIXING_ROTATION_07: u32 = 11;
@@ -275,7 +274,7 @@ impl TripleMixSimdCore {
             let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
             let t1 = (l1 ^ r0) + r0 + (r1 << MIXING_ROTATION_19);
 
-            let mut out0 = t0 + rotl(t1, MIXING_ROTATION_20);
+            let mut out0 = t0 + t1;
             let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
 
             // single cross-mix (sufficient)
