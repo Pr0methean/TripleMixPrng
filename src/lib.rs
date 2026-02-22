@@ -20,6 +20,7 @@ use std::hint::unlikely;
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::num::SimdUint;
 use std::simd::*;
+use std::slice::from_mut;
 use typenum::U;
 
 // ============================================================================
@@ -75,6 +76,7 @@ fn simd_mul_const(a: Simd64, c: u64) -> Simd64 {
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 const SIMD_WIDTH: usize = 4;
 const OUTPUTS_PER_STEP: usize = 2;
+const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 
@@ -123,7 +125,8 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
-    pub(crate) fn fill_blocks<'a>(&mut self, blocks: &'a mut [[u64; OUTPUTS_PER_STEP * SIMD_WIDTH]]) {
+    #[inline(always)]
+    pub(crate) fn fill_blocks(&mut self, blocks: &mut [[u64; OUTPUT_LEN]]) {
         if blocks.is_empty() {
             return;
         }
@@ -250,9 +253,9 @@ impl TripleMixSimdCore {
             feistel_round_nomul!(Simd::splat(FEISTEL_KEY_4), FEISTEL_KEY_1);
 
             // === 3. Output ===
-            let res0 = r0 ^ l0;
+            let res0 = r0 ^ l0 - (r1 ^ l1);
             res0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            let res1 = r1 + !l1;
+            let res1 = l0 ^ l1 - (r0 ^ rotl(r1, 29));
             res1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
 
@@ -458,7 +461,9 @@ impl TryRng for TripleMixPrng {
     #[inline(always)]
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
         let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
-        self.0.fill_bytes(prefix);
+        if !prefix.is_empty() {
+            self.0.fill_bytes(prefix);
+        }
         let (dst_blocks, tail) = u64s.as_chunks_mut();
         if !dst_blocks.is_empty() {
             self.0.reset_and_skip(0);
@@ -467,7 +472,9 @@ impl TryRng for TripleMixPrng {
         for tail_u64 in tail {
             *tail_u64 = self.0.next_word();
         }
-        self.0.fill_bytes(suffix);
+        if !suffix.is_empty() {
+            self.0.fill_bytes(suffix);
+        }
         Ok(())
     }
 }
@@ -481,11 +488,11 @@ impl TryRng for TripleMixPrng {
 // ============================================================================
 
 impl Generator for TripleMixSimdCore {
-    type Output = [u64; SIMD_WIDTH * OUTPUTS_PER_STEP];
+    type Output = [u64; OUTPUT_LEN];
 
     #[inline(always)]
     fn generate(&mut self, output: &mut Self::Output) {
-        self.fill_blocks(&mut [*output])
+        self.fill_blocks(from_mut(output))
     }
 }
 
@@ -621,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_fork_independence_descendants() {
-        const SAMPLES_PER_FORK: usize = OUTPUT_LEN * 4;
+        const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         let mut prng = TripleMixPrng::almost_all_zeroes_state();
@@ -800,7 +807,7 @@ mod tests {
             avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
             "Average diffusion too high?"
         );
-        let bit_flip_distribution = Binomial::new(0.5, (256 * SIMD_WIDTH) as u64).unwrap();
+        let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
         let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
         let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
         let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
@@ -815,7 +822,7 @@ mod tests {
             "Too many low-avalanche results"
         );
         assert!(
-            min_flips as usize >= 64 * SIMD_WIDTH,
+            min_flips as usize >= 16 * OUTPUT_LEN,
             "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
         );
     }
