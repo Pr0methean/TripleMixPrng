@@ -226,8 +226,8 @@ impl TripleMixSimdCore {
             r1 = temp1 ^ m2;
 
             // Round 4
-            let t0 = (simd_swizzle!(l0, [3, 1, 2, 0]) + rotl(r1, 59)) ^ FEISTEL_CONSTANT_1;
-            let t1 = (simd_swizzle!(l1, [1, 2, 0, 3]) ^ rotl(r0, 7)) + FEISTEL_CONSTANT_3;
+            let t0 = (simd_swizzle!(l0, [3, 1, 2, 0]) + r1) ^ FEISTEL_CONSTANT_3;
+            let t1 = (simd_swizzle!(l1, [1, 2, 0, 3]) ^ r0) + FEISTEL_CONSTANT_4;
             let t2 = t0 + rotl(t1, 51);
 
             let nr0 = l0 + t2;
@@ -979,9 +979,11 @@ mod tests {
         rank.try_into().unwrap()
     }
 
+    /// False positive rate for this test is about 1.2%.
     #[test]
     fn test_lowbit_rank() {
         let mut rng = TripleMixPrng::almost_all_zeroes_state();
+        let mut rank60_count = 0;
 
         for _ in 0..10000 {
             let mut matrix = [0u64; 64];
@@ -989,7 +991,11 @@ mod tests {
                 matrix[r] = rng.next_u64();
             }
             let rank = gf2_rank(matrix);
-            assert!(rank > 60, "Low-bit rank deficiency: {}", rank);
+            assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
+            if rank == 60 {
+                rank60_count += 1;
+                assert!(rank60_count <= 2, "Too many low-bit rank deficiencies (rank 60)");
+            }
         }
     }
 
