@@ -136,7 +136,7 @@ impl TripleMixSimdCore {
 
         // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
         // too weak.
-        let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, 29);
+        let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
         let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
 
         #[inline(always)]
@@ -147,7 +147,6 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_11: u64 = 3;
         const MIXING_ROTATION_20: u32 = 4;
         const MIXING_ROTATION_12: u64 = 5;
-        const MIXING_ROTATION_08: u64 = 7;
         const MIXING_ROTATION_10: u32 = 9;
         const MIXING_ROTATION_07: u32 = 11;
         const MIXING_ROTATION_19: u32 = 13;
@@ -167,6 +166,7 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_15: u32 = 49;
         const MIXING_ROTATION_22: u64 = 52;
         const MIXING_ROTATION_18: u32 = 54;
+        const MIXING_ROTATION_00: u32 = 58;
         for block in blocks {
             // === 1. Source Generation ===
 
@@ -235,7 +235,7 @@ impl TripleMixSimdCore {
 
             l0 ^= rotl(sr0, MIXING_ROTATION_05) ^ sl1;
             l1 += rotl(sr1, MIXING_ROTATION_06) ^ sl0;
-            r0 ^= rotl(sl1, MIXING_ROTATION_07) + (sr1 >> MIXING_ROTATION_08);   // restore low-bit injection
+            r0 ^= rotl(sl1, MIXING_ROTATION_07) + sr1;
             r1 += rotl(sl0, MIXING_ROTATION_09) + sr0;
 
             // --------------------
@@ -245,12 +245,12 @@ impl TripleMixSimdCore {
             let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
 
             let m1 = rotl(m, MIXING_ROTATION_13);
-            let m2 = rotl(m ^ (m >> MIXING_ROTATION_14), MIXING_ROTATION_15);
+            let m2 = m ^ (m >> MIXING_ROTATION_14);
 
             // asymmetric feedback (no duplicated structure)
             let nl0 = r0 ^ m1;
             let nl1 = r1 + m2;
-            let nr0 = l0 + m2 + (m1 >> MIXING_ROTATION_16);  // carry injection
+            let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
             let r1 = l1 ^ m1 ^ m2;
 
             let l0 = nl0;
