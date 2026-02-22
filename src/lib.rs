@@ -189,7 +189,9 @@ impl TripleMixSimdCore {
             let mut r0 = b_r0;
             let mut r1 = b_r1;
 
-            // Round 1: Mix between pairs (ARX only)
+            // --------------------
+            // Round 1 (ARX, local)
+            // --------------------
             let t0 = (r0 ^ rotl(r1, 41)) + second_mix_with_i_hi;
             let t1 = (r1 + rotl(r0, 13)) ^ first_mix_with_i_hi;
             let t2 = (l0 ^ rotl(l1, 31)) + FEISTEL_CONSTANT_3;
@@ -200,56 +202,66 @@ impl TripleMixSimdCore {
             r0 = t0 + l1;
             r1 = t1 ^ l0;
 
-            // Round 2: Cross-lane mixing via swizzle
+            // --------------------
+            // Round 2 (cross-lane)
+            // --------------------
             let sr0 = simd_swizzle!(r0, [1, 2, 3, 0]);
             let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0, 23) ^ sl1 ^ (sr1 >> 7);
+            l0 ^= rotl(sr0, 23) ^ sl1;
             l1 += rotl(sr1, 41) ^ sl0;
-            r0 ^= rotl(sl1, 11) + sr1;
+            r0 ^= rotl(sl1, 11) + (sr1 >> 7);   // restore low-bit injection
             r1 += rotl(sl0, 37) + sr0;
 
-            // Round 3: Single multiplication round with cross-lane
+            // --------------------
+            // Round 3 (nonlinear core)
+            // --------------------
             let x = r0 ^ rotl(r1, 7) ^ (l0 << 3) ^ (l1 >> 5);
             let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
 
-            let temp0 = l0;
-            let temp1 = l1;
             let m1 = rotl(m, 19);
-            let m2 = rotl(m ^ (m >> 17), 47);   // break rotational symmetry
+            let m2 = rotl(m ^ (m >> 17), 47);
 
-            l0 = r0 ^ m1;
-            l1 = r1 + m2;
+            // asymmetric feedback (no duplicated structure)
+            let nl0 = r0 ^ m1;
+            let nl1 = r1 + m2;
+            let nr0 = l0 + m2 + (m1 >> 3);  // carry injection
+            let nr1 = l1 ^ m1 ^ (m2 >> 13);
 
-            r0 = temp0 + m1 + (m2 >> 3);       // inject carry into LSB path
-            r1 = temp1 ^ m2;
-
-            // Round 4
-            let t0 = (rotl(simd_swizzle!(l0, [3, 1, 2, 0]), 17) + r1) ^ FEISTEL_CONSTANT_3;
-            let t1 = (simd_swizzle!(l1, [1, 2, 0, 3]) ^ r0) + FEISTEL_CONSTANT_4;
-            let t2 = t0 + rotl(t1, 51);
-
-            let nr0 = l0 + t2;
-            let nr1 = l1 ^ t1;
-            l0 = r0;
+            l0 = nl0;
+            l1 = nl1;
             r0 = nr0;
-            l1 = r1;
             r1 = nr1;
 
-            // === 3. Output ===
-            let t0 = r0 ^ l0 ^ (r1 - l1);
-            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));
+            // --------------------
+            // Round 4 (transport)
+            // --------------------
+            let sl0 = simd_swizzle!(l0, [3, 1, 2, 0]);
+            let sl1 = simd_swizzle!(l1, [1, 2, 0, 3]);
 
-            // First layer of cross-lane mixing via ARX
-            let mut out0 = (t0 ^ (t1 << 17)) + (t1 ^ (t0 >> 43));
-            let mut out1 = (t1 + (t0 << 31)) ^ (t0 + (t1 >> 13));
+            let t0 = (sl0 + r1) ^ FEISTEL_CONSTANT_3;
+            let t1 = (sl1 ^ r0) + FEISTEL_CONSTANT_4;
 
-            // Additional cross-mixing between out0 and out1
-            let temp = out0;
-            out0 ^= out1 << 19;
-            out1 ^= temp >> 11;
+            l0 = r0 ^ rotl(t0, 17);
+            l1 = r1 + rotl(t1, 51);
+            r0 = t0 + l1;
+            r1 = t1 ^ l0;
+
+            // --------------------
+            // Output finalizer
+            // --------------------
+            let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
+            let t1 = (l1 ^ r0) + rotl(r1, 29);
+
+            let mut out0 = t0 + rotl(t1, 23);
+            let mut out1 = t1 ^ rotl(t0, 37);
+
+            // single cross-mix (sufficient)
+            out0 ^= out1 >> 11;
+            out1 += out0 << 19;
+
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
