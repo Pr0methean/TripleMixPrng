@@ -207,10 +207,10 @@ impl TripleMixSimdCore {
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
             // === 2. Mixing ===
-            let mut l0 = b_l0;
-            let mut l1 = b_l1;
-            let mut r0 = b_r0;
-            let mut r1 = b_r1;
+            let l0 = b_l0;
+            let l1 = b_l1;
+            let r0 = b_r0;
+            let r1 = b_r1;
 
             // --------------------
             // Round 1 (ARX, local)
@@ -220,10 +220,10 @@ impl TripleMixSimdCore {
             let t2 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + FEISTEL_CONSTANT_3;
             let t3 = (l1 + rotl(l0, MIXING_ROTATION_04)) ^ FEISTEL_CONSTANT_4;
 
-            l0 = r0 ^ t2;
-            l1 = r1 + t3;
-            r0 = t0 + l1;
-            r1 = t1 ^ l0;
+            let mut l0 = r0 ^ t2;
+            let mut l1 = r1 + t3;
+            let mut r0 = t0 + l1;
+            let mut r1 = t1 ^ l0;
 
             // --------------------
             // Round 2 (cross-lane)
@@ -251,12 +251,11 @@ impl TripleMixSimdCore {
             let nl0 = r0 ^ m1;
             let nl1 = r1 + m2;
             let nr0 = l0 + m2 + (m1 >> MIXING_ROTATION_16);  // carry injection
-            let nr1 = l1 ^ m1 ^ m2;
+            let r1 = l1 ^ m1 ^ m2;
 
-            l0 = nl0;
-            l1 = nl1;
-            r0 = nr0;
-            r1 = nr1;
+            let l0 = nl0;
+            let l1 = nl1;
+            let r0 = nr0;
 
             // --------------------
             // Round 4 (transport)
@@ -267,10 +266,10 @@ impl TripleMixSimdCore {
             let t0 = (sl0 + r1) ^ FEISTEL_CONSTANT_3;
             let t1 = (sl1 ^ r0) + FEISTEL_CONSTANT_4;
 
-            l0 = r0 ^ rotl(t0, MIXING_ROTATION_17);
-            l1 = r1 + rotl(t1, MIXING_ROTATION_18);
-            r0 = t0 + l1;
-            r1 = t1 ^ l0;
+            let l0 = r0 ^ rotl(t0, MIXING_ROTATION_17);
+            let l1 = r1 + rotl(t1, MIXING_ROTATION_18);
+            let r0 = t0 + l1;
+            let r1 = t1 ^ l0;
 
             // --------------------
             // Output finalizer
