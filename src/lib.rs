@@ -163,8 +163,7 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_21: u32 = 43;
         const MIXING_ROTATION_09: u32 = 44;
         const MIXING_ROTATION_06: u32 = 46;
-        const MIXING_ROTATION_15: u32 = 49;
-        const MIXING_ROTATION_22: u64 = 52;
+        const MIXING_ROTATION_22: u64 = 49;
         const MIXING_ROTATION_18: u32 = 54;
         const MIXING_ROTATION_00: u32 = 58;
         for block in blocks {
