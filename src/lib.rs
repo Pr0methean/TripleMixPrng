@@ -756,12 +756,12 @@ mod tests {
                                 assert_ne!(
                                     output2[i][cell].wrapping_sub(output2[i][0]),
                                     output1[i][cell].wrapping_sub(output1[i][0]),
-                                    "Same difference between cells 0 and {cell}"
+                                    "Same difference between cells 0 and {cell} after flipping field {field_idx} lane {lane_idx} bit {bit_idx}"
                                 );
                                 assert_ne!(
                                     output2[i][cell] ^ output2[i][0],
                                     output1[i][cell] ^ output1[i][0],
-                                    "Same xor between cells 0 and {cell}"
+                                    "Same xor between cells 0 and {cell} after flipping lane {lane_idx} bit {bit_idx}"
                                 );
                             }
                             flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
