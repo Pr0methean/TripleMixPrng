@@ -144,6 +144,29 @@ impl TripleMixSimdCore {
             (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
         }
 
+        const MIXING_ROTATION_11: u64 = 3;
+        const MIXING_ROTATION_20: u32 = 4;
+        const MIXING_ROTATION_12: u64 = 5;
+        const MIXING_ROTATION_08: u64 = 7;
+        const MIXING_ROTATION_10: u32 = 9;
+        const MIXING_ROTATION_07: u32 = 11;
+        const MIXING_ROTATION_19: u32 = 13;
+        const MIXING_ROTATION_16: u64 = 14;
+        const MIXING_ROTATION_14: u64 = 17;
+        const MIXING_ROTATION_13: u32 = 19;
+        const MIXING_ROTATION_05: u32 = 22;
+        const MIXING_ROTATION_02: u32 = 29;
+        const MIXING_ROTATION_03: u32 = 31;
+        const MIXING_ROTATION_04: u32 = 37;
+        const MIXING_ROTATION_17: u32 = 38;
+        const MIXING_ROTATION_23: u64 = 39;
+        const MIXING_ROTATION_01: u32 = 41;
+        const MIXING_ROTATION_21: u32 = 43;
+        const MIXING_ROTATION_09: u32 = 44;
+        const MIXING_ROTATION_06: u32 = 46;
+        const MIXING_ROTATION_15: u32 = 49;
+        const MIXING_ROTATION_22: u64 = 52;
+        const MIXING_ROTATION_18: u32 = 54;
         for block in blocks {
             // === 1. Source Generation ===
 
@@ -192,10 +215,10 @@ impl TripleMixSimdCore {
             // --------------------
             // Round 1 (ARX, local)
             // --------------------
-            let t0 = (r0 ^ rotl(r1, 41)) + second_mix_with_i_hi;
-            let t1 = (r1 + rotl(r0, 13)) ^ first_mix_with_i_hi;
-            let t2 = (l0 ^ rotl(l1, 31)) + FEISTEL_CONSTANT_3;
-            let t3 = (l1 + rotl(l0, 37)) ^ FEISTEL_CONSTANT_4;
+            let t0 = (r0 ^ rotl(r1, MIXING_ROTATION_01)) + second_mix_with_i_hi;
+            let t1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+            let t2 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + FEISTEL_CONSTANT_3;
+            let t3 = (l1 + rotl(l0, MIXING_ROTATION_04)) ^ FEISTEL_CONSTANT_4;
 
             l0 = r0 ^ t2;
             l1 = r1 + t3;
@@ -210,24 +233,24 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0, 23) ^ sl1;
-            l1 += rotl(sr1, 41) ^ sl0;
-            r0 ^= rotl(sl1, 11) + (sr1 >> 7);   // restore low-bit injection
-            r1 += rotl(sl0, 37) + sr0;
+            l0 ^= rotl(sr0, MIXING_ROTATION_05) ^ sl1;
+            l1 += rotl(sr1, MIXING_ROTATION_06) ^ sl0;
+            r0 ^= rotl(sl1, MIXING_ROTATION_07) + (sr1 >> MIXING_ROTATION_08);   // restore low-bit injection
+            r1 += rotl(sl0, MIXING_ROTATION_09) + sr0;
 
             // --------------------
             // Round 3 (nonlinear core)
             // --------------------
-            let x = (r0 ^ rotl(r1, 7)) + ((l0 << 3) ^ (l1 >> 5));
+            let x = (r0 ^ rotl(r1, MIXING_ROTATION_10)) + ((l0 << MIXING_ROTATION_11) ^ (l1 >> MIXING_ROTATION_12));
             let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
 
-            let m1 = rotl(m, 19);
-            let m2 = rotl(m ^ (m >> 17), 47);
+            let m1 = rotl(m, MIXING_ROTATION_13);
+            let m2 = rotl(m ^ (m >> MIXING_ROTATION_14), MIXING_ROTATION_15);
 
             // asymmetric feedback (no duplicated structure)
             let nl0 = r0 ^ m1;
             let nl1 = r1 + m2;
-            let nr0 = l0 + m2 + (m1 >> 13);  // carry injection
+            let nr0 = l0 + m2 + (m1 >> MIXING_ROTATION_16);  // carry injection
             let nr1 = l1 ^ m1 ^ m2;
 
             l0 = nl0;
@@ -244,8 +267,8 @@ impl TripleMixSimdCore {
             let t0 = (sl0 + r1) ^ FEISTEL_CONSTANT_3;
             let t1 = (sl1 ^ r0) + FEISTEL_CONSTANT_4;
 
-            l0 = r0 ^ rotl(t0, 17);
-            l1 = r1 + rotl(t1, 51);
+            l0 = r0 ^ rotl(t0, MIXING_ROTATION_17);
+            l1 = r1 + rotl(t1, MIXING_ROTATION_18);
             r0 = t0 + l1;
             r1 = t1 ^ l0;
 
@@ -253,14 +276,14 @@ impl TripleMixSimdCore {
             // Output finalizer
             // --------------------
             let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-            let t1 = (l1 ^ r0) + rotl(r1, 29);
+            let t1 = (l1 ^ r0) + rotl(r1, MIXING_ROTATION_19);
 
-            let mut out0 = t0 + rotl(t1, 23);
-            let mut out1 = t1 ^ rotl(t0, 37);
+            let mut out0 = t0 + rotl(t1, MIXING_ROTATION_20);
+            let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
 
             // single cross-mix (sufficient)
-            out0 ^= out1 >> 11;
-            out1 += out0 << 19;
+            out0 ^= out1 >> MIXING_ROTATION_22;
+            out1 += out0 << MIXING_ROTATION_23;
 
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
