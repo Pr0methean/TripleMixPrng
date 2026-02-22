@@ -212,7 +212,8 @@ impl TripleMixSimdCore {
             r1 = r1 + rotl(sl1, 53) ^ sr0;
 
             // Round 3: Single multiplication round with cross-lane
-            let m = simd_mul(r0 ^ r1 ^ l0 ^ l1, FEISTEL_CONSTANT_2); // One multiply for all
+            let x = r0 ^ rotl(r1, 7) ^ (l0 << 3) ^ (l1 >> 5);
+            let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
 
             let temp0 = l0;
             let temp1 = l1;
