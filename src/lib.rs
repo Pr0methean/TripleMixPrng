@@ -133,6 +133,8 @@ impl TripleMixSimdCore {
         let mut w_hi = self.weyl_hi;
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
+        let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, 29);
+        let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
 
         #[inline(always)]
         fn rotl(x: Simd64, k: u32) -> Simd64 {
@@ -184,56 +186,62 @@ impl TripleMixSimdCore {
             let mut r0 = b_r0;
             let mut r1 = b_r1;
 
-            macro_rules! feistel_arx_round {
-                ($rot1:expr, $rot2:expr, $rot3:expr, $rot4:expr, $const1:expr, $const2:expr) => {{
-                    let t0 = (r0 + rotl(r1, $rot1)) ^ $const1;
-                    let mut t1 = (r1 ^ rotl(r0, $rot2)) + $const2;
-                    let t2 = t0 + rotl(t1, $rot3);
-                    t1 += t0 >> Simd::splat($rot4);
+            // Round 1: Mix between pairs (ARX only)
+            let t0 = (r0 ^ rotl(r1, 41)) + second_mix_with_i_hi;
+            let t1 = (r1 + rotl(r0, 13)) ^ first_mix_with_i_hi;
+            let t2 = (l0 ^ rotl(l1, 31)) + FEISTEL_CONSTANT_3;
+            let t3 = (l1 + rotl(l0, 37)) ^ FEISTEL_CONSTANT_4;
 
-                    let (nl0, nr0) = (r0, l0 + t2);
-                    let (nl1, nr1) = (r1, l1 ^ t1);
-                    l0 = nl0; r0 = nr0;
-                    l1 = nl1; r1 = nr1;
-                }};
-            }
+            l0 = r0 ^ t2;
+            l1 = r1 + t3;
+            r0 = t0 + l1;
+            r1 = t1 ^ l0;
 
-            macro_rules! feistel_mul_round {
-                ($rot1:expr, $rot2:expr, $rot3:expr, $rot4:expr, $const1:expr, $const2:expr) => {{
-                    // Pre-multiply: ADD/SIMD constant
-                    let m0 = (r0 ^ rotl(r1,$rot1)) + $const1;
-                    let mut h0 = simd_mul(m0, $const2);
-                    h0 ^= h0 >> Simd::splat($rot2);
+            // Round 2: Cross-lane mixing via swizzle
+            let sr0 = simd_swizzle!(r0, [1, 2, 3, 0]);
+            let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
+            let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
+            let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-                    let m1 = r1 + rotl(h0,$rot3);
-                    let h1 = m1 + rotl(r0,$rot4);
+            l0 = l0 ^ rotl(sr0, 23) ^ sr1;
+            l1 = (l1 + rotl(sr1, 11)) ^ sl0;
+            r0 = (r0 ^ rotl(sl0, 37)) + sl1;
+            r1 = r1 + rotl(sl1, 53) + sr0;
 
-                    let (nl0, nr0) = (r0, l0 ^ h0);
-                    let (nl1, nr1) = (r1, l1 + h1);
-                    l0 = nl0; r0 = nr0;
-                    l1 = nl1; r1 = nr1;
-                }};
-            }
+            // Round 3: Single multiplication round with cross-lane
+            let m = simd_mul(r0 ^ r1 ^ l0 ^ l1, FEISTEL_CONSTANT_2); // One multiply for all
 
-            l1 = simd_swizzle!(l1, [3, 0, 1, 2]);
-            feistel_arx_round!(7, 23, 51, 31, FEISTEL_CONSTANT_1, FEISTEL_CONSTANT_2);
-            l0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-            feistel_arx_round!(29, 47, 11, 37, FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_3);
-            r0 = simd_swizzle!(r0, [3, 0, 1, 2]);
-            feistel_mul_round!(19, 43, 17, 22, FEISTEL_CONSTANT_3, FEISTEL_CONSTANT_4);
-            r1 = simd_swizzle!(r1, [3, 0, 1, 2]);
-            feistel_arx_round!(59, 13, 41, 61, FEISTEL_CONSTANT_4, FEISTEL_CONSTANT_1);
+            let temp0 = l0;
+            let temp1 = l1;
+            l0 = r0 ^ rotl(m, 19) ^ (r1 << 17);
+            l1 = r1 + rotl(m, 47) + (temp0 >> 27);
+            r0 = temp0 + (rotl(m, 13) ^ (l1 << 20));
+            r1 = temp1 ^ (rotl(m, 43) + (l0 >> 29));
+
+            // Round 4
+            let t0 = (simd_swizzle!(l0, [3, 1, 2, 0]) + rotl(r1, 59)) ^ FEISTEL_CONSTANT_1;
+            let t1 = (simd_swizzle!(l1, [1, 2, 0, 3]) ^ rotl(r0, 7)) + FEISTEL_CONSTANT_3;
+            let t2 = t0 + rotl(t1, 51);
+
+            let nr0 = l0 + t2;
+            let nr1 = l1 ^ t1;
+            l0 = r0;
+            r0 = nr0;
+            l1 = r1;
+            r1 = nr1;
 
             // === 3. Output ===
-            let t0 = r0 ^ l0 ^ (r1 + l1);          // add across LCG lanes
-            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));          // add across Xoroshiro/TinyMT lanes
+            let t0 = r0 ^ l0 ^ (r1 + l1);          // Changed: XOR instead of subtract
+            let t1 = l1 ^ (rotl(r0, 15) + rotl(r1, 36));  // Changed: XOR instead of subtract
 
             // First layer of cross-lane mixing via ARX
             let mut out0 = (t0 ^ (t1 << 17)) + (t1 ^ (t0 >> 43));
             let mut out1 = (t1 + (t0 << 31)) ^ (t0 + (t1 >> 13));
-let temp = out0;
-out0 = out0 ^ rotl(out1, 23) ^ (out1 << 19);
-out1 = out1 ^ rotl(temp, 37) ^ (temp >> 11);
+
+            // Additional cross-mixing between out0 and out1
+            let temp = out0;
+            out0 = out0 ^ rotl(out1, 23) ^ (out1 << 19);
+            out1 = out1 ^ rotl(temp, 37) ^ (temp >> 11);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }

@@ -17,12 +17,6 @@ pub fn mullo(a: Simd64, b: Simd64) -> Simd64 {
     }
 }
 
-/// Multiply a vector by a scalar constant, keeping the low 64 bits.
-#[inline(always)]
-pub fn mullo_const(a: Simd64, c: u64) -> Simd64 {
-    mullo(a, Simd64::splat(c))
-}
-
 #[inline(always)]
 unsafe fn mullo_u64x4_avx2(a: __m256i, b: __m256i) -> __m256i {
     unsafe {
@@ -113,7 +107,8 @@ mod tests {
     fn test_mullo_const_basic() {
         let a = [10, 20, 30, 40];
         let c = 7u64;
-        let result = mullo_const(Simd64::from_array(a), c).to_array();
+        let p0 = Simd64::from_array(a);
+        let result = mullo(p0, Simd64::splat(c)).to_array();
         let expected: [u64; 4] = std::array::from_fn(|i| a[i].wrapping_mul(c));
         assert_eq!(result, expected);
     }
@@ -122,7 +117,8 @@ mod tests {
     fn test_mullo_const_overflow() {
         let a = [u64::MAX, 0x8000_0000_0000_0001, 1, 0];
         let c = u64::MAX;
-        let result = mullo_const(Simd64::from_array(a), c).to_array();
+        let p0 = Simd64::from_array(a);
+        let result = mullo(p0, Simd64::splat(c)).to_array();
         let expected: [u64; 4] = std::array::from_fn(|i| a[i].wrapping_mul(c));
         assert_eq!(result, expected);
     }
@@ -130,14 +126,16 @@ mod tests {
     #[test]
     fn test_mullo_const_zero() {
         let a = [42, u64::MAX, 1, 0x1234_5678_9ABC_DEF0];
-        let result = mullo_const(Simd64::from_array(a), 0).to_array();
+        let p0 = Simd64::from_array(a);
+        let result = mullo(p0, Simd64::splat(0)).to_array();
         assert_eq!(result, [0; 4]);
     }
 
     #[test]
     fn test_mullo_const_one() {
         let a = [42, u64::MAX, 1, 0x1234_5678_9ABC_DEF0];
-        let result = mullo_const(Simd64::from_array(a), 1).to_array();
+        let p0 = Simd64::from_array(a);
+        let result = mullo(p0, Simd64::splat(1)).to_array();
         assert_eq!(result, a);
     }
 
