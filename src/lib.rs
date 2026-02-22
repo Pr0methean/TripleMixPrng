@@ -144,8 +144,8 @@ impl TripleMixSimdCore {
             (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
         }
 
-        const MIXING_ROTATION_11: u64 = 3;
-        const MIXING_ROTATION_12: u64 = 5;
+        const MIXING_ROTATION_11: u64 = 5;
+        const MIXING_ROTATION_12: u64 = 7;
         const MIXING_ROTATION_10: u32 = 9;
         const MIXING_ROTATION_07: u32 = 11;
         const MIXING_ROTATION_19: u64 = 13;
