@@ -133,6 +133,9 @@ impl TripleMixSimdCore {
         let mut w_hi = self.weyl_hi;
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
+
+        // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
+        // too weak.
         let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, 29);
         let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
 
@@ -180,17 +183,17 @@ impl TripleMixSimdCore {
             let b_r0 =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
-            // === 2. Mixing (Feistel network) ===
+            // === 2. Mixing ===
             let mut l0 = b_l0;
             let mut l1 = b_l1;
             let mut r0 = b_r0;
             let mut r1 = b_r1;
 
             // Round 1: Mix between pairs (ARX only)
-            let t0 = (r0 ^ rotl(r1, 41)) + second_mix_with_i_hi;
+            let t0 = (r0 ^ r1) + second_mix_with_i_hi;
             let t1 = (r1 + rotl(r0, 13)) ^ first_mix_with_i_hi;
             let t2 = (l0 ^ rotl(l1, 31)) + FEISTEL_CONSTANT_3;
-            let t3 = (l1 + rotl(l0, 37)) ^ FEISTEL_CONSTANT_4;
+            let t3 = (l1 + l0) ^ FEISTEL_CONSTANT_4;
 
             l0 = r0 ^ t2;
             l1 = r1 + t3;
