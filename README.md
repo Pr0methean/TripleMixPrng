@@ -21,9 +21,9 @@ This is a vectorized pseudorandom number generator that combines xoroshiro128, T
 * Runs faster than ChaCha12Rng for both 1MiB fill_bytes and next_u64.
 * next_u64 takes about 2 ns.
 * Byte-sequence entropy measurements (based on 16 GiB) are:
-  H0:     7.999 999 987 925 008 bits/byte
-  H1|0:   7.999 997 275 490 169 bits/byte
-  H2|1,0: 7.999 298 575 464 423 bits/byte
-  Hurst exponent: 0.502 458 857 934 026
+  H0:     7.999 999 990 249 275 bits/byte
+  H1|0:   7.999 997 258 397 972 bits/byte
+  H2|1,0: 7.999 298 556 343 092 bits/byte
+  Hurst exponent: 0.502 072 493 667 979
 * Passes PractRand 0.96 for at least 32 TiB (tested with 4 seeds) and with `-tf 2` option for at least 64 GiB (tested
   with 32 seeds).
