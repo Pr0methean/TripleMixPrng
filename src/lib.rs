@@ -112,8 +112,6 @@ impl TripleMixSimdCore {
         // The first 16 64-bit words of the Golden Ratio, transposed.
         const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
         const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
-        const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([0x1082276bf3a27251, 0x01886f0928403002, 0x64d325d1c5371682, 0x471c4ab3ed3d82a5]);
-        const FEISTEL_CONSTANT_4: Simd64 = Simd::from_array([0xf86c6a11d0c18e95, 0xc1d64ba40f335e36, 0xcadd0cccfdffbbe1, 0xfec507705e4ae6e5]);
 
         // These are the hexadecimal expansion of pi, except that the first digit is changed in the
         // first and last constant to increase low-bit rank and avalanche effect.
@@ -144,7 +142,6 @@ impl TripleMixSimdCore {
             (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
         }
 
-        const MIXING_ROTATION_11: u64 = 5;
         const MIXING_ROTATION_12: u64 = 7;
         const MIXING_ROTATION_10: u32 = 9;
         const MIXING_ROTATION_07: u32 = 11;
@@ -238,8 +235,9 @@ impl TripleMixSimdCore {
             // --------------------
             // Round 3 (nonlinear core)
             // --------------------
-            let x = (r0 ^ rotl(r1, MIXING_ROTATION_10)) + ((l0 << MIXING_ROTATION_11) ^ (l1 >> MIXING_ROTATION_12));
-            let m = simd_mul(x + FEISTEL_CONSTANT_3, FEISTEL_CONSTANT_4);
+            let x = r0 ^ rotl(r1, MIXING_ROTATION_10);
+            let y = l0 + (l1 >> MIXING_ROTATION_12);
+            let m = simd_mul(x, y);
 
             let m1 = rotl(m, MIXING_ROTATION_13);
             let m2 = m ^ (m >> MIXING_ROTATION_14);
