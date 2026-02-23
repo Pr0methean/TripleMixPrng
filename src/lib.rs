@@ -143,7 +143,7 @@ impl TripleMixSimdCore {
         }
 
         const MIXING_ROTATION_12: u64 = 7;
-        const MIXING_ROTATION_10: u32 = 9;
+        const MIXING_ROTATION_10: u64 = 9;
         const MIXING_ROTATION_07: u32 = 11;
         const MIXING_ROTATION_19: u64 = 13;
         const MIXING_ROTATION_16: u64 = 14;
@@ -230,9 +230,9 @@ impl TripleMixSimdCore {
             r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
             r1 += rotl(sl0 + sr0, MIXING_ROTATION_09);
 
-            // Round 3 (nonlinear core): 5 xor, 4 add, 2 rotl, 3 shift, 1 simd_mul
+            // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
             // -------------------------------------------------------------------
-            let x = r0 ^ rotl(r1, MIXING_ROTATION_10);
+            let x = r0 ^ (r1 >> MIXING_ROTATION_10);
             let y = l0 + (l1 >> MIXING_ROTATION_12);
             let m = simd_mul(x, y);
 
