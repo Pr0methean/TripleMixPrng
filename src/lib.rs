@@ -212,10 +212,10 @@ impl TripleMixSimdCore {
             // --------------------
             // Round 1 (ARX, local)
             // --------------------
-            let t0 = (r0 ^ rotl(r1, MIXING_ROTATION_01)) + FEISTEL_CONSTANT_3;
+            let t0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
             let t1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
             let t2 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-            let t3 = (l1 + rotl(l0, MIXING_ROTATION_04)) ^ FEISTEL_CONSTANT_4;
+            let t3 = l1 + rotl(l0, MIXING_ROTATION_04);
 
             let mut l0 = r0 ^ t2;
             let mut l1 = r1 + t3;
@@ -239,7 +239,7 @@ impl TripleMixSimdCore {
             // Round 3 (nonlinear core)
             // --------------------
             let x = (r0 ^ rotl(r1, MIXING_ROTATION_10)) + ((l0 << MIXING_ROTATION_11) ^ (l1 >> MIXING_ROTATION_12));
-            let m = simd_mul(x + FEISTEL_CONSTANT_2, FEISTEL_CONSTANT_1);
+            let m = simd_mul(x + FEISTEL_CONSTANT_3, FEISTEL_CONSTANT_4);
 
             let m1 = rotl(m, MIXING_ROTATION_13);
             let m2 = m ^ (m >> MIXING_ROTATION_14);
