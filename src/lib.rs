@@ -145,7 +145,7 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_12: u64 = 7;
         const MIXING_ROTATION_10: u64 = 9;
         const MIXING_ROTATION_07: u32 = 11;
-        const MIXING_ROTATION_19: u64 = 13;
+        const MIXING_ROTATION_19: u32 = 13;
         const MIXING_ROTATION_16: u64 = 14;
         const MIXING_ROTATION_14: u64 = 17;
         const MIXING_ROTATION_13: u32 = 19;
@@ -254,13 +254,13 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 1, 2, 0]);
             let sl1 = simd_swizzle!(l1, [1, 2, 0, 3]);
 
-            let t0 = sl0 + r1;
-            let t1 = rotl(sl1 ^ r0, MIXING_ROTATION_18);
+            let tl0r1 = sl0 + r1;
+            let tl1r0 = rotl(sl1 ^ r0, MIXING_ROTATION_18);
 
-            let l0 = r0 ^ t0;
-            let l1 = r1 + t1;
-            let r0 = t0 + l1;
-            let r1 = t1 ^ l0;
+            let l0 = r0 ^ tl0r1;
+            let l1 = r1 + tl1r0;
+            let r0 = tl0r1 + l1;
+            let r1 = tl1r0 ^ l0;
 
             // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
             // ---------------------------------------------------
