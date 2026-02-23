@@ -611,34 +611,22 @@ mod tests {
         const SAMPLE_COUNT: usize = 1 << 24;
         for mut prng in create_rngs() {
             let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
+            let lagged_bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64 - 1).unwrap();
             let mut samples = vec![0u64; SAMPLE_COUNT];
             prng.fill(samples.as_mut());
-            let mut lowest_bin = u64::MAX;
-            let mut highest_bin = 0;
             for i in 0..=62 {
                 for j in (i + 1)..=63 {
                     let mut bins = [0u64; 4];
                     for sample in &samples {
                         bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                     }
-                    for (index, bin) in bins.into_iter().enumerate() {
-                        let p = bin_count_distribution.cdf(bin);
-                        assert!(
-                            p >= 0.00001,
-                            "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                        );
-                        assert!(
-                            p <= 0.99999,
-                            "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                        );
-                        lowest_bin = lowest_bin.min(bin);
-                        highest_bin = highest_bin.max(bin);
-                    }
+                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], 1e-7).unwrap().p_value;
+                    assert!(
+                        p >= 1e-9,
+                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
+                    );
                 }
             }
-            println!("Lowest bin: {}, Highest bin: {}", lowest_bin, highest_bin);
-            let mut lowest_lagged_bin = u64::MAX;
-            let mut highest_lagged_bin = 0;
             for i in 0..=63 {
                 for j in 0..=63 {
                     let mut lagged_bins = [0u64; 4];
@@ -647,25 +635,13 @@ mod tests {
                         let second = pair[1];
                         lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                     }
-                    for (index, bin) in lagged_bins.into_iter().enumerate() {
-                        let p = bin_count_distribution.cdf(bin);
-                        assert!(
-                            p >= 0.00001,
-                            "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                        );
-                        assert!(
-                            p <= 0.99999,
-                            "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                        );
-                        lowest_lagged_bin = lowest_lagged_bin.min(bin);
-                        highest_lagged_bin = highest_lagged_bin.max(bin);
-                    }
+                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], 1e-7).unwrap().p_value;
+                    assert!(
+                        p >= 1e-9,
+                        "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
+                    );
                 }
             }
-            println!(
-                "Lowest lagged bin: {}, Highest lagged bin: {}",
-                lowest_lagged_bin, highest_lagged_bin
-            );
         }
     }
 
