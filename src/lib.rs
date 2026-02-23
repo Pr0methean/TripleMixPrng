@@ -138,29 +138,30 @@ impl TripleMixSimdCore {
         let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
 
         #[inline(always)]
-        fn rotl(x: Simd64, k: u32) -> Simd64 {
-            (x << Simd::splat(k as u64)) | (x >> Simd::splat((64 - k) as u64))
+        fn rotl(x: Simd64, k: u64) -> Simd64 {
+            (x << Simd::splat(k)) | (x >> Simd::splat((64 - k)))
         }
 
         const MIXING_ROTATION_12: u64 = 7;
         const MIXING_ROTATION_10: u64 = 9;
-        const MIXING_ROTATION_07: u32 = 11;
-        const MIXING_ROTATION_19: u32 = 13;
+        const MIXING_ROTATION_07: u64 = 11;
+        const MIXING_ROTATION_19: u64 = 13;
         const MIXING_ROTATION_16: u64 = 14;
         const MIXING_ROTATION_14: u64 = 17;
-        const MIXING_ROTATION_13: u32 = 19;
-        const MIXING_ROTATION_05: u32 = 22;
-        const MIXING_ROTATION_02: u32 = 29;
-        const MIXING_ROTATION_03: u32 = 31;
-        const MIXING_ROTATION_04: u32 = 37;
+        const MIXING_ROTATION_13: u64 = 19;
+        const MIXING_ROTATION_05: u64 = 22;
+        const MIXING_ROTATION_00: u64 = 23;
+        const MIXING_ROTATION_02: u64 = 29;
+        const MIXING_ROTATION_03: u64 = 31;
+        const MIXING_ROTATION_04: u64 = 37;
         const MIXING_ROTATION_23: u64 = 39;
-        const MIXING_ROTATION_01: u32 = 41;
-        const MIXING_ROTATION_21: u32 = 43;
-        const MIXING_ROTATION_09: u32 = 44;
-        const MIXING_ROTATION_06: u32 = 46;
+        const MIXING_ROTATION_01: u64 = 41;
+        const MIXING_ROTATION_21: u64 = 43;
+        const MIXING_ROTATION_09: u64 = 44;
+        const MIXING_ROTATION_06: u64 = 46;
         const MIXING_ROTATION_22: u64 = 49;
-        const MIXING_ROTATION_18: u32 = 54;
-        const MIXING_ROTATION_00: u32 = 58;
+        const MIXING_ROTATION_18: u64 = 54;
+        const MIXING_ROTATION_20: u64 = 58;
         for block in blocks {
             // === 1. Source Generation ===
 
