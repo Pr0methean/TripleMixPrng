@@ -208,15 +208,15 @@ impl TripleMixSimdCore {
 
             // Round 1 (ARX, local): 5 xor, 5 add, 4 rotl
             // ------------------------------------------
-            let t0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
-            let t1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
-            let t2 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-            let t3 = l1 + rotl(l0, MIXING_ROTATION_04);
+            let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
+            let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+            let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
+            let tl1 = l1 + rotl(l0, MIXING_ROTATION_04);
 
-            let mut l0 = r0 ^ t2;
-            let mut l1 = r1 + t3;
-            let mut r0 = t0 + l1;
-            let mut r1 = t1 ^ l0;
+            let mut l0 = r0 ^ tl0;
+            let mut l1 = r1 + tl1;
+            let mut r0 = tr0 + l1;
+            let mut r1 = tr1 ^ l0;
 
             // Round 2 (cross-lane): 4 xor, 4 add, 4 rotl, 4 simd_swizzle
             // ----------------------------------------------------------
@@ -225,10 +225,10 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0, MIXING_ROTATION_05) ^ sl1;
-            l1 += rotl(sr1, MIXING_ROTATION_06) ^ sl0;
-            r0 ^= rotl(sl1, MIXING_ROTATION_07) + sr1;
-            r1 += rotl(sl0, MIXING_ROTATION_09) + sr0;
+            l0 ^= rotl(sr0 ^ sl1, MIXING_ROTATION_05);
+            l1 += rotl(sr1 ^ sl0, MIXING_ROTATION_06);
+            r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
+            r1 += rotl(sl0 + sr0, MIXING_ROTATION_09);
 
             // Round 3 (nonlinear core): 5 xor, 4 add, 2 rotl, 3 shift, 1 simd_mul
             // -------------------------------------------------------------------
