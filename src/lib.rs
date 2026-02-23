@@ -260,11 +260,11 @@ impl TripleMixSimdCore {
             let sl0 = simd_swizzle!(l0, [3, 1, 2, 0]);
             let sl1 = simd_swizzle!(l1, [1, 2, 0, 3]);
 
-            let t0 = (sl0 + r1) ^ FEISTEL_CONSTANT_3;
-            let t1 = (sl1 ^ r0) + FEISTEL_CONSTANT_4;
+            let t0 = sl0 + r1;
+            let t1 = rotl(sl1 ^ r0, MIXING_ROTATION_18);
 
             let l0 = r0 ^ t0;
-            let l1 = r1 + rotl(t1, MIXING_ROTATION_18);
+            let l1 = r1 + t1;
             let r0 = t0 + l1;
             let r1 = t1 ^ l0;
 
