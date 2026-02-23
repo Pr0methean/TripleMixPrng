@@ -529,107 +529,142 @@ mod tests {
     use super::*;
     use hypors::chi_square::goodness_of_fit;
     use rand::RngExt;
-    use rand_core::{Rng, SeedableRng};
+    use rand_core::{Rng, SeedableRng, UnwrapErr};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
+    use rand::rngs::SysRng;
+
+    pub fn create_rngs() -> [TripleMixPrng; 5] {
+        const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
+        const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
+        const LARGEST_DISTINCT_ODD: Simd64 = Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
+        const LARGEST_DISTINCT: Simd64 = Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
+        let rng1 = TripleMixPrng::almost_all_zeroes_state();
+        let rng2 = TripleMixPrng::from_core(TripleMixSimdCore {
+            xr0: Simd::splat(0),
+            xr1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
+            tm0: Simd::splat(0),
+            tm1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
+            weyl_lo: Simd::splat(0),
+            weyl_hi: Simd::splat(0),
+            inc_lo: SMALLEST_DISTINCT_ODD_DESCENDING,
+            inc_hi: Simd::splat(0),
+        });
+        let rng3 = TripleMixPrng::from_core(TripleMixSimdCore {
+            xr0: Simd::splat(u64::MAX),
+            xr1: LARGEST_DISTINCT,
+            tm0: Simd::splat(u64::MAX),
+            tm1: LARGEST_DISTINCT,
+            weyl_lo: Simd::splat(u64::MAX),
+            weyl_hi: Simd::splat(u64::MAX),
+            inc_lo: LARGEST_DISTINCT_ODD,
+            inc_hi: Simd::splat(u64::MAX),
+        });
+        let rng4 = TripleMixPrng::from_seed(GenericArray::default());
+        let rng5 = TripleMixPrng::from_rng(&mut UnwrapErr(SysRng));
+        [rng1, rng2, rng3, rng4, rng5]
+    }
 
     #[test]
     fn test_byte_frequencies() {
-        let mut prng = TripleMixPrng::almost_all_zeroes_state();
-        let mut frequencies = [0u32; u8::MAX as usize + 1];
-        for _ in 0..(1 << 28) {
-            let byte: u8 = prng.random();
-            frequencies[byte as usize] += 1;
+        for mut prng in create_rngs() {
+            let mut frequencies = [0u32; u8::MAX as usize + 1];
+            for _ in 0..(1 << 28) {
+                let byte: u8 = prng.random();
+                frequencies[byte as usize] += 1;
+            }
+            let chi_square = goodness_of_fit(
+                frequencies.map(f64::from),
+                repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
+                0.01,
+            )
+                .unwrap();
+            println!("{:?}", chi_square);
+            assert!(!chi_square.reject_null);
         }
-        let chi_square = goodness_of_fit(
-            frequencies.map(f64::from),
-            repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
-            0.01,
-        )
-        .unwrap();
-        println!("{:?}", chi_square);
-        assert!(!chi_square.reject_null);
     }
 
     #[test]
     fn test_u16_frequencies() {
-        let mut prng = TripleMixPrng::almost_all_zeroes_state();
-        let mut frequencies = vec![0u32; u16::MAX as usize + 1];
-        for _ in 0..(1 << 28) {
-            let word: u16 = prng.random();
-            frequencies[word as usize] += 1;
+        for mut prng in create_rngs() {
+            let mut frequencies = vec![0u32; u16::MAX as usize + 1];
+            for _ in 0..(1 << 28) {
+                let word: u16 = prng.random();
+                frequencies[word as usize] += 1;
+            }
+            let chi_square = goodness_of_fit(
+                frequencies.into_iter().map(f64::from),
+                repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
+                0.01,
+            )
+                .unwrap();
+            println!("{:?}", chi_square);
+            assert!(!chi_square.reject_null);
         }
-        let chi_square = goodness_of_fit(
-            frequencies.into_iter().map(f64::from),
-            repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
-            0.01,
-        )
-        .unwrap();
-        println!("{:?}", chi_square);
-        assert!(!chi_square.reject_null);
     }
 
     #[test]
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
-        let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
-        let mut prng = TripleMixPrng::almost_all_zeroes_state();
-        let mut samples = vec![0u64; SAMPLE_COUNT];
-        prng.fill(samples.as_mut());
-        let mut lowest_bin = u64::MAX;
-        let mut highest_bin = 0;
-        for i in 0..=62 {
-            for j in (i + 1)..=63 {
-                let mut bins = [0u64; 4];
-                for sample in &samples {
-                    bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
-                }
-                for (index, bin) in bins.into_iter().enumerate() {
-                    let p = bin_count_distribution.cdf(bin);
-                    assert!(
-                        p >= 0.00001,
-                        "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                    );
-                    assert!(
-                        p <= 0.99999,
-                        "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                    );
-                    lowest_bin = lowest_bin.min(bin);
-                    highest_bin = highest_bin.max(bin);
-                }
-            }
-        }
-        println!("Lowest bin: {}, Highest bin: {}", lowest_bin, highest_bin);
-        let mut lowest_lagged_bin = u64::MAX;
-        let mut highest_lagged_bin = 0;
-        for i in 0..=63 {
-            for j in 0..=63 {
-                let mut lagged_bins = [0u64; 4];
-                for pair in samples.windows(2) {
-                    let first = pair[0];
-                    let second = pair[1];
-                    lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
-                }
-                for (index, bin) in lagged_bins.into_iter().enumerate() {
-                    let p = bin_count_distribution.cdf(bin);
-                    assert!(
-                        p >= 0.00001,
-                        "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                    );
-                    assert!(
-                        p <= 0.99999,
-                        "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
-                    );
-                    lowest_lagged_bin = lowest_lagged_bin.min(bin);
-                    highest_lagged_bin = highest_lagged_bin.max(bin);
+        for mut prng in create_rngs() {
+            let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
+            let mut samples = vec![0u64; SAMPLE_COUNT];
+            prng.fill(samples.as_mut());
+            let mut lowest_bin = u64::MAX;
+            let mut highest_bin = 0;
+            for i in 0..=62 {
+                for j in (i + 1)..=63 {
+                    let mut bins = [0u64; 4];
+                    for sample in &samples {
+                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
+                    }
+                    for (index, bin) in bins.into_iter().enumerate() {
+                        let p = bin_count_distribution.cdf(bin);
+                        assert!(
+                            p >= 0.00001,
+                            "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                        );
+                        assert!(
+                            p <= 0.99999,
+                            "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                        );
+                        lowest_bin = lowest_bin.min(bin);
+                        highest_bin = highest_bin.max(bin);
+                    }
                 }
             }
+            println!("Lowest bin: {}, Highest bin: {}", lowest_bin, highest_bin);
+            let mut lowest_lagged_bin = u64::MAX;
+            let mut highest_lagged_bin = 0;
+            for i in 0..=63 {
+                for j in 0..=63 {
+                    let mut lagged_bins = [0u64; 4];
+                    for pair in samples.windows(2) {
+                        let first = pair[0];
+                        let second = pair[1];
+                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
+                    }
+                    for (index, bin) in lagged_bins.into_iter().enumerate() {
+                        let p = bin_count_distribution.cdf(bin);
+                        assert!(
+                            p >= 0.00001,
+                            "Count too low ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                        );
+                        assert!(
+                            p <= 0.99999,
+                            "Count too high ({bin}, p={p:.6}) for i={i},j={j},bin={index}"
+                        );
+                        lowest_lagged_bin = lowest_lagged_bin.min(bin);
+                        highest_lagged_bin = highest_lagged_bin.max(bin);
+                    }
+                }
+            }
+            println!(
+                "Lowest lagged bin: {}, Highest lagged bin: {}",
+                lowest_lagged_bin, highest_lagged_bin
+            );
         }
-        println!(
-            "Lowest lagged bin: {}, Highest lagged bin: {}",
-            lowest_lagged_bin, highest_lagged_bin
-        );
     }
 
     #[test]
@@ -655,15 +690,16 @@ mod tests {
         const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        let mut prng = TripleMixPrng::almost_all_zeroes_state();
-        for _ in 0..FORKS {
-            for _ in 0..SAMPLES_PER_FORK {
-                let next = prng.next_u64();
-                print!("{next:016X}");
-                assert!(random.insert(next));
+        for mut prng in create_rngs() {
+            for _ in 0..FORKS {
+                for _ in 0..SAMPLES_PER_FORK {
+                    let next = prng.next_u64();
+                    print!("{next:016X}");
+                    assert!(random.insert(next));
+                }
+                println!();
+                prng = prng.fork();
             }
-            println!();
-            prng = prng.fork();
         }
     }
 
@@ -672,183 +708,185 @@ mod tests {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        let mut parent_prng = TripleMixPrng::almost_all_zeroes_state();
-        for _ in 0..FORKS {
-            let mut prng = parent_prng.fork();
-            for _ in 0..SAMPLES_PER_FORK {
-                let next = prng.next_u64();
-                print!("{next:016X}");
-                assert!(random.insert(next));
+        for mut parent_prng in create_rngs() {
+            for _ in 0..FORKS {
+                let mut prng = parent_prng.fork();
+                for _ in 0..SAMPLES_PER_FORK {
+                    let next = prng.next_u64();
+                    print!("{next:016X}");
+                    assert!(random.insert(next));
+                }
+                println!();
             }
-            println!();
         }
     }
 
     #[test]
     fn test_avalanche() {
-        let rng = TripleMixPrng::almost_all_zeroes_state();
-        let core = rng.0.core.clone();
+        for rng in create_rngs() {
+            let core = rng.0.core.clone();
 
-        const ITERATIONS: usize = 20;
-        const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
+            const ITERATIONS: usize = 20;
+            const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
 
-        let mut min_flips = u32::MAX;
-        let mut max_flips = 0;
-        let mut total_flips: u64 = 0;
-        let mut count: u64 = 0;
-        let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
-        let mut core1 = core.clone();
-        let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
-        for output_block in output1.iter_mut() {
-            core1.generate(output_block);
-        }
-        let mut min_field = 0;
-        let mut min_lane = 0;
-        let mut min_bit = 0;
-        let mut min_iter = 0;
-        let mut low_avalanches = 0;
-        for field_idx in 0..8 {
-            for lane_idx in 0..SIMD_WIDTH {
-                for bit_idx in 0usize..64 {
-                    if field_idx == 2 && bit_idx == 63 {
-                        continue;
-                    }
-                    if field_idx == 6 && bit_idx == 0 {
-                        continue;
-                    }
-                    //if field_idx == 7 && bit_idx >= 59 { continue; }
-                    let mut core2 = core.clone();
-                    match field_idx {
-                        0 => {
-                            let x = core2.xr0;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.xr0 = Simd64::from_array(arr);
+            let mut min_flips = u32::MAX;
+            let mut max_flips = 0;
+            let mut total_flips: u64 = 0;
+            let mut count: u64 = 0;
+            let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
+            let mut core1 = core.clone();
+            let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+            for output_block in output1.iter_mut() {
+                core1.generate(output_block);
+            }
+            let mut min_field = 0;
+            let mut min_lane = 0;
+            let mut min_bit = 0;
+            let mut min_iter = 0;
+            let mut low_avalanches = 0;
+            for field_idx in 0..8 {
+                for lane_idx in 0..SIMD_WIDTH {
+                    for bit_idx in 0usize..64 {
+                        if field_idx == 2 && bit_idx == 63 {
+                            continue;
                         }
-                        1 => {
-                            let x = core2.xr1;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.xr1 = Simd64::from_array(arr);
+                        if field_idx == 6 && bit_idx == 0 {
+                            continue;
                         }
-                        2 => {
-                            let x = core2.tm0;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.tm0 = Simd64::from_array(arr);
-                        }
-                        3 => {
-                            let x = core2.tm1;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.tm1 = Simd64::from_array(arr);
-                        }
-                        4 => {
-                            let x = core2.weyl_lo;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.weyl_lo = Simd64::from_array(arr);
-                        }
-                        5 => {
-                            let x = core2.weyl_hi;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.weyl_hi = Simd64::from_array(arr);
-                        }
-                        6 => {
-                            let x = core2.inc_lo;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.inc_lo = Simd64::from_array(arr);
-                        }
-                        7 => {
-                            let x = core2.inc_hi;
-                            let mut arr = x.to_array();
-                            arr[lane_idx] ^= 1 << bit_idx;
-                            core2.inc_hi = Simd64::from_array(arr);
-                        }
-                        _ => unreachable!(),
-                    }
-                    let mut output2 = [[0u64; OUTPUT_LEN]; ITERATIONS];
-                    for output_block in output2.iter_mut() {
-                        core2.generate(output_block);
-                    }
-                    for i in 0..ITERATIONS {
-                        let mut flips = 0;
-                        for cell in 0..OUTPUT_LEN {
-                            if cell != 0 {
-                                assert_ne!(
-                                    output2[i][cell].wrapping_sub(output2[i][0]),
-                                    output1[i][cell].wrapping_sub(output1[i][0]),
-                                    "Same difference between cells 0 and {cell}"
-                                );
-                                assert_ne!(
-                                    output2[i][cell] ^ output2[i][0],
-                                    output1[i][cell] ^ output1[i][0],
-                                    "Same xor between cells 0 and {cell}"
-                                );
+                        //if field_idx == 7 && bit_idx >= 59 { continue; }
+                        let mut core2 = core.clone();
+                        match field_idx {
+                            0 => {
+                                let x = core2.xr0;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.xr0 = Simd64::from_array(arr);
                             }
-                            flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                            1 => {
+                                let x = core2.xr1;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.xr1 = Simd64::from_array(arr);
+                            }
+                            2 => {
+                                let x = core2.tm0;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.tm0 = Simd64::from_array(arr);
+                            }
+                            3 => {
+                                let x = core2.tm1;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.tm1 = Simd64::from_array(arr);
+                            }
+                            4 => {
+                                let x = core2.weyl_lo;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.weyl_lo = Simd64::from_array(arr);
+                            }
+                            5 => {
+                                let x = core2.weyl_hi;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.weyl_hi = Simd64::from_array(arr);
+                            }
+                            6 => {
+                                let x = core2.inc_lo;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.inc_lo = Simd64::from_array(arr);
+                            }
+                            7 => {
+                                let x = core2.inc_hi;
+                                let mut arr = x.to_array();
+                                arr[lane_idx] ^= 1 << bit_idx;
+                                core2.inc_hi = Simd64::from_array(arr);
+                            }
+                            _ => unreachable!(),
                         }
-                        total_flips += flips as u64;
-                        if flips <= LOW_AVALANCHE_THRESHOLD {
-                            low_avalanches += 1;
+                        let mut output2 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+                        for output_block in output2.iter_mut() {
+                            core2.generate(output_block);
                         }
-                        if flips < min_flips {
-                            min_flips = flips;
-                            min_iter = i;
-                            min_field = field_idx;
-                            min_lane = lane_idx;
-                            min_bit = bit_idx;
+                        for i in 0..ITERATIONS {
+                            let mut flips = 0;
+                            for cell in 0..OUTPUT_LEN {
+                                if cell != 0 {
+                                    assert_ne!(
+                                        output2[i][cell].wrapping_sub(output2[i][0]),
+                                        output1[i][cell].wrapping_sub(output1[i][0]),
+                                        "Same difference between cells 0 and {cell}"
+                                    );
+                                    assert_ne!(
+                                        output2[i][cell] ^ output2[i][0],
+                                        output1[i][cell] ^ output1[i][0],
+                                        "Same xor between cells 0 and {cell}"
+                                    );
+                                }
+                                flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                            }
+                            total_flips += flips as u64;
+                            if flips <= LOW_AVALANCHE_THRESHOLD {
+                                low_avalanches += 1;
+                            }
+                            if flips < min_flips {
+                                min_flips = flips;
+                                min_iter = i;
+                                min_field = field_idx;
+                                min_lane = lane_idx;
+                                min_bit = bit_idx;
+                            }
+                            max_flips = max_flips.max(flips);
+                            count += 1;
+                            flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
                         }
-                        max_flips = max_flips.max(flips);
-                        count += 1;
-                        flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
                     }
                 }
             }
-        }
-        for field_idx in 0..8 {
-            for lane_idx in 0..SIMD_WIDTH {
-                println!(
-                    "Field {} lane {}: Flips: {:?}",
-                    field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]
-                );
+            for field_idx in 0..8 {
+                for lane_idx in 0..SIMD_WIDTH {
+                    println!(
+                        "Field {} lane {}: Flips: {:?}",
+                        field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]
+                    );
+                }
             }
-        }
-        let avg_flips = total_flips as f64 / count as f64;
-        println!(
-            "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
-            count, avg_flips, min_flips, max_flips
-        );
+            let avg_flips = total_flips as f64 / count as f64;
+            println!(
+                "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
+                count, avg_flips, min_flips, max_flips
+            );
 
-        const DEVIATION: f64 = 0.1;
-        assert!(
-            avg_flips >= 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64),
-            "Average diffusion too low"
-        );
-        assert!(
-            avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
-            "Average diffusion too high?"
-        );
-        let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
-        let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
-        let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
-        let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
-        println!(
-            "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-            low_avalanche_probability * count as f64,
-            low_avalanches,
-            low_avalanche_p_value
-        );
-        assert!(
-            low_avalanche_p_value > 0.01,
-            "Too many low-avalanche results"
-        );
-        assert!(
-            min_flips as usize >= 16 * OUTPUT_LEN,
-            "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
-        );
+            const DEVIATION: f64 = 0.1;
+            assert!(
+                avg_flips >= 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64),
+                "Average diffusion too low"
+            );
+            assert!(
+                avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
+                "Average diffusion too high?"
+            );
+            let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
+            let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
+            let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
+            let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
+            println!(
+                "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
+                low_avalanche_probability * count as f64,
+                low_avalanches,
+                low_avalanche_p_value
+            );
+            assert!(
+                low_avalanche_p_value > 0.01,
+                "Too many low-avalanche results"
+            );
+            assert!(
+                min_flips as usize >= 16 * OUTPUT_LEN,
+                "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
+            );
+        }
     }
 
     #[test]
@@ -938,57 +976,59 @@ mod tests {
 
     #[test]
     fn test_bitplane_projection() {
-        let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        let mut buf = vec![0u64; SAMPLES];
-        rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
+        for mut rng in create_rngs() {
+            let mut buf = vec![0u64; SAMPLES];
+            rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
 
-        xor_successive(&mut buf);
+            xor_successive(&mut buf);
 
-        for bit in 0..64 {
-            let plane = extract_bitplane(&buf, bit);
-            let score = projection_test(&plane);
+            for bit in 0..64 {
+                let plane = extract_bitplane(&buf, bit);
+                let score = projection_test(&plane);
 
-            assert!(
-                score < 1.0,
-                "Projection deviation too large for bit {bit}: {}",
-                score
-            );
+                assert!(
+                    score < 1.0,
+                    "Projection deviation too large for bit {bit}: {}",
+                    score
+                );
+            }
         }
     }
 
     #[test]
     fn test_lane_cross_correlation_bitplane() {
-        let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        const N: usize = 1 << 28;
+        for mut rng in create_rngs() {
+            const N: usize = 1 << 28;
+            let mut lanes = [0u64; SIMD_WIDTH];
+            for target_lane in 1..SIMD_WIDTH {
+                let mut sums = [0i64; 64];
+                for _ in 0..N {
+                    rng.fill(&mut lanes);
+                    for bit in 0..64 {
+                        let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
+                        let b = if (lanes[target_lane] >> bit) & 1 == 1 {
+                            1
+                        } else {
+                            -1
+                        };
 
-        let mut sums = [0i64; 64];
-
-        let mut lanes = [0u64; 4];
-        for target_lane in 1..4 {
-            for _ in 0..N {
-                rng.fill(&mut lanes);
-                for bit in 0..64 {
-                    // use lowest bit; can also test bit 0..63 in loop
-                    let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
-                    let b = if (lanes[target_lane] >> bit) & 1 == 1 {
-                        1
-                    } else {
-                        -1
-                    };
-
-                    sums[bit] += (a * b) as i64;
+                        sums[bit] += (a * b) as i64;
+                    }
                 }
-            }
-            for (bit, sum) in sums.into_iter().enumerate() {
-                let corr = sum as f64 / N as f64;
+                for (bit, sum) in sums.into_iter().enumerate() {
+                    let corr = sum as f64 / N as f64;
 
-                // For random ±1 variables, stddev ≈ 1/sqrt(N)
-                let sigma = 1.0 / (N as f64).sqrt();
+                    // For the binomial distribution, stddev = sqrt(N * p * (1 - p))
+                    // but its range is [0, N]; we've scaled it linearly to have the range [-1, 1]
+                    // so sigma = sqrt(N * 0.25) * 2 / N
+                    // = 1/sqrt(N)
+                    let sigma = 1.0 / (N as f64).sqrt();
 
-                assert!(
-                    corr.abs() < 5.0 * sigma,
-                    "Lane bit correlation detected on bit {bit}: {corr} (σ={sigma})",
-                );
+                    assert!(
+                        corr.abs() < 5.0 * sigma,
+                        "Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})",
+                    );
+                }
             }
         }
     }
@@ -1009,71 +1049,74 @@ mod tests {
         rank.try_into().unwrap()
     }
 
-    /// False positive rate for this test is about 1.2%.
+    /// False positive rate for this test is about 1.2% per PRNG.
     #[test]
     fn test_lowbit_rank() {
-        let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        let mut rank60_count = 0;
+        for mut rng in create_rngs() {
+            let mut rank60_count = 0;
 
-        for _ in 0..10000 {
-            let mut matrix = [0u64; 64];
-            for r in 0..64 {
-                matrix[r] = rng.next_u64();
-            }
-            let rank = gf2_rank(matrix);
-            assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
-            if rank == 60 {
-                rank60_count += 1;
-                assert!(rank60_count <= 2, "Too many low-bit rank deficiencies (rank 60)");
+            for _ in 0..10000 {
+                let mut matrix = [0u64; 64];
+                for r in 0..64 {
+                    matrix[r] = rng.next_u64();
+                }
+                let rank = gf2_rank(matrix);
+                assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
+                if rank == 60 {
+                    rank60_count += 1;
+                    assert!(rank60_count <= 2, "Too many low-bit rank deficiencies (rank 60)");
+                }
             }
         }
     }
 
     #[test]
     fn test_double_differential() {
-        let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        const N: usize = 1 << 21;
+        for mut rng in create_rngs() {
+            const N: usize = 1 << 21;
 
-        let mut x = vec![0u64; N];
-        for i in 0..N {
-            x[i] = rng.next_u64();
+            let mut x = vec![0u64; N];
+            for i in 0..N {
+                x[i] = rng.next_u64();
+            }
+
+            // first difference
+            for i in 0..N - 1 {
+                x[i] ^= x[i + 1];
+            }
+
+            // second difference
+            for i in 0..N - 2 {
+                x[i] ^= x[i + 2];
+            }
+
+            // check bit bias
+            let ones = x.iter().map(|v| v.count_ones() as u64).sum::<u64>();
+            let total_bits = (N as u64) * 64;
+            let bias = (ones as f64 / total_bits as f64) - 0.5;
+
+            assert!(bias.abs() < 1e-3, "Differential bias detected: {}", bias);
         }
-
-        // first difference
-        for i in 0..N - 1 {
-            x[i] ^= x[i + 1];
-        }
-
-        // second difference
-        for i in 0..N - 2 {
-            x[i] ^= x[i + 2];
-        }
-
-        // check bit bias
-        let ones = x.iter().map(|v| v.count_ones() as u64).sum::<u64>();
-        let total_bits = (N as u64) * 64;
-        let bias = (ones as f64 / total_bits as f64) - 0.5;
-
-        assert!(bias.abs() < 1e-3, "Differential bias detected: {}", bias);
     }
 
     #[test]
     fn test_fractional_spectral() {
-        let mut rng = TripleMixPrng::almost_all_zeroes_state();
-        const N: usize = 1 << 21;
+        for mut rng in create_rngs() {
+            const N: usize = 1 << 21;
 
-        let mut prev = rng.next_u64();
-        let mut min_gap = f64::MAX;
+            let mut prev = rng.next_u64();
+            let mut min_gap = f64::MAX;
 
-        for _ in 0..N {
-            let curr = rng.next_u64();
-            let diff = (curr.wrapping_sub(prev) as f64).abs();
-            if diff < min_gap {
-                min_gap = diff;
+            for _ in 0..N {
+                let curr = rng.next_u64();
+                let diff = (curr.wrapping_sub(prev) as f64).abs();
+                if diff < min_gap {
+                    min_gap = diff;
+                }
+                prev = curr;
             }
-            prev = curr;
-        }
 
-        assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
+            assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
+        }
     }
 }
