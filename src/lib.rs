@@ -607,6 +607,7 @@ mod tests {
     #[test]
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
+        const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
         for mut prng in create_rngs() {
             let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
             let lagged_bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64 - 1).unwrap();
@@ -618,9 +619,9 @@ mod tests {
                     for sample in &samples {
                         bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                     }
-                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], 1e-7).unwrap().p_value;
+                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
                     assert!(
-                        p >= 1e-9,
+                        p >= P_THRESHOLD,
                         "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
                     );
                 }
@@ -633,9 +634,9 @@ mod tests {
                         let second = pair[1];
                         lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                     }
-                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], 1e-7).unwrap().p_value;
+                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
                     assert!(
-                        p >= 1e-9,
+                        p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
                     );
                 }
