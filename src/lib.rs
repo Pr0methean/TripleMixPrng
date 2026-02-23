@@ -206,9 +206,8 @@ impl TripleMixSimdCore {
             let r0 = b_r0;
             let r1 = b_r1;
 
-            // --------------------
-            // Round 1 (ARX, local)
-            // --------------------
+            // Round 1 (ARX, local): 5 xor, 5 add, 4 rotl
+            // ------------------------------------------
             let t0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
             let t1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
             let t2 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
@@ -219,9 +218,8 @@ impl TripleMixSimdCore {
             let mut r0 = t0 + l1;
             let mut r1 = t1 ^ l0;
 
-            // --------------------
-            // Round 2 (cross-lane)
-            // --------------------
+            // Round 2 (cross-lane): 4 xor, 4 add, 4 rotl, 4 simd_swizzle
+            // ----------------------------------------------------------
             let sr0 = simd_swizzle!(r0, [1, 2, 3, 0]);
             let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
@@ -232,9 +230,8 @@ impl TripleMixSimdCore {
             r0 ^= rotl(sl1, MIXING_ROTATION_07) + sr1;
             r1 += rotl(sl0, MIXING_ROTATION_09) + sr0;
 
-            // --------------------
-            // Round 3 (nonlinear core)
-            // --------------------
+            // Round 3 (nonlinear core): 5 xor, 4 add, 2 rotl, 3 shift, 1 simd_mul
+            // -------------------------------------------------------------------
             let x = r0 ^ rotl(r1, MIXING_ROTATION_10);
             let y = l0 + (l1 >> MIXING_ROTATION_12);
             let m = simd_mul(x, y);
@@ -252,9 +249,8 @@ impl TripleMixSimdCore {
             let l1 = nl1;
             let r0 = nr0;
 
-            // --------------------
-            // Round 4 (transport)
-            // --------------------
+            // Round 4 (transport): 3 xor, 3 add, 1 rotl, 2 simd_swizzle
+            // ---------------------------------------------------------
             let sl0 = simd_swizzle!(l0, [3, 1, 2, 0]);
             let sl1 = simd_swizzle!(l1, [1, 2, 0, 3]);
 
@@ -266,9 +262,8 @@ impl TripleMixSimdCore {
             let r0 = t0 + l1;
             let r1 = t1 ^ l0;
 
-            // --------------------
-            // Output finalizer
-            // --------------------
+            // Output finalizer: 6 add/sub, 4 xor, 1 rotl, 3 shift
+            // ---------------------------------------------------
             let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
             let t1 = (l1 ^ r0) + r0 + (r1 << MIXING_ROTATION_19);
 
@@ -608,10 +603,8 @@ mod tests {
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
         const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
+        let mut samples = vec![0u64; SAMPLE_COUNT];
         for mut prng in create_rngs() {
-            let bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64).unwrap();
-            let lagged_bin_count_distribution = Binomial::new(0.25, SAMPLE_COUNT as u64 - 1).unwrap();
-            let mut samples = vec![0u64; SAMPLE_COUNT];
             prng.fill(samples.as_mut());
             for i in 0..=62 {
                 for j in (i + 1)..=63 {
