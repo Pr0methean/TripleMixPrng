@@ -9,20 +9,27 @@ mod avx2;
 
 use core::convert::Infallible;
 use generic_array::{GenericArray, typenum};
-use rand::RngExt;
+use rand::{rng, RngExt};
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
-use rand_core::{SeedableRng, TryRng};
+use rand_core::{Rng, SeedableRng, TryRng};
 use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
 use rs_shake256::Shake256Hasher;
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 use std::hint::unlikely;
+use std::iter::repeat;
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
+use genetic_algorithm::allele::Allele;
+use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
+use genetic_algorithm::genotype::ListGenotype;
+use hypors::chi_square::goodness_of_fit;
+use log::{debug, info, trace};
+use rand::rngs::SysRng;
+use statrs::distribution::{Binomial, DiscreteCDF};
 use typenum::U;
-
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
 // ============================================================================
@@ -59,649 +66,189 @@ const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 
-
-// ============================================================================
-// Core struct
-// ============================================================================
-
-#[derive(Clone)]
-struct TripleMixSimdCore {
-    xr0: Simd64,
-    xr1: Simd64,
-    tm0: Simd64,
-    tm1: Simd64,
-    weyl_lo: Simd64,
-    weyl_hi: Simd64,
-    inc_lo: Simd64,
-    inc_hi: Simd64,
+#[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
+enum Operation {
+    Copy,
+    Add(usize),
+    Subtract(usize),
+    Multiply(usize),
+    Xor(usize),
+    ShiftLeft(u64),
+    ShiftRight(u64),
+    RotateLeft(u64),
+    Swizzle(usize)
 }
 
-impl std::fmt::Debug for TripleMixSimdCore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let x = self.inc_hi;
-        let x1 = self.inc_lo;
-        let x2 = self.weyl_hi;
-        let x3 = self.weyl_lo;
-        let x4 = self.tm1;
-        let x5 = self.tm0;
-        let x6 = self.xr1;
-        let x7 = self.xr0;
-        f.debug_struct("TripleMixSimdCore")
-            .field("xr0", &x7.to_array())
-            .field("xr1", &x6.to_array())
-            .field("tm0", &x5.to_array())
-            .field("tm1", &x4.to_array())
-            .field("weyl_lo", &x3.to_array())
-            .field("weyl_hi", &x2.to_array())
-            .field("inc_lo", &x1.to_array())
-            .field("inc_hi", &x.to_array())
-            .finish()
-    }
+const SIMD_SWIZZLES: [fn(Simd64) -> Simd64; 23] = [
+    |x| simd_swizzle!(x, [0, 1, 3, 2]),
+                |x| simd_swizzle!(x, [0, 2, 1, 3]),
+                |x| simd_swizzle!(x, [0, 2, 3, 1]),
+                |x| simd_swizzle!(x, [0, 3, 1, 2]),
+                |x| simd_swizzle!(x, [0, 3, 2, 1]),
+                |x| simd_swizzle!(x, [1, 0, 2, 3]),
+                |x| simd_swizzle!(x, [1, 0, 3, 2]),
+                |x| simd_swizzle!(x, [1, 2, 0, 3]),
+                |x| simd_swizzle!(x, [1, 2, 3, 0]),
+                |x| simd_swizzle!(x, [1, 3, 0, 2]),
+                |x| simd_swizzle!(x, [1, 3, 2, 0]),
+                |x| simd_swizzle!(x, [2, 0, 1, 3]),
+                |x| simd_swizzle!(x, [2, 0, 3, 1]),
+                |x| simd_swizzle!(x, [2, 1, 0, 3]),
+                |x| simd_swizzle!(x, [2, 1, 3, 0]),
+                |x| simd_swizzle!(x, [2, 3, 0, 1]),
+                |x| simd_swizzle!(x, [2, 3, 1, 0]),
+                |x| simd_swizzle!(x, [3, 0, 1, 2]),
+                |x| simd_swizzle!(x, [3, 0, 2, 1]),
+                |x| simd_swizzle!(x, [3, 1, 0, 2]),
+                |x| simd_swizzle!(x, [3, 1, 2, 0]),
+                |x| simd_swizzle!(x, [3, 2, 0, 1]),
+                |x| simd_swizzle!(x, [3, 2, 1, 0]),
+];
+
+#[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
+pub struct Instruction {
+    operation: Operation,
+    operand1: usize,
+    output: usize,
 }
 
-impl TripleMixSimdCore {
-    const TINYMT_MAT1: u64 = 0xdaa51b54;
-    const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
-    const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
-
-    #[inline(always)]
-    pub(crate) fn fill_blocks(&mut self, blocks: &mut [[u64; OUTPUT_LEN]]) {
-        if blocks.is_empty() {
-            return;
+impl Allele for Instruction {
+    fn hash_slice(slice: &[Self], hasher: &mut impl Hasher)
+    where
+        Self: Sized
+    {
+        for item in slice {
+            item.hash(hasher);
         }
-        // The first 16 64-bit words of the Golden Ratio, transposed.
-        const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
-        const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
-
-        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
-        // first and last constant to increase low-bit rank and avalanche effect.
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-            0xd243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x7082_efa9_8ec4_e6c8,
-        ]);
-
-        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
-        let mut xr0 = self.xr0;
-        let mut xr1 = self.xr1;
-        let mut tm0 = self.tm0;
-        let mut tm1 = self.tm1;
-        let mut w_lo = self.weyl_lo;
-        let mut w_hi = self.weyl_hi;
-        let i_lo = self.inc_lo;
-        let i_hi = self.inc_hi;
-
-        // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-        // too weak.
-        let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-        let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
-
-        #[inline(always)]
-        fn rotl(x: Simd64, k: u64) -> Simd64 {
-            (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
-        }
-
-        const MIXING_ROTATION_12: u64 = 7;
-        const MIXING_ROTATION_10: u64 = 9;
-        const MIXING_ROTATION_07: u64 = 11;
-        const MIXING_ROTATION_19: u64 = 13;
-        const MIXING_ROTATION_16: u64 = 14;
-        const MIXING_ROTATION_14: u64 = 17;
-        const MIXING_ROTATION_13: u64 = 19;
-        const MIXING_ROTATION_00: u64 = 22;
-        const MIXING_ROTATION_05: u64 = 23;
-        const MIXING_ROTATION_02: u64 = 29;
-        const MIXING_ROTATION_03: u64 = 31;
-        const MIXING_ROTATION_23: u64 = 39;
-        const MIXING_ROTATION_01: u64 = 41;
-        const MIXING_ROTATION_21: u64 = 43;
-        const MIXING_ROTATION_09: u64 = 44;
-        const MIXING_ROTATION_22: u64 = 49;
-        const MIXING_ROTATION_18: u64 = 54;
-        for block in blocks {
-            // === 1. Source Generation ===
-
-            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            let next_w_lo = w_lo + i_lo;
-            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
-            let carry = next_w_lo
-                .simd_lt(w_lo)
-                .select(Simd::splat(1), Simd::splat(0));
-            w_hi = w_hi + high_product + i_hi + carry;
-            w_lo = next_w_lo;
-            let b_l0 = w_lo + LANE_CONSTANTS;
-            let b_r1 = w_hi;
-
-            // Xoroshiro update
-            let b_l1 = xr0 + xr1;
-            let t = xr0 ^ xr1;
-            xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
-            xr1 = rotl(t, 36);
-
-            // TinyMT64 update
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
-            let mut x = tm0 ^ tm1;
-            x ^= x << Simd::splat(12);
-            x ^= x >> Simd::splat(32);
-            x ^= x << Simd::splat(32);
-            x ^= x << Simd::splat(11);
-
-            let mask = (x & Simd::splat(1)).wrapping_neg();
-            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
-            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
-            tm0 = next_tm0;
-            tm1 = next_tm1;
-
-            let mut ty = tm0 + tm1;
-            ty ^= tm0 >> Simd::splat(8);
-            let b_r0 =
-                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
-
-            // === 2. Mixing ===
-            let l0 = b_l0;
-            let l1 = b_l1;
-            let r0 = b_r0;
-            let r1 = b_r1;
-
-            // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
-            // ------------------------------------------
-            let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
-            let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
-            let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-            let tl1 = l1 + l0;
-
-            let mut l0 = r0 ^ tl0;
-            let mut l1 = r1 + tl1;
-            let mut r0 = tr0 + l1;
-            let mut r1 = tr1 ^ l0;
-
-            // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
-            // ----------------------------------------------------------
-            let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
-            let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-            let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-
-            l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-            l1 += sr1 ^ sl0;
-            r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-            r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
-
-            // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
-            // -------------------------------------------------------------------
-            let x = r0 ^ (r1 >> MIXING_ROTATION_10);
-            let y = l0 + (l1 >> MIXING_ROTATION_12);
-            let m = simd_mul(x, y);
-
-            let m1 = rotl(m, MIXING_ROTATION_13);
-            let m2 = m ^ (m >> MIXING_ROTATION_14);
-
-            // asymmetric feedback (no duplicated structure)
-            let nl0 = r0 ^ m1;
-            let nl1 = r1 + m2;
-            let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
-            let r1 = l1 ^ m1 ^ m2;
-
-            let l0 = nl0;
-            let l1 = nl1;
-            let r0 = nr0;
-
-            // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-            // ---------------------------------------------------------
-            let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
-
-            let tl0r1 = sl0 + r1;
-            let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
-
-            let l0 = r0 ^ tl0r1;
-            let l1 = r1 + tl1r0;
-            let r0 = tl0r1 + l1;
-            let r1 = tl1r0 ^ l0;
-
-            // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-            // ---------------------------------------------------
-            let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-            let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
-
-            let mut out0 = t0 + t1;
-            let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-
-            // single cross-mix (sufficient)
-            out0 ^= out1 >> MIXING_ROTATION_22;
-            out1 += out0 << MIXING_ROTATION_23;
-
-            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
-        }
-
-        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
-        self.xr0 = xr0;
-        self.xr1 = xr1;
-        self.tm0 = tm0;
-        self.tm1 = tm1;
-        self.weyl_lo = w_lo;
-        self.weyl_hi = w_hi;
     }
 }
 
-#[derive(Clone)]
-pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
+pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(num_operands * num_operands * (193 + 4 * num_operands));
 
-impl TripleMixPrng {
-    pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
-
-    pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
-        TripleMixPrng(BlockRng::new(core))
-    }
-
-    /// Creates an instance in a relatively predictable state. Intended only for testing.
-    pub fn almost_all_zeroes_state() -> TripleMixPrng {
-        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
-        const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
-        TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd::splat(0),
-            xr1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            tm0: Simd::splat(0),
-            tm1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            weyl_lo: Simd::splat(0),
-            weyl_hi: Simd::splat(0),
-            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0),
-        })
-    }
-}
-
-impl SeedableRng for TripleMixPrng {
-    type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
-
-    fn from_seed(seed: Self::Seed) -> Self {
-        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
-        let mut xr0_s = [0u64; SIMD_WIDTH];
-        let mut xr1_s = [0u64; SIMD_WIDTH];
-        let mut tm0_s = [0u64; SIMD_WIDTH];
-        let mut tm1_s = [0u64; SIMD_WIDTH];
-        let mut w_lo_s = [0u64; SIMD_WIDTH];
-        let mut w_hi_s = [0u64; SIMD_WIDTH];
-        let mut i_lo_s = [0u64; SIMD_WIDTH];
-        let mut i_hi_s = [0u64; SIMD_WIDTH];
-
-        let mut master_hasher = Shake256Hasher::<64>::default();
-        master_hasher.write(b"TripleMix V11");
-        master_hasher.write(&seed);
-
-        for i in 0..SIMD_WIDTH {
-            let mut count: u128 = 0;
-            let mut lane_hasher = master_hasher.clone();
-            lane_hasher.write(&[i as u8]);
-            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
-            'generate: loop {
-                let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
-                let out_bytes: &[u8] = output.as_ref();
-
-                [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
-                tm0_s[i] &= TINYMT64_LANE_MASK;
-
-                if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
-                    lane_hasher.write(&count.to_ne_bytes());
-                    count += 1;
-                    continue;
-                }
-                for j in 0..i {
-                    if unlikely(
-                        (xr0_s[j] == xr0_s[i] && xr1_s[j] == xr1_s[i])
-                            || (tm0_s[j] == tm0_s[i] && tm1_s[j] == tm1_s[i]),
-                    ) {
-                        lane_hasher.write(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
-                }
-                [w_lo_s[i], w_hi_s[i], i_lo_s[i], i_hi_s[i]] = read_words(&out_bytes[32..64]);
-                for j in 0..i {
-                    if unlikely(w_lo_s[j] == w_lo_s[i] || i_lo_s[j] == i_lo_s[i]) {
-                        lane_hasher.write(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
-                }
-                break;
+    for output in 0..num_operands {
+        for operand1 in 0..num_operands {
+            if operand1 != output {
+                instructions.push(Instruction {
+                    operation: Operation::Copy,
+                    operand1, output
+                });
+            }
+            for swizzle in 0..23 {
+                instructions.push(Instruction {
+                    operation: Operation::Swizzle(swizzle),
+                    output, operand1
+                })
+            }
+            for operand2 in 0..num_operands {
+                instructions.push(Instruction {
+                    operation: Operation::Subtract(operand2),
+                    output,
+                    operand1
+                });
+            }
+            for operand2 in (operand1 + 1)..num_operands {
+            instructions.push(Instruction {
+                    operation: Operation::Add(operand2),
+                    output, operand1,
+                });
+            instructions.push(Instruction {
+                    operation: Operation::Xor(operand2),
+                    output, operand1
+                });
+            instructions.push(Instruction {
+                    operation: Operation::Multiply(operand2),
+                    output, operand1,
+                });
+            }
+            for shift_amount in 1..=63 {
+                instructions.push(Instruction {
+                    output, operand1, operation: Operation::ShiftLeft(shift_amount)
+                });
+                instructions.push(Instruction {
+                    output, operand1, operation: Operation::ShiftRight(shift_amount)
+                });
+                                instructions.push(Instruction {
+                    output, operand1, operation: Operation::RotateLeft(shift_amount)
+                });
             }
         }
-
-        let core = TripleMixSimdCore {
-            xr0: Simd64::from_array(xr0_s),
-            xr1: Simd64::from_array(xr1_s),
-            tm0: Simd64::from_array(tm0_s),
-            tm1: Simd64::from_array(tm1_s),
-            weyl_lo: Simd64::from_array(w_lo_s),
-            weyl_hi: Simd64::from_array(w_hi_s),
-            inc_lo: Simd64::from_array(i_lo_s),
-            inc_hi: Simd64::from_array(i_hi_s),
-        };
-        TripleMixPrng(BlockRng::new(core))
     }
+    instructions
+}
 
-    fn fork(&mut self) -> Self {
-        let mut entropy = [Simd::splat(0); 8];
-        for cell in entropy.iter_mut() {
-            self.fill(cell.as_mut_array());
-        }
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PrngMixingFitness;
 
-        let mut child_core = self.0.core.clone();
+impl Fitness for PrngMixingFitness {
+    type Genotype = ListGenotype<Instruction>;
 
-        let a = child_core.xr0;
-        let b = entropy[2];
-        child_core.xr0 = a ^ b;
-        let a = child_core.xr1;
-        let b = entropy[3];
-        child_core.xr1 = a ^ b;
-        let a = child_core.tm0;
-        let b = entropy[4];
-        child_core.tm0 = a ^ b;
-        let a = child_core.tm1;
-        let b = entropy[5];
-        child_core.tm1 = a ^ b;
-        let a1 = child_core.tm0;
-        child_core.tm0 = a1 & Simd::splat(TINYMT64_LANE_MASK);
-
-        let a2 = child_core.xr0;
-        let b1 = child_core.xr1;
-        let xr_combined = a2 | b1;
-        let a2 = child_core.tm0;
-        let b1 = child_core.tm1;
-        let tm_combined = a2 | b1;
-
-        let mut rejected = false;
-        if unlikely(
-            xr_combined.simd_eq(Simd::splat(0)).any() || tm_combined.simd_eq(Simd::splat(0)).any(),
-        ) {
-            rejected = true;
-        } else {
-            for i in 1..SIMD_WIDTH {
-                for j in 0..i {
-                    let x = child_core.inc_lo;
-                    let x1 = child_core.inc_lo;
-                    let x2 = child_core.weyl_lo;
-                    let x3 = child_core.weyl_lo;
-                    let x4 = child_core.tm1;
-                    let x5 = child_core.tm1;
-                    let x6 = child_core.tm0;
-                    let x7 = child_core.tm0;
-                    let x8 = child_core.xr1;
-                    let x9 = child_core.xr1;
-                    let x10 = child_core.xr0;
-                    let x11 = child_core.xr0;
-                    if unlikely(
-                        (x11.to_array()[j] == x10.to_array()[i]
-                            && x9.to_array()[j] == x8.to_array()[i])
-                            || (x7.to_array()[j] == x6.to_array()[i]
-                                && x5.to_array()[j] == x4.to_array()[i])
-                            || x3.to_array()[j] == x2.to_array()[i]
-                            || x1.to_array()[j] == x.to_array()[i],
-                    ) {
-                        rejected = true;
-                        break;
+    fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, _genotype: &Self::Genotype) -> Option<FitnessValue> {
+        debug!("Evaluating chromosome: {:?}", chromosome);
+        let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
+        let mut complexity_cost = 0;
+        let mut total_multiplies: usize = 0;
+        let mut total_shifts: usize = 0;
+        let mut total_swizzles: usize = 0;
+        for instruction in chromosome.genes().iter() {
+            complexity_cost += match instruction.operation {
+                Operation::Copy => 5,
+                Operation::Xor(_) => 8,
+                Operation::Add(_) => 10,
+                Operation::Subtract(_) => 10,
+                Operation::Multiply(_) => {
+                    total_multiplies += 1;
+                    match total_multiplies {
+                        1 => 60,
+                        _ => 100
+                    }
+                }
+                Operation::ShiftLeft(_) | Operation::ShiftRight(_) => {
+                    total_shifts += 1;
+                    match total_shifts {
+                        0..=12 => 12,
+                        13..=16 => 14,
+                        17..=24 => 16,
+                        25..=32 => 18,
+                        _ => 50
+                    }
+                }
+                Operation::RotateLeft(_) => {
+                    total_shifts += 1;
+                    match total_shifts {
+                        0..=12 => 32,
+                        13..=16 => 34,
+                        17..=24 => 36,
+                        25..=32 => 38,
+                        33.. => 70
+                    }
+                }
+                Operation::Swizzle(_) => {
+                    total_swizzles += 1;
+                    match total_swizzles {
+                        0..=3 => 35,
+                        4 => 45,
+                        _ => 50
                     }
                 }
             }
         }
-        if unlikely(rejected) {
-            let mut seed = [0u8; Self::SEED_SIZE];
-            self.0.fill_bytes(&mut seed);
-            return Self::from_seed(GenericArray::from(seed));
-        }
-        child_core.inc_lo = entropy[0] | Simd::splat(1);
-        child_core.inc_hi = entropy[1];
-        child_core.weyl_lo = child_core.weyl_lo ^ entropy[6];
-        child_core.weyl_hi = child_core.weyl_hi ^ entropy[7];
-
-        TripleMixPrng(BlockRng::new(child_core))
-    }
-}
-
-impl TryRng for TripleMixPrng {
-    type Error = Infallible;
-
-    #[inline(always)]
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        let next_u64 = self.try_next_u64()?;
-        Ok((next_u64 >> 32 ^ next_u64) as u32)
-    }
-
-    #[inline(always)]
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.0.next_word())
-    }
-
-    #[inline(always)]
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
-        if !prefix.is_empty() {
-            self.0.fill_bytes(prefix);
-        }
-        let (dst_blocks, tail) = u64s.as_chunks_mut();
-        if !dst_blocks.is_empty() {
-            self.0.reset_and_skip(0);
-            self.0.core.fill_blocks(dst_blocks);
-        }
-        for tail_u64 in tail {
-            *tail_u64 = self.0.next_word();
-        }
-        if !suffix.is_empty() {
-            self.0.fill_bytes(suffix);
-        }
-        Ok(())
-    }
-}
-
-// ============================================================================
-// Generator impl — SINGLE unified implementation
-//
-// All operations use portable Simd<u64, 4> operators, which compile to the
-// same AVX2 instructions on AVX2 targets. The ONLY dispatch is for multiply,
-// which portable SIMD scalarizes but AVX2 keeps in-register via mullo.
-// ============================================================================
-
-impl Generator for TripleMixSimdCore {
-    type Output = [u64; OUTPUT_LEN];
-
-    #[inline(always)]
-    fn generate(&mut self, output: &mut Self::Output) {
-        self.fill_blocks(from_mut(output))
-    }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hypors::chi_square::goodness_of_fit;
-    use rand::RngExt;
-    use rand_core::{Rng, SeedableRng, UnwrapErr};
-    use statrs::distribution::{Binomial, DiscreteCDF};
-    use std::collections::HashSet;
-    use std::iter::repeat;
-    use rand::rngs::SysRng;
-
-    pub fn create_rngs() -> [TripleMixPrng; 5] {
-        const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
-        const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
-        const LARGEST_DISTINCT_ODD: Simd64 = Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
-        const LARGEST_DISTINCT: Simd64 = Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
-        let rng1 = TripleMixPrng::almost_all_zeroes_state();
-        let rng2 = TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd::splat(0),
-            xr1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
-            tm0: Simd::splat(0),
-            tm1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
-            weyl_lo: Simd::splat(0),
-            weyl_hi: Simd::splat(0),
-            inc_lo: SMALLEST_DISTINCT_ODD_DESCENDING,
-            inc_hi: Simd::splat(0),
-        });
-        let rng3 = TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd::splat(u64::MAX),
-            xr1: LARGEST_DISTINCT,
-            tm0: Simd::splat(u64::MAX),
-            tm1: LARGEST_DISTINCT,
-            weyl_lo: Simd::splat(u64::MAX),
-            weyl_hi: Simd::splat(u64::MAX),
-            inc_lo: LARGEST_DISTINCT_ODD,
-            inc_hi: Simd::splat(u64::MAX),
-        });
-        let rng4 = TripleMixPrng::from_seed(GenericArray::default());
-        let rng5 = TripleMixPrng::from_rng(&mut UnwrapErr(SysRng));
-        [rng1, rng2, rng3, rng4, rng5]
-    }
-
-    #[test]
-    fn test_byte_frequencies() {
-        for mut prng in create_rngs() {
-            let mut frequencies = [0u32; u8::MAX as usize + 1];
-            for _ in 0..(1 << 28) {
-                let byte: u8 = prng.random();
-                frequencies[byte as usize] += 1;
-            }
-            let chi_square = goodness_of_fit(
-                frequencies.map(f64::from),
-                repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
-                0.01,
-            )
-                .unwrap();
-            println!("{:?}", chi_square);
-            assert!(!chi_square.reject_null);
-        }
-    }
-
-    #[test]
-    fn test_u16_frequencies() {
-        for mut prng in create_rngs() {
-            let mut frequencies = vec![0u32; u16::MAX as usize + 1];
-            for _ in 0..(1 << 28) {
-                let word: u16 = prng.random();
-                frequencies[word as usize] += 1;
-            }
-            let chi_square = goodness_of_fit(
-                frequencies.into_iter().map(f64::from),
-                repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
-                0.01,
-            )
-                .unwrap();
-            println!("{:?}", chi_square);
-            assert!(!chi_square.reject_null);
-        }
-    }
-
-    #[test]
-    fn test_bit_correlations_and_transitions() {
-        const SAMPLE_COUNT: usize = 1 << 24;
-        const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
-        let mut samples = vec![0u64; SAMPLE_COUNT];
-        for mut prng in create_rngs() {
-            prng.fill(samples.as_mut());
-            for i in 0..=62 {
-                for j in (i + 1)..=63 {
-                    let mut bins = [0u64; 4];
-                    for sample in &samples {
-                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
-                    }
-                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
-                    assert!(
-                        p >= P_THRESHOLD,
-                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
-                    );
-                }
-            }
-            for i in 0..=63 {
-                for j in 0..=63 {
-                    let mut lagged_bins = [0u64; 4];
-                    for pair in samples.windows(2) {
-                        let first = pair[0];
-                        let second = pair[1];
-                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
-                    }
-                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
-                    assert!(
-                        p >= P_THRESHOLD,
-                        "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_equivalence() {
-        let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
-
-        let mut buf1 = vec![0u8; 1024];
-        prng1.fill_bytes(&mut buf1);
-
-        let mut buf2 = vec![0u8; 1024];
-        for chunk in buf2.chunks_exact_mut(8) {
-            let val = prng2.next_u64();
-            chunk.copy_from_slice(&val.to_ne_bytes());
-        }
-
-        assert_eq!(buf1, buf2);
-    }
-
-    #[test]
-    fn test_fork_independence_descendants() {
-        const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
-        const FORKS: usize = 64;
-        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        for mut prng in create_rngs() {
-            for _ in 0..FORKS {
-                for _ in 0..SAMPLES_PER_FORK {
-                    let next = prng.next_u64();
-                    print!("{next:016X}");
-                    assert!(random.insert(next));
-                }
-                println!();
-                prng = prng.fork();
-            }
-        }
-    }
-
-    #[test]
-    fn test_fork_independence_siblings() {
-        const SAMPLES_PER_FORK: usize = 32;
-        const FORKS: usize = 64;
-        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        for mut parent_prng in create_rngs() {
-            for _ in 0..FORKS {
-                let mut prng = parent_prng.fork();
-                for _ in 0..SAMPLES_PER_FORK {
-                    let next = prng.next_u64();
-                    print!("{next:016X}");
-                    assert!(random.insert(next));
-                }
-                println!();
-            }
-        }
-    }
-
-    #[test]
-    fn test_avalanche() {
-        for rng in create_rngs() {
-            let core = rng.0.core.clone();
-
-            const ITERATIONS: usize = 20;
+        debug!("Complexity cost: {}", complexity_cost);
+        let mut test_failures_cost = 0;
+        {
+            // Avalanche test
+            let mut avalanche_failure_cost = 0;
+            let mut related_seed_related_output_cost = 0;
+            let core = prng.0.core.clone();
+            const AVALANCHE_ITERATIONS: usize = 20;
             const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
-
             let mut min_flips = u32::MAX;
             let mut max_flips = 0;
             let mut total_flips: u64 = 0;
             let mut count: u64 = 0;
             let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
             let mut core1 = core.clone();
-            let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+            let mut output1 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
             for output_block in output1.iter_mut() {
                 core1.generate(output_block);
             }
@@ -772,24 +319,21 @@ mod tests {
                             }
                             _ => unreachable!(),
                         }
-                        let mut output2 = [[0u64; OUTPUT_LEN]; ITERATIONS];
+                        let mut output2 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
                         for output_block in output2.iter_mut() {
                             core2.generate(output_block);
                         }
-                        for i in 0..ITERATIONS {
+                        for i in 0..AVALANCHE_ITERATIONS {
                             let mut flips = 0;
                             for cell in 0..OUTPUT_LEN {
                                 if cell != 0 {
-                                    assert_ne!(
-                                        output2[i][cell].wrapping_sub(output2[i][0]),
-                                        output1[i][cell].wrapping_sub(output1[i][0]),
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
-                                    );
-                                    assert_ne!(
-                                        output2[i][cell] ^ output2[i][0],
-                                        output1[i][cell] ^ output1[i][0],
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
-                                    );
+                                    if output2[i][cell].wrapping_sub(output2[i][0]) == output1[i][cell].wrapping_sub(output1[i][0]) {
+                                        trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping");
+                                        related_seed_related_output_cost += 50;
+                                    } else if output2[i][cell] ^ output2[i][0] == output1[i][cell] ^ output1[i][0] {
+                                        trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping");
+                                        related_seed_related_output_cost += 50;
+                                    }
                                 }
                                 flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
                             }
@@ -811,165 +355,148 @@ mod tests {
                     }
                 }
             }
-            for field_idx in 0..8 {
-                for lane_idx in 0..SIMD_WIDTH {
-                    println!(
-                        "Field {} lane {}: Flips: {:?}",
-                        field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]
-                    );
-                }
-            }
             let avg_flips = total_flips as f64 / count as f64;
-            println!(
+            debug!(
                 "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
                 count, avg_flips, min_flips, max_flips
             );
-
             const DEVIATION: f64 = 0.1;
-            assert!(
-                avg_flips >= 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64),
-                "Average diffusion too low"
-            );
-            assert!(
-                avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
-                "Average diffusion too high?"
-            );
+            const MIN_FLIPS: f64 = 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64);
+            const MAX_FLIPS: f64 = 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64);
+            if avg_flips < MIN_FLIPS {
+                avalanche_failure_cost += 10 * (MIN_FLIPS - avg_flips) as u64;
+            } else if avg_flips > MAX_FLIPS {
+                avalanche_failure_cost += 10 * (avg_flips - MAX_FLIPS) as u64;
+            }
             let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
             let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
             let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
             let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
-            println!(
+            debug!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
                 low_avalanche_probability * count as f64,
                 low_avalanches,
                 low_avalanche_p_value
             );
-            assert!(
-                low_avalanche_p_value > 0.01,
-                "Too many low-avalanche results"
-            );
-            assert!(
-                min_flips as usize >= 16 * OUTPUT_LEN,
-                "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
-            );
-        }
-    }
-
-    #[test]
-    fn test_seed_diffusion() {
-        let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let mut rng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let start_val1 = rng1.try_next_u64().unwrap();
-
-        for byte_index in 0..TripleMixPrng::SEED_SIZE {
-            for bit_index in 0..=7 {
-                let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
-                seed[byte_index] = 1 << bit_index;
-                let mut rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
-                let start_val2 = rng2.try_next_u64().unwrap();
-                let flipped_bits = (start_val1 ^ start_val2).count_ones();
-                assert!(
-                    flipped_bits > 1,
-                    "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure."
-                );
-                assert!(
-                    flipped_bits < 63,
-                    "Changing byte {byte_index} bit {bit_index} of the seed just inverted the first output! Diffusion failure."
-                );
-                assert_ne!(start_val1, 0, "Output shouldn't be zero");
+            if low_avalanche_p_value < 0.01 {
+                avalanche_failure_cost += Self::p_value_cost(low_avalanche_p_value);
             }
+            debug!("Avalanche failure cost: {avalanche_failure_cost}");
+            debug!("Related seed / related output cost: {related_seed_related_output_cost}");
+            test_failures_cost += avalanche_failure_cost;
+            test_failures_cost += related_seed_related_output_cost;
         }
-    }
 
-    const SAMPLES: usize = 1 << 22; // ~4M outputs
-    const BLOCK: usize = 8; // 8x8 projection
-
-    fn extract_bitplane(words: &[u64], bit: u32) -> Vec<i8> {
-        words
-            .iter()
-            .map(|w| if ((w >> bit) & 1) != 0 { 1 } else { -1 })
-            .collect()
-    }
-
-    fn xor_successive(words: &mut [u64]) {
-        for i in 0..words.len() - 1 {
-            words[i] ^= words[i + 1];
-        }
-    }
-
-    fn random_projection_kernel() -> [[i8; BLOCK]; BLOCK] {
-        // Fixed deterministic ±1 kernel
-        let mut k = [[0i8; BLOCK]; BLOCK];
-        let mut x: u64 = 0x12345678abcdef01;
-        for i in 0..BLOCK {
-            for j in 0..BLOCK {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                k[i][j] = if x & 1 == 0 { 1 } else { -1 };
+        // Byte and u16 frequency test
+        {
+            let mut frequencies_cost = 0;
+            let mut frequencies_prng = prng.clone();
+            let mut byte_frequencies = [0u32; u8::MAX as usize + 1];
+            let mut u16_frequencies = [0u32; u16::MAX as usize + 1];
+            for _ in 0..(1 << 28) {
+                let byte1: u8 = frequencies_prng.random();
+                byte_frequencies[byte1 as usize] += 1;
+                let byte2: u8 = frequencies_prng.random();
+                byte_frequencies[byte2 as usize] += 1;
+                let word: u16 = byte1 as u16 | (byte2 as u16) << 8;
+                u16_frequencies[word as usize] += 1;
             }
+            let byte_chi_square = goodness_of_fit(
+                byte_frequencies.map(f64::from),
+                repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
+                0.01,
+            ).unwrap();
+            debug!("Byte chi^2: {:?}", byte_chi_square);
+            if byte_chi_square.reject_null {
+                frequencies_cost += Self::p_value_cost(byte_chi_square.p_value);
+            }
+            let u16_chi_square = goodness_of_fit(
+                u16_frequencies.map(f64::from),
+                vec![(1 << 12) as f64; u16::MAX as usize + 1],
+                0.01,
+            ).unwrap();
+            debug!("u16 chi^2: {:?}", u16_chi_square);
+            if u16_chi_square.reject_null {
+                frequencies_cost += Self::p_value_cost(u16_chi_square.p_value);
+            }
+            debug!("Frequencies cost: {frequencies_cost}");
+            test_failures_cost += frequencies_cost;
         }
-        k
-    }
 
-    fn projection_test(data: &[i8]) -> f64 {
-        let kernel = random_projection_kernel();
-        let mut sum = 0f64;
-        let mut sum_sq = 0f64;
-        let mut count = 0f64;
-
-        let side = (data.len() as f64).sqrt() as usize;
-        for y in 0..side - BLOCK {
-            for x in 0..side - BLOCK {
-                let mut acc = 0i32;
-                for ky in 0..BLOCK {
-                    for kx in 0..BLOCK {
-                        let idx = (y + ky) * side + (x + kx);
-                        acc += data[idx] as i32 * kernel[ky][kx] as i32;
+        {
+            // Bit correlation test
+            let mut correlation_cost = 0;
+            const SAMPLE_COUNT: usize = 1 << 16;
+            const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
+            let mut samples = vec![0u64; SAMPLE_COUNT];
+            prng.clone().fill(samples.as_mut());
+            for i in 0..=62 {
+                for j in (i + 1)..=63 {
+                    let mut bins = [0u64; 4];
+                    for sample in &samples {
+                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
+                    }
+                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                    if p < P_THRESHOLD {
+                        debug!("Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}");
+                        correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
                     }
                 }
-                let val = acc as f64;
-                sum += val;
-                sum_sq += val * val;
-                count += 1.0;
             }
+            for i in 0..=63 {
+                for j in 0..=63 {
+                    let mut lagged_bins = [0u64; 4];
+                    for pair in samples.windows(2) {
+                        let first = pair[0];
+                        let second = pair[1];
+                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
+                    }
+                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                    if p < P_THRESHOLD {
+                        debug!("Chi-square test failed for bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}");
+                        correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
+                    }
+                }
+            }
+            debug!("Correlation cost: {correlation_cost}");
+            test_failures_cost += correlation_cost;
         }
 
-        let mean = sum / count;
-        let var = (sum_sq / count) - mean * mean;
-        mean.abs() + (var - 64.0).abs() // 64 expected variance for 8x8 ±1
-    }
-
-    #[test]
-    fn test_bitplane_projection() {
-        for mut rng in create_rngs() {
-            let mut buf = vec![0u64; SAMPLES];
-            rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
-
-            xor_successive(&mut buf);
-
-            for bit in 0..64 {
-                let plane = extract_bitplane(&buf, bit);
-                let score = projection_test(&plane);
-
-                assert!(
-                    score < 1.0,
-                    "Projection deviation too large for bit {bit}: {}",
-                    score
-                );
+        {
+            // Low-bit-rank test
+            let mut low_bit_rank_cost = 0;
+            let mut rank60_count = 0;
+            let mut bit_rank_rng = prng.clone();
+            for _ in 0..10000 {
+                let mut matrix = [0u64; 64];
+                for r in 0..64 {
+                    matrix[r] = bit_rank_rng.next_u64();
+                }
+                let rank = gf2_rank(matrix);
+                if rank <= 60 {
+                    debug!("Low GF2 rank: {rank}");
+                    rank60_count += 1;
+                    if rank60_count > 2 {
+                        low_bit_rank_cost += 10;
+                    }
+                    if rank < 60 {
+                        low_bit_rank_cost += 20 << (60 - rank);
+                    }
+                }
             }
+            debug!("Low GF2 rank cost: {low_bit_rank_cost}");
+            test_failures_cost += low_bit_rank_cost;
         }
-    }
 
-    #[test]
-    fn test_lane_cross_correlation_bitplane() {
-        for mut rng in create_rngs() {
-            const N: usize = 1 << 28;
+        {
+            // Lane correlation test
+            let mut lane_correlation_cost = 0;
+            const N: usize = 1 << 20;
             let mut lanes = [0u64; SIMD_WIDTH];
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
                 for _ in 0..N {
-                    rng.fill(&mut lanes);
+                    prng.fill(&mut lanes);
                     for bit in 0..64 {
                         let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
                         let b = if (lanes[target_lane] >> bit) & 1 == 1 {
@@ -989,100 +516,335 @@ mod tests {
                     // so sigma = sqrt(N * 0.25) * 2 / N
                     // = 1/sqrt(N)
                     let sigma = 1.0 / (N as f64).sqrt();
-
-                    assert!(
-                        corr.abs() < 5.0 * sigma,
-                        "Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})",
-                    );
-                }
-            }
-        }
-    }
-
-    fn gf2_rank(mut rows: [u64; 64]) -> u32 {
-        let mut rank = 0;
-        for col in (0..64).rev() {
-            if let Some(pivot) = (rank..64).find(|&r| (rows[r] >> col) & 1 == 1) {
-                rows.swap(rank, pivot);
-                for r in 0..64 {
-                    if r != rank && ((rows[r] >> col) & 1) == 1 {
-                        rows[r] ^= rows[rank];
+                    let z_score = corr.abs() / sigma;
+                    if z_score > 5.0 {
+                        debug!("Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})");
+                        lane_correlation_cost += (20.0 * (z_score - 4.0)) as u64;
                     }
                 }
-                rank += 1;
             }
+            debug!("Lane correlation cost: {lane_correlation_cost}");
+            test_failures_cost += lane_correlation_cost;
         }
-        rank.try_into().unwrap()
-    }
 
-    /// False positive rate for this test is about 1.2% per PRNG.
-    #[test]
-    fn test_lowbit_rank() {
-        for mut rng in create_rngs() {
-            let mut rank60_count = 0;
-
-            for _ in 0..10000 {
-                let mut matrix = [0u64; 64];
-                for r in 0..64 {
-                    matrix[r] = rng.next_u64();
-                }
-                let rank = gf2_rank(matrix);
-                assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
-                if rank == 60 {
-                    rank60_count += 1;
-                    assert!(rank60_count <= 2, "Too many low-bit rank deficiencies (rank 60)");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_double_differential() {
-        for mut rng in create_rngs() {
-            const N: usize = 1 << 21;
-
-            let mut x = vec![0u64; N];
-            for i in 0..N {
-                x[i] = rng.next_u64();
-            }
-
-            // first difference
-            for i in 0..N - 1 {
-                x[i] ^= x[i + 1];
-            }
-
-            // second difference
-            for i in 0..N - 2 {
-                x[i] ^= x[i + 2];
-            }
-
-            // check bit bias
-            let ones = x.iter().map(|v| v.count_ones() as u64).sum::<u64>();
-            let total_bits = (N as u64) * 64;
-            let bias = (ones as f64 / total_bits as f64) - 0.5;
-
-            assert!(bias.abs() < 1e-3, "Differential bias detected: {}", bias);
-        }
-    }
-
-    #[test]
-    fn test_fractional_spectral() {
-        for mut rng in create_rngs() {
-            const N: usize = 1 << 21;
-
-            let mut prev = rng.next_u64();
-            let mut min_gap = f64::MAX;
-
-            for _ in 0..N {
-                let curr = rng.next_u64();
-                let diff = (curr.wrapping_sub(prev) as f64).abs();
-                if diff < min_gap {
-                    min_gap = diff;
-                }
-                prev = curr;
-            }
-
-            assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
-        }
+        debug!("Total test failure cost: {test_failures_cost}");
+        let cost = test_failures_cost + complexity_cost;
+        debug!("Total cost: {cost}");
+        Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
 }
+
+impl PrngMixingFitness {
+    fn p_value_cost(p_value: f64) -> u64 {
+        (200.0 / (20.0 + 2000.0 * p_value)) as u64
+    }
+}
+
+// ============================================================================
+// Core struct
+// ============================================================================
+
+#[derive(Clone)]
+pub struct TripleMixSimdCore {
+    xr0: Simd64,
+    xr1: Simd64,
+    tm0: Simd64,
+    tm1: Simd64,
+    weyl_lo: Simd64,
+    weyl_hi: Simd64,
+    inc_lo: Simd64,
+    inc_hi: Simd64,
+    mixing_instructions: Box<[Instruction]>,
+}
+
+impl std::fmt::Debug for TripleMixSimdCore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let x = self.inc_hi;
+        let x1 = self.inc_lo;
+        let x2 = self.weyl_hi;
+        let x3 = self.weyl_lo;
+        let x4 = self.tm1;
+        let x5 = self.tm0;
+        let x6 = self.xr1;
+        let x7 = self.xr0;
+        f.debug_struct("TripleMixSimdCore")
+            .field("xr0", &x7.to_array())
+            .field("xr1", &x6.to_array())
+            .field("tm0", &x5.to_array())
+            .field("tm1", &x4.to_array())
+            .field("weyl_lo", &x3.to_array())
+            .field("weyl_hi", &x2.to_array())
+            .field("inc_lo", &x1.to_array())
+            .field("inc_hi", &x.to_array())
+            .finish()
+    }
+}
+
+impl TripleMixSimdCore {
+    pub const NUM_OPERANDS: usize = 16;
+    const TINYMT_MAT1: u64 = 0xdaa51b54;
+    const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
+    const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
+
+    #[inline(always)]
+    pub(crate) fn fill_blocks(&mut self, blocks: &mut [[u64; OUTPUT_LEN]]) {
+        if blocks.is_empty() {
+            return;
+        }
+        // The first 16 64-bit words of the Golden Ratio, transposed.
+        const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
+        const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
+        const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([0x1082276bf3a27251, 0x01886f0928403002, 0x64d325d1c5371682, 0x471c4ab3ed3d82a5]);
+        const FEISTEL_CONSTANT_4: Simd64 = Simd::from_array([0xf86c6a11d0c18e95, 0xc1d64ba40f335e36, 0xcadd0cccfdffbbe1, 0xfec507705e4ae6e5]);
+
+        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
+        // first and last constant to increase low-bit rank and avalanche effect.
+        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+            0xd243_f6a8_885a_308d,
+            0x3131_98a2_e037_0734,
+            0xca40_9382_2299_f31d,
+            0x7082_efa9_8ec4_e6c8,
+        ]);
+
+        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
+        let mut xr0 = self.xr0;
+        let mut xr1 = self.xr1;
+        let mut tm0 = self.tm0;
+        let mut tm1 = self.tm1;
+        let mut w_lo = self.weyl_lo;
+        let mut w_hi = self.weyl_hi;
+        let i_lo = self.inc_lo;
+        let i_hi = self.inc_hi;
+
+        #[inline(always)]
+        fn rotl(x: Simd64, k: u64) -> Simd64 {
+            (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
+        }
+
+        for block in blocks {
+            // === 1. Source Generation ===
+
+            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
+            let next_w_lo = w_lo + i_lo;
+            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+            let carry = next_w_lo
+                .simd_lt(w_lo)
+                .select(Simd::splat(1), Simd::splat(0));
+            w_hi = w_hi + high_product + i_hi + carry;
+            w_lo = next_w_lo;
+            let b_l0 = w_lo + LANE_CONSTANTS;
+            let b_r1 = w_hi;
+
+            // Xoroshiro update
+            let b_l1 = xr0 + xr1;
+            let t = xr0 ^ xr1;
+            xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
+            xr1 = rotl(t, 36);
+
+            // TinyMT64 update
+            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
+            let mut x = tm0 ^ tm1;
+            x ^= x << Simd::splat(12);
+            x ^= x >> Simd::splat(32);
+            x ^= x << Simd::splat(32);
+            x ^= x << Simd::splat(11);
+
+            let mask = (x & Simd::splat(1)).wrapping_neg();
+            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
+            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
+            tm0 = next_tm0;
+            tm1 = next_tm1;
+
+            let mut ty = tm0 + tm1;
+            ty ^= tm0 >> Simd::splat(8);
+            let b_r0 =
+                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+
+            let mut operands = [Simd64::splat(0); Self::NUM_OPERANDS];
+            // === 2. Mixing ===
+            operands[0] = b_l0;
+            operands[1] = b_l1;
+            operands[2] = b_r0;
+            operands[3] = b_r1;
+            operands[4] = i_hi;
+            operands[5] = FEISTEL_CONSTANT_1;
+            operands[6] = FEISTEL_CONSTANT_2;
+            operands[7] = FEISTEL_CONSTANT_3;
+            operands[8] = FEISTEL_CONSTANT_4;
+            operands[9] = Simd::splat(u64::MAX);
+            for instruction in self.mixing_instructions.iter() {
+                let input = operands[instruction.operand1];
+                let result = match instruction.operation {
+                    Operation::Copy => input,
+                    Operation::Add(operand2) => input + operands[operand2],
+                    Operation::Subtract(operand2) => input - operands[operand2],
+                    Operation::Multiply(operand2) => simd_mul(input, operands[operand2]),
+                    Operation::Xor(operand2) => input ^ operands[operand2],
+                    Operation::ShiftLeft(amount) => input << amount,
+                    Operation::ShiftRight(amount) => input >> amount,
+                    Operation::RotateLeft(amount) => rotl(input, amount),
+                    Operation::Swizzle(swizzle) => SIMD_SWIZZLES[swizzle](input),
+                };
+                operands[instruction.output] = result;
+            }
+            operands[0].copy_to_slice(&mut block[0..SIMD_WIDTH]);
+            operands[1].copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+        }
+
+        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
+        self.xr0 = xr0;
+        self.xr1 = xr1;
+        self.tm0 = tm0;
+        self.tm1 = tm1;
+        self.weyl_lo = w_lo;
+        self.weyl_hi = w_hi;
+    }
+}
+
+#[derive(Clone)]
+pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
+
+impl TripleMixPrng {
+    pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
+}
+
+impl TripleMixPrng {
+    fn from_instructions(instructions: Vec<Instruction>) -> Self {
+        let mut seed = [0u8; 256];
+        rng().fill(&mut seed);
+        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
+        let mut xr0_s = [0u64; SIMD_WIDTH];
+        let mut xr1_s = [0u64; SIMD_WIDTH];
+        let mut tm0_s = [0u64; SIMD_WIDTH];
+        let mut tm1_s = [0u64; SIMD_WIDTH];
+        let mut w_lo_s = [0u64; SIMD_WIDTH];
+        let mut w_hi_s = [0u64; SIMD_WIDTH];
+        let mut i_lo_s = [0u64; SIMD_WIDTH];
+        let mut i_hi_s = [0u64; SIMD_WIDTH];
+
+        let mut master_hasher = Shake256Hasher::<64>::default();
+        master_hasher.write(b"TripleMix V11");
+        master_hasher.write(&seed);
+
+        for i in 0..SIMD_WIDTH {
+            let mut count: u128 = 0;
+            let mut lane_hasher = master_hasher.clone();
+            lane_hasher.write(&[i as u8]);
+            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
+            'generate: loop {
+                let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
+                let out_bytes: &[u8] = output.as_ref();
+
+                [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
+                tm0_s[i] &= TINYMT64_LANE_MASK;
+
+                if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
+                    lane_hasher.write(&count.to_ne_bytes());
+                    count += 1;
+                    continue;
+                }
+                for j in 0..i {
+                    if unlikely(
+                        (xr0_s[j] == xr0_s[i] && xr1_s[j] == xr1_s[i])
+                            || (tm0_s[j] == tm0_s[i] && tm1_s[j] == tm1_s[i]),
+                    ) {
+                        lane_hasher.write(&count.to_ne_bytes());
+                        count += 1;
+                        continue 'generate;
+                    }
+                }
+                [w_lo_s[i], w_hi_s[i], i_lo_s[i], i_hi_s[i]] = read_words(&out_bytes[32..64]);
+                for j in 0..i {
+                    if unlikely(w_lo_s[j] == w_lo_s[i] || i_lo_s[j] == i_lo_s[i]) {
+                        lane_hasher.write(&count.to_ne_bytes());
+                        count += 1;
+                        continue 'generate;
+                    }
+                }
+                break;
+            }
+        }
+
+        let core = TripleMixSimdCore {
+            xr0: Simd64::from_array(xr0_s),
+            xr1: Simd64::from_array(xr1_s),
+            tm0: Simd64::from_array(tm0_s),
+            tm1: Simd64::from_array(tm1_s),
+            weyl_lo: Simd64::from_array(w_lo_s),
+            weyl_hi: Simd64::from_array(w_hi_s),
+            inc_lo: Simd64::from_array(i_lo_s),
+            inc_hi: Simd64::from_array(i_hi_s),
+            mixing_instructions: instructions.into_boxed_slice(),
+        };
+        TripleMixPrng(BlockRng::new(core))
+    }
+}
+
+impl TryRng for TripleMixPrng {
+    type Error = Infallible;
+
+    #[inline(always)]
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        let next_u64 = self.try_next_u64()?;
+        Ok((next_u64 >> 32 ^ next_u64) as u32)
+    }
+
+    #[inline(always)]
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.next_word())
+    }
+
+    #[inline(always)]
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
+        if !prefix.is_empty() {
+            self.0.fill_bytes(prefix);
+        }
+        let (dst_blocks, tail) = u64s.as_chunks_mut();
+        if !dst_blocks.is_empty() {
+            self.0.reset_and_skip(0);
+            self.0.core.fill_blocks(dst_blocks);
+        }
+        for tail_u64 in tail {
+            *tail_u64 = self.0.next_word();
+        }
+        if !suffix.is_empty() {
+            self.0.fill_bytes(suffix);
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Generator impl — SINGLE unified implementation
+//
+// All operations use portable Simd<u64, 4> operators, which compile to the
+// same AVX2 instructions on AVX2 targets. The ONLY dispatch is for multiply,
+// which portable SIMD scalarizes but AVX2 keeps in-register via mullo.
+// ============================================================================
+
+impl Generator for TripleMixSimdCore {
+    type Output = [u64; OUTPUT_LEN];
+
+    #[inline(always)]
+    fn generate(&mut self, output: &mut Self::Output) {
+        self.fill_blocks(from_mut(output))
+    }
+}
+
+fn gf2_rank(mut rows: [u64; 64]) -> u32 {
+    let mut rank = 0;
+    for col in (0..64).rev() {
+        if let Some(pivot) = (rank..64).find(|&r| (rows[r] >> col) & 1 == 1) {
+            rows.swap(rank, pivot);
+            for r in 0..64 {
+                if r != rank && ((rows[r] >> col) & 1) == 1 {
+                    rows[r] ^= rows[rank];
+                }
+            }
+            rank += 1;
+        }
+    }
+    rank.try_into().unwrap()
+}
+

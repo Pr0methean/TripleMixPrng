@@ -1,83 +1,43 @@
 #![feature(portable_simd)]
 
-use aws_lc_rs::rand::SecureRandom;
-use aws_lc_rs::rand::SystemRandom;
-use rand::rngs::SysRng;
-use rand_core::{Rng, SeedableRng, TryRng};
-use std::ffi::OsString;
-use std::io::{Write, stdout};
-use std::str::FromStr;
-use std::{env, thread};
-use triple_mix_prng::TripleMixPrng;
+use std::fs::File;
+use std::io::Read;
+use genetic_algorithm::crossover::CrossoverUniform;
+use genetic_algorithm::fitness::FitnessOrdering;
+use genetic_algorithm::genotype::{Genotype, ListGenotype};
+use genetic_algorithm::mutate::MutateSingleGene;
+use genetic_algorithm::select::SelectElite;
+use genetic_algorithm::strategy::evolve::EvolveReporterSimple;
+use genetic_algorithm::strategy::prelude::Evolve;
+use genetic_algorithm::strategy::Strategy;
+use stack_sizes::analyze_executable;
+use triple_mix_prng::{build_list_of_instructions, PrngMixingFitness, TripleMixSimdCore};
 
-const OS_ENTROPY_BYTES: usize = 32;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut program_file = File::open("triple_mix_simd.exe")?;
+    let mut program_bytes = Vec::with_capacity(program_file.metadata()?.len() as usize);
+    program_file.read_to_end(&mut program_bytes)?;
+    analyze_executable(&program_bytes)?;
+    simple_log::console("debug")?;
+    let genotype = ListGenotype::builder()
+        .with_allele_list(build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS))
+        .with_genes_size(32)
+        .build()
+        .unwrap();
+    let evolve = Evolve::builder()
+    .with_genotype(genotype)
+    .with_select(SelectElite::new(0.5, 0.02))         // sort the chromosomes by fitness to determine crossover order. Strive to replace 50% of the population with offspring. Allow 2% through the non-generational best chromosomes gate before selection and replacement
+    .with_crossover(CrossoverUniform::new(0.7, 0.8))  // crossover all individual genes between 2 chromosomes for offspring with 70% parent selection (30% do not produce offspring) and 80% chance of crossover (20% of parents just clone)
+    .with_mutate(MutateSingleGene::new(0.2))          // mutate offspring for a single gene with a 20% probability per chromosome
+    .with_fitness(PrngMixingFitness)                          // count the number of true values in the chromosomes
+    .with_fitness_ordering(FitnessOrdering::Maximize) // optional, default is Maximize, aim towards the most true values
+    .with_target_population_size(64)                 // evolve with 100 chromosomes
+    .with_target_fitness_score(-100)                   // goal is 100 times true in the best chromosome
+    .with_reporter(EvolveReporterSimple::new(100))    // optional builder step, report every 100 generations
+    .call()
+    .unwrap();
 
-fn main() {
-    let args: Vec<_> = env::args_os().collect();
-    let mut prng: TripleMixPrng;
-    if let Some(seed_arg) = args.get(1)
-        && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
-    {
-        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
-        seed[0..(TripleMixPrng::SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
-        eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
-        prng = TripleMixPrng::from_seed(seed.into());
-    } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
-        prng = TripleMixPrng::almost_all_zeroes_state();
-    } else {
-        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
-        for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
-            #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
-            let mut seeded = false;
-            if index >= 2 {
-                #[cfg(feature = "rdrand")]
-                if let Ok(mut rd_seed) = rdrand::RdSeed::new()
-                    && rd_seed.try_fill_bytes(chunk).is_ok()
-                {
-                    eprintln!("Generated a seed chunk using RDSEED");
-                    seeded = true;
-                } else {
-                    eprintln!("RDSEED failed.");
-                }
-                #[cfg(feature = "tss-esapi")]
-                if !seeded
-                    && let Ok(mut ctx) = tss_esapi::Context::new_with_tabrmd(
-                        tss_esapi::tcti_ldr::TabrmdConfig::default(),
-                    )
-                    .or_else(|_| {
-                        tss_esapi::Context::new(tss_esapi::Tcti::Device(
-                            tss_esapi::tcti_ldr::DeviceConfig::default(),
-                        ))
-                    })
-                    && let Ok(random) = ctx.get_random(OS_ENTROPY_BYTES)
-                {
-                    chunk.copy_from_slice(&random);
-                    eprintln!("Generated a seed chunk using TPM GetRandom");
-                    seeded = true;
-                } else {
-                    eprintln!("TPM GetRandom failed.");
-                }
-            }
-            if !seeded {
-                if index.is_multiple_of(2) {
-                    SysRng.try_fill_bytes(chunk).unwrap();
-                    eprintln!("Generated a seed chunk using OS RNG");
-                } else {
-                    SystemRandom::default().fill(chunk).unwrap();
-                    eprintln!("Generated a seed chunk using aws-lc");
-                }
-                thread::yield_now();
-            }
-        }
-        eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
-        prng = TripleMixPrng::from_seed(seed.into());
-    }
-    loop {
-        let mut buffer = [0u8; 1 << 16];
-        prng.fill_bytes(&mut buffer);
-        if let Err(e) = stdout().write_all(&buffer) {
-            eprintln!("Error writing to stdout: {}", e);
-            return;
-        }
-    }
+    let (best_genes, best_fitness_score) = evolve.best_genes_and_fitness_score().unwrap();
+    println!("Results: Score: {best_fitness_score}\n\rGenes:\n\r{best_genes:?}");
+    Ok(())
 }
