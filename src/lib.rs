@@ -9,6 +9,7 @@ mod avx2;
 
 use core::convert::Infallible;
 use std::array::from_fn;
+use std::fmt::{Debug, Formatter};
 use rand::{rng, RngExt};
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -21,11 +22,11 @@ use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
-use genetic_algorithm::allele::Allele;
 use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
-use genetic_algorithm::genotype::ListGenotype;
+use genetic_algorithm::genotype::{Genotype, ListGenotype};
+use genetic_algorithm::impl_allele;
 use hypors::chi_square::goodness_of_fit;
-use log::{debug, trace};
+use log::{debug, info, trace};
 use statrs::distribution::{Binomial, DiscreteCDF};
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
@@ -76,6 +77,32 @@ enum Operation {
     Swizzle(usize)
 }
 
+const SIMD_SWIZZLE_DESCRIPTIONS: [&str; 23] = [
+    "[0, 1, 3, 2]",
+    "[0, 2, 1, 3]",
+    "[0, 2, 3, 1]",
+    "[0, 3, 1, 2]",
+    "[0, 3, 2, 1]",
+    "[1, 0, 2, 3]",
+    "[1, 0, 3, 2]",
+    "[1, 2, 0, 3]",
+    "[1, 2, 3, 0]",
+    "[1, 3, 0, 2]",
+    "[1, 3, 2, 0]",
+    "[2, 0, 1, 3]",
+    "[2, 0, 3, 1]",
+    "[2, 1, 0, 3]",
+    "[2, 1, 3, 0]",
+    "[2, 3, 0, 1]",
+    "[2, 3, 1, 0]",
+    "[3, 0, 1, 2]",
+    "[3, 0, 2, 1]",
+    "[3, 1, 0, 2]",
+    "[3, 1, 2, 0]",
+    "[3, 2, 0, 1]",
+    "[3, 2, 1, 0]",
+];
+
 const SIMD_SWIZZLES: [fn(Simd64) -> Simd64; 23] = [
     |x| simd_swizzle!(x, [0, 1, 3, 2]),
                 |x| simd_swizzle!(x, [0, 2, 1, 3]),
@@ -102,30 +129,60 @@ const SIMD_SWIZZLES: [fn(Simd64) -> Simd64; 23] = [
                 |x| simd_swizzle!(x, [3, 2, 1, 0]),
 ];
 
-#[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Hash, Eq, PartialEq, Copy, Clone)]
 pub struct Instruction {
     operation: Operation,
     operand1: usize,
     output: usize,
 }
 
-impl Allele for Instruction {
-    fn hash_slice(slice: &[Self], hasher: &mut impl Hasher)
-    where
-        Self: Sized
-    {
-        for item in slice {
-            item.hash(hasher);
+impl Debug for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "op[{}] = ", self.output)?;
+        match self.operation {
+            Operation::Copy => {
+                if self.operand1 == self.output {
+                    Ok(())
+                } else {
+                    write!(f, "op[{}]", self.operand1)
+                }
+            }
+            Operation::Add(operand2) => {
+                write!(f, "op[{}] + op[{}]", self.operand1, operand2)
+            }
+            Operation::Subtract(operand2) => {
+                write!(f, "op[{}] - op[{}]", self.operand1, operand2)
+            }
+            Operation::Multiply(_) => {
+                write!(f, "simd_mul(op[{}], op[{}])", self.operand1, self.operand1)
+            }
+            Operation::Xor(operand2) => {
+                write!(f, "op[{}] ^ op[{}]", self.operand1, operand2)
+            }
+            Operation::ShiftLeft(amount) => {
+                write!(f, "op[{}] << {amount}", self.operand1)
+            }
+            Operation::ShiftRight(amount) => {
+                write!(f, "op[{}] << {amount}", self.operand1)
+            }
+            Operation::RotateLeft(amount) => {
+                write!(f, "rotl(op[{}], {amount})", self.operand1)
+            }
+            Operation::Swizzle(swizzle) => {
+                write!(f, "simd_swizzle!(op[{}], {})", self.operand1, SIMD_SWIZZLE_DESCRIPTIONS[swizzle])
+            }
         }
     }
 }
+
+impl_allele!(Instruction);
 
 pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
     let mut instructions = Vec::with_capacity(num_operands * num_operands * (193 + 4 * num_operands));
 
     for output in 0..num_operands {
         for operand1 in 0..num_operands {
-            if operand1 != output {
+            if operand1 != output || operand1 == 0 {
                 instructions.push(Instruction {
                     operation: Operation::Copy,
                     operand1, output
@@ -180,8 +237,8 @@ pub struct PrngMixingFitness;
 impl Fitness for PrngMixingFitness {
     type Genotype = ListGenotype<Instruction>;
 
-    fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, _genotype: &Self::Genotype) -> Option<FitnessValue> {
-        debug!("Evaluating chromosome: {:?}", chromosome);
+    fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, genotype: &Self::Genotype) -> Option<FitnessValue> {
+        debug!("Evaluating chromosome: {:?}", chromosome.genes());
         let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
         let mut complexity_cost = 0;
         let mut total_multiplies: usize = 0;
@@ -189,7 +246,7 @@ impl Fitness for PrngMixingFitness {
         let mut total_swizzles: usize = 0;
         for instruction in chromosome.genes().iter() {
             complexity_cost += match instruction.operation {
-                Operation::Copy => 5,
+                Operation::Copy => if instruction.operand1 == instruction.output { 0 } else { 5 },
                 Operation::Xor(_) => 8,
                 Operation::Add(_) => 10,
                 Operation::Subtract(_) => 10,
@@ -249,10 +306,6 @@ impl Fitness for PrngMixingFitness {
             for output_block in output1.iter_mut() {
                 core1.generate(output_block);
             }
-            let mut min_field = 0;
-            let mut min_lane = 0;
-            let mut min_bit = 0;
-            let mut min_iter = 0;
             let mut low_avalanches = 0;
             for (field_idx, flips_total) in flips_per_bit.iter_mut().enumerate() {
                 for lane_idx in 0..SIMD_WIDTH {
@@ -337,10 +390,6 @@ impl Fitness for PrngMixingFitness {
                             }
                             if flips < min_flips {
                                 min_flips = flips;
-                                min_iter = i;
-                                min_field = field_idx;
-                                min_lane = lane_idx;
-                                min_bit = bit_idx;
                             }
                             max_flips = max_flips.max(flips);
                             count += 1;
@@ -358,9 +407,9 @@ impl Fitness for PrngMixingFitness {
             const MIN_FLIPS: f64 = 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64);
             const MAX_FLIPS: f64 = 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64);
             if avg_flips < MIN_FLIPS {
-                avalanche_failure_cost += 10 * (MIN_FLIPS - avg_flips) as u64;
+                avalanche_failure_cost += 20 * (MIN_FLIPS - avg_flips) as u64;
             } else if avg_flips > MAX_FLIPS {
-                avalanche_failure_cost += 10 * (avg_flips - MAX_FLIPS) as u64;
+                avalanche_failure_cost += 20 * (avg_flips - MAX_FLIPS) as u64;
             }
             let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
             let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
@@ -375,6 +424,8 @@ impl Fitness for PrngMixingFitness {
             if low_avalanche_p_value < 0.01 {
                 avalanche_failure_cost += Self::p_value_cost(low_avalanche_p_value);
             }
+            avalanche_failure_cost = avalanche_failure_cost.min(MAX_PENALTY_PER_TEST);
+            related_seed_related_output_cost = related_seed_related_output_cost.min(MAX_PENALTY_PER_TEST);
             debug!("Avalanche failure cost: {avalanche_failure_cost}");
             debug!("Related seed / related output cost: {related_seed_related_output_cost}");
             test_failures_cost += avalanche_failure_cost;
@@ -383,11 +434,12 @@ impl Fitness for PrngMixingFitness {
 
         // Byte and u16 frequency test
         {
+            const FREQUENCIES_SAMPLES: usize = 1 << 24;
             let mut frequencies_cost = 0;
             let mut frequencies_prng = prng.clone();
-            let mut byte_frequencies = [0u32; u8::MAX as usize + 1];
-            let mut u16_frequencies = [0u32; u16::MAX as usize + 1];
-            for _ in 0..(1 << 28) {
+            let mut byte_frequencies = vec![0u32; u8::MAX as usize + 1];
+            let mut u16_frequencies = vec![0u32; u16::MAX as usize + 1];
+            for _ in 0..FREQUENCIES_SAMPLES {
                 let byte1: u8 = frequencies_prng.random();
                 byte_frequencies[byte1 as usize] += 1;
                 let byte2: u8 = frequencies_prng.random();
@@ -396,23 +448,24 @@ impl Fitness for PrngMixingFitness {
                 u16_frequencies[word as usize] += 1;
             }
             let byte_chi_square = goodness_of_fit(
-                byte_frequencies.map(f64::from),
-                std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
+                byte_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
+                vec![(FREQUENCIES_SAMPLES >> 8) as f64; u8::MAX as usize + 1],
                 0.01,
             ).unwrap();
-            debug!("Byte chi^2: {:?}", byte_chi_square);
+            trace!("Byte chi^2: {:?}", byte_chi_square);
             if byte_chi_square.reject_null {
-                frequencies_cost += Self::p_value_cost(byte_chi_square.p_value);
+                frequencies_cost += 50 * Self::p_value_cost(byte_chi_square.p_value);
             }
             let u16_chi_square = goodness_of_fit(
-                u16_frequencies.map(f64::from),
-                vec![(1 << 12) as f64; u16::MAX as usize + 1],
+                u16_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
+                vec![(FREQUENCIES_SAMPLES >> 16) as f64; u16::MAX as usize + 1],
                 0.01,
             ).unwrap();
-            debug!("u16 chi^2: {:?}", u16_chi_square);
+            trace!("u16 chi^2: {:?}", u16_chi_square);
             if u16_chi_square.reject_null {
-                frequencies_cost += Self::p_value_cost(u16_chi_square.p_value);
+                frequencies_cost += 50 * Self::p_value_cost(u16_chi_square.p_value);
             }
+            frequencies_cost = frequencies_cost.min(MAX_PENALTY_PER_TEST);
             debug!("Frequencies cost: {frequencies_cost}");
             test_failures_cost += frequencies_cost;
         }
@@ -432,7 +485,7 @@ impl Fitness for PrngMixingFitness {
                     }
                     let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
                     if p < P_THRESHOLD {
-                        debug!("Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}");
+                        trace!("Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}");
                         correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
                     }
                 }
@@ -447,11 +500,12 @@ impl Fitness for PrngMixingFitness {
                     }
                     let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
                     if p < P_THRESHOLD {
-                        debug!("Chi-square test failed for bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}");
+                        trace!("Chi-square test failed for bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}");
                         correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
                     }
                 }
             }
+            correlation_cost = correlation_cost.min(MAX_PENALTY_PER_TEST);
             debug!("Correlation cost: {correlation_cost}");
             test_failures_cost += correlation_cost;
         }
@@ -465,20 +519,25 @@ impl Fitness for PrngMixingFitness {
                 let matrix: [u64; 64] = from_fn(|_| bit_rank_rng.next_u64());
                 let rank = gf2_rank(matrix);
                 if rank <= 60 {
-                    debug!("Low GF2 rank: {rank}");
+                    trace!("Low GF2 rank: {rank}");
                     rank60_count += 1;
                     if rank60_count > 2 {
-                        low_bit_rank_cost += 10;
+                        low_bit_rank_cost += 100;
                     }
                     if rank < 60 {
-                        low_bit_rank_cost += 20 << (60 - rank);
+                        low_bit_rank_cost += 6200 - 100 * (rank as u64);
+                    }
+                    if low_bit_rank_cost >= MAX_PENALTY_PER_TEST {
+                        break;
                     }
                 }
             }
+            low_bit_rank_cost = low_bit_rank_cost.min(MAX_PENALTY_PER_TEST);
             debug!("Low GF2 rank cost: {low_bit_rank_cost}");
             test_failures_cost += low_bit_rank_cost;
         }
 
+        const MAX_PENALTY_PER_TEST: u64 = 10_000;
         {
             // Lane correlation test
             let mut lane_correlation_cost = 0;
@@ -509,18 +568,19 @@ impl Fitness for PrngMixingFitness {
                     let sigma = 1.0 / (N as f64).sqrt();
                     let z_score = corr.abs() / sigma;
                     if z_score > 5.0 {
-                        debug!("Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})");
+                        trace!("Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})");
                         lane_correlation_cost += (20.0 * (z_score - 4.0)) as u64;
                     }
                 }
             }
+            lane_correlation_cost = lane_correlation_cost.min(MAX_PENALTY_PER_TEST);
             debug!("Lane correlation cost: {lane_correlation_cost}");
             test_failures_cost += lane_correlation_cost;
         }
 
         debug!("Total test failure cost: {test_failures_cost}");
-        let cost = test_failures_cost + complexity_cost;
-        debug!("Total cost: {cost}");
+        let cost = test_failures_cost * genotype.current_scale_index() + complexity_cost;
+        info!("Total cost for instance {:?}: {cost}", chromosome.genes_hash());
         Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
 }
@@ -703,6 +763,7 @@ impl TripleMixPrng {
     fn from_instructions(instructions: Vec<Instruction>) -> Self {
         let mut seed = [0u8; 256];
         rng().fill(&mut seed);
+        debug!("Seed generated");
         const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
         let mut xr0_s = [0u64; SIMD_WIDTH];
         let mut xr1_s = [0u64; SIMD_WIDTH];
@@ -755,7 +816,7 @@ impl TripleMixPrng {
                 break;
             }
         }
-
+        debug!("Internal state generated");
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(xr0_s),
             xr1: Simd64::from_array(xr1_s),
@@ -838,4 +899,6 @@ fn gf2_rank(mut rows: [u64; 64]) -> u32 {
     }
     rank.try_into().unwrap()
 }
+
+
 
