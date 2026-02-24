@@ -12,11 +12,8 @@ use std::array::from_fn;
 use std::fmt::{Debug, Formatter};
 use rand::{rng, RngExt};
 use rand_core::block::{BlockRng, Generator};
-use rand_core::utils::read_words;
 use rand_core::{Rng, TryRng};
-use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
-use rs_shake256::Shake256Hasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
 use std::hint::unlikely;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdUint;
@@ -287,9 +284,10 @@ impl Fitness for PrngMixingFitness {
         }
         debug!("Complexity cost: {}", complexity_cost);
         let mut test_failures_cost = 0;
+        let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
         for _ in 0..3 {
+            prng.reseed();
             {
-                let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
                 // Avalanche test
                 let mut avalanche_failure_cost = 0;
                 let mut related_seed_related_output_cost = 0;
@@ -769,76 +767,53 @@ impl TripleMixPrng {
 }
 
 impl TripleMixPrng {
-    fn from_instructions(instructions: Vec<Instruction>) -> Self {
+    fn reseed(&mut self) {
         let mut rng = rng();
-        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
-        let mut xr0_s = Simd::splat(0);
-        rng.fill(&mut xr0_s);
-        let mut xr1_s = Simd::splat(0);
-        rng.fill(&mut xr1_s);
-        let mut tm0_s = Simd::splat(0);
-        rng.fill(&mut tm0_s);
-        tm0_s &= Simd::splat(TINYMT64_LANE_MASK);
-        let mut tm1_s = Simd::splat(0);
-        rng.fill(&mut tm1_s);
-        let mut w_lo_s = Simd::splat(0);
-        rng.fill(&mut w_lo_s);
-        w_lo_s |= Simd::splat(1);
-        let mut w_hi_s = Simd::splat(0);
-        rng.fill(&mut w_hi_s);
-        let mut i_lo_s = Simd::splat(0);
-        rng.fill(&mut i_lo_s);
-        i_lo_s |= Simd::splat(1);
-        let mut i_hi_s = Simd::splat(0);
-        rng.fill(&mut i_hi_s);
+        let core = &mut self.0.core;
+        rng.fill(core.xr0.as_mut_array());
+        rng.fill(core.xr1.as_mut_array());
+        rng.fill(core.tm0.as_mut_array());
+        core.tm0 &= Simd::splat(TINYMT64_LANE_MASK);
+        rng.fill(core.tm1.as_mut_array());
+        rng.fill(core.weyl_lo.as_mut_array());
+       rng.fill(core.weyl_hi.as_mut_array());
+        rng.fill(core.inc_lo.as_mut_array());
+        core.inc_lo |= Simd::splat(1);
+        rng.fill(core.inc_hi.as_mut_array());
 
         for i in 0..SIMD_WIDTH {
-            while unlikely((xr0_s[i] == 0 && xr1_s[i] == 0)
-                || (i != 0 && xr0_s[i] == xr0_s[0] && xr1_s[i] == xr1_s[0])) {
-                xr0_s[i] = rng.next_u64();
-                xr1_s[i] = rng.next_u64();
+            while unlikely((core.xr0[i] == 0 && core.xr1[i] == 0)
+                || (i != 0 && core.xr0[i] == core.xr0[0] && core.xr1[i] == core.xr1[0])) {
+                core.xr0[i] = rng.next_u64();
+                core.xr1[i] = rng.next_u64();
             }
-            while unlikely((tm0_s[i] == 0 && tm1_s[i] == 0)
-                || (i != 0 && tm0_s[i] == tm0_s[0] && tm1_s[i] == tm1_s[0])) {
-                tm0_s[i] = rng.next_u64() & TINYMT64_LANE_MASK;
-                tm1_s[i] = rng.next_u64();
+            while unlikely((core.tm0[i] == 0 && core.tm1[i] == 0)
+                || (i != 0 && core.tm0[i] == core.tm0[0] && core.tm1[i] == core.tm1[0])) {
+                core.tm0[i] = rng.next_u64() & TINYMT64_LANE_MASK;
+                core.tm1[i] = rng.next_u64();
             }
             if i != 0 {
-                while unlikely(w_lo_s[i] == w_lo_s[0]) {
-                    w_lo_s[i] = rng.next_u64() | 1;
+                while unlikely(core.weyl_lo[i] == core.weyl_lo[0]) {
+                    core.weyl_lo[i] = rng.next_u64();
                 }
-                while unlikely(i_lo_s[i] == i_lo_s[0]) {
-                    i_lo_s[i] = rng.next_u64() | 1;
+                while unlikely(core.inc_lo[i] == core.inc_lo[0]) {
+                    core.inc_lo[i] = rng.next_u64() | 1;
                 }
             }
-            break;
         }
+    }
+    fn from_instructions(instructions: Vec<Instruction>) -> Self {
         TripleMixPrng(BlockRng::new(TripleMixSimdCore {
             mixing_instructions: instructions.into_boxed_slice(),
-            xr0: xr0_s,
-            xr1: xr1_s,
-            tm0: tm0_s,
-            tm1: tm1_s,
-            weyl_lo: w_lo_s,
-            weyl_hi: w_hi_s,
-            inc_lo: i_lo_s,
-            inc_hi: i_hi_s,
+            xr0: Default::default(),
+            xr1: Default::default(),
+            tm0: Default::default(),
+            tm1: Default::default(),
+            weyl_lo: Default::default(),
+            weyl_hi: Default::default(),
+            inc_lo: Default::default(),
+            inc_hi: Default::default(),
         }))
-    }
-}
-trace!("Internal state generated");
-        let core = TripleMixSimdCore {
-            xr0: Simd64::from_array(xr0_s),
-            xr1: Simd64::from_array(xr1_s),
-            tm0: Simd64::from_array(tm0_s),
-            tm1: Simd64::from_array(tm1_s),
-            weyl_lo: Simd64::from_array(w_lo_s),
-            weyl_hi: Simd64::from_array(w_hi_s),
-            inc_lo: Simd64::from_array(i_lo_s),
-            inc_hi: Simd64::from_array(i_hi_s),
-            mixing_instructions: instructions.into_boxed_slice(),
-        };
-        TripleMixPrng(BlockRng::new(core))
     }
 }
 
