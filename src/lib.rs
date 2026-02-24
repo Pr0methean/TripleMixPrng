@@ -8,7 +8,7 @@
 mod avx2;
 
 use core::convert::Infallible;
-use generic_array::typenum;
+use std::array::from_fn;
 use rand::{rng, RngExt};
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -17,7 +17,6 @@ use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
 use rs_shake256::Shake256Hasher;
 use std::hash::{Hash, Hasher};
 use std::hint::unlikely;
-use std::iter::repeat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdUint;
 use std::simd::*;
@@ -255,7 +254,7 @@ impl Fitness for PrngMixingFitness {
             let mut min_bit = 0;
             let mut min_iter = 0;
             let mut low_avalanches = 0;
-            for field_idx in 0..8 {
+            for (field_idx, flips_total) in flips_per_bit.iter_mut().enumerate() {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0usize..64 {
                         if field_idx == 2 && bit_idx == 63 {
@@ -324,15 +323,12 @@ impl Fitness for PrngMixingFitness {
                         for i in 0..AVALANCHE_ITERATIONS {
                             let mut flips = 0;
                             for cell in 0..OUTPUT_LEN {
-                                if cell != 0 {
-                                    if output2[i][cell].wrapping_sub(output2[i][0]) == output1[i][cell].wrapping_sub(output1[i][0]) {
-                                        trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping");
-                                        related_seed_related_output_cost += 50;
-                                    } else if output2[i][cell] ^ output2[i][0] == output1[i][cell] ^ output1[i][0] {
-                                        trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping");
+                                if cell != 0
+                                    && (output2[i][cell].wrapping_sub(output2[i][0]) == output1[i][cell].wrapping_sub(output1[i][0])
+                                    || output2[i][cell] ^ output2[i][0] == output1[i][cell] ^ output1[i][0]) {
+                                        trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference or xor between cells 0 and {cell} as before flipping");
                                         related_seed_related_output_cost += 50;
                                     }
-                                }
                                 flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
                             }
                             total_flips += flips as u64;
@@ -348,7 +344,7 @@ impl Fitness for PrngMixingFitness {
                             }
                             max_flips = max_flips.max(flips);
                             count += 1;
-                            flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
+                            flips_total[lane_idx][bit_idx] += flips;
                         }
                     }
                 }
@@ -401,7 +397,7 @@ impl Fitness for PrngMixingFitness {
             }
             let byte_chi_square = goodness_of_fit(
                 byte_frequencies.map(f64::from),
-                repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
+                std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
                 0.01,
             ).unwrap();
             debug!("Byte chi^2: {:?}", byte_chi_square);
@@ -466,10 +462,7 @@ impl Fitness for PrngMixingFitness {
             let mut rank60_count = 0;
             let mut bit_rank_rng = prng.clone();
             for _ in 0..10000 {
-                let mut matrix = [0u64; 64];
-                for r in 0..64 {
-                    matrix[r] = bit_rank_rng.next_u64();
-                }
+                let matrix: [u64; 64] = from_fn(|_| bit_rank_rng.next_u64());
                 let rank = gf2_rank(matrix);
                 if rank <= 60 {
                     debug!("Low GF2 rank: {rank}");
@@ -495,7 +488,7 @@ impl Fitness for PrngMixingFitness {
                 let mut sums = [0i64; 64];
                 for _ in 0..N {
                     prng.fill(&mut lanes);
-                    for bit in 0..64 {
+                    for (bit, sum) in sums.iter_mut().enumerate() {
                         let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
                         let b = if (lanes[target_lane] >> bit) & 1 == 1 {
                             1
@@ -503,7 +496,7 @@ impl Fitness for PrngMixingFitness {
                             -1
                         };
 
-                        sums[bit] += (a * b) as i64;
+                        *sum += (a * b) as i64;
                     }
                 }
                 for (bit, sum) in sums.into_iter().enumerate() {
