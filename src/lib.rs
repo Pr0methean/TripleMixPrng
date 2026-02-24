@@ -219,17 +219,16 @@ impl TripleMixSimdCore {
             let mut r0 = tr0 + l1;
             let mut r1 = tr1 ^ l0;
 
-            // Round 2 (cross-lane): 4 xor, 4 add, 4 rotl, 4 simd_swizzle
+            // Round 2 (cross-lane): 4 xor, 4 add, 4 rotl, 3 simd_swizzle
             // ----------------------------------------------------------
-            let sr0 = simd_swizzle!(r0, [1, 2, 3, 0]);
             let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
             let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
 
-            l0 ^= rotl(sr0 ^ sl1, MIXING_ROTATION_05);
+            l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
             l1 += rotl(sr1 ^ sl0, MIXING_ROTATION_06);
             r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-            r1 += rotl(sl0 + sr0, MIXING_ROTATION_09);
+            r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
 
             // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
             // -------------------------------------------------------------------
