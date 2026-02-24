@@ -153,7 +153,6 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_00: u64 = 23;
         const MIXING_ROTATION_02: u64 = 29;
         const MIXING_ROTATION_03: u64 = 31;
-        const MIXING_ROTATION_04: u64 = 37;
         const MIXING_ROTATION_23: u64 = 39;
         const MIXING_ROTATION_01: u64 = 41;
         const MIXING_ROTATION_21: u64 = 43;
@@ -161,7 +160,6 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_06: u64 = 46;
         const MIXING_ROTATION_22: u64 = 49;
         const MIXING_ROTATION_18: u64 = 54;
-        const MIXING_ROTATION_20: u64 = 58;
         for block in blocks {
             // === 1. Source Generation ===
 
@@ -207,12 +205,12 @@ impl TripleMixSimdCore {
             let r0 = b_r0;
             let r1 = b_r1;
 
-            // Round 1 (ARX, local): 5 xor, 5 add, 4 rotl
+            // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
             // ------------------------------------------
             let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
             let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
             let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-            let tl1 = l1 + rotl(l0, MIXING_ROTATION_04);
+            let tl1 = l1 + l0;
 
             let mut l0 = r0 ^ tl0;
             let mut l1 = r1 + tl1;
