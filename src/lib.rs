@@ -149,15 +149,14 @@ impl TripleMixSimdCore {
         const MIXING_ROTATION_16: u64 = 14;
         const MIXING_ROTATION_14: u64 = 17;
         const MIXING_ROTATION_13: u64 = 19;
-        const MIXING_ROTATION_05: u64 = 22;
-        const MIXING_ROTATION_00: u64 = 23;
+        const MIXING_ROTATION_00: u64 = 22;
+        const MIXING_ROTATION_05: u64 = 23;
         const MIXING_ROTATION_02: u64 = 29;
         const MIXING_ROTATION_03: u64 = 31;
         const MIXING_ROTATION_23: u64 = 39;
         const MIXING_ROTATION_01: u64 = 41;
         const MIXING_ROTATION_21: u64 = 43;
         const MIXING_ROTATION_09: u64 = 44;
-        const MIXING_ROTATION_06: u64 = 46;
         const MIXING_ROTATION_22: u64 = 49;
         const MIXING_ROTATION_18: u64 = 54;
         for block in blocks {
@@ -224,7 +223,7 @@ impl TripleMixSimdCore {
             let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
 
             l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-            l1 += rotl(sr1 ^ sl0, MIXING_ROTATION_06);
+            l1 += sr1 ^ sl0;
             r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
             r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
 
