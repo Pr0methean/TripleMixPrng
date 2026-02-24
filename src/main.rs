@@ -2,20 +2,70 @@
 
 use genetic_algorithm::crossover::CrossoverUniform;
 use genetic_algorithm::fitness::FitnessOrdering;
-use genetic_algorithm::genotype::{Genotype, ListGenotype};
+use genetic_algorithm::genotype::{Genotype, ListGenotype, MultiListGenotype};
 use genetic_algorithm::mutate::MutateSingleGene;
 use genetic_algorithm::select::SelectElite;
 use genetic_algorithm::strategy::evolve::EvolveReporterSimple;
 use genetic_algorithm::strategy::prelude::Evolve;
 use genetic_algorithm::strategy::Strategy;
 use log::info;
-use triple_mix_prng::{build_list_of_instructions, PrngMixingFitness, TripleMixSimdCore};
+use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, PrngMixingFitness, TripleMixSimdCore};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let body_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS);
     simple_log::console("debug")?;
-    let genotype = ListGenotype::builder()
-        .with_allele_list(build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS))
-        .with_genes_size(64)
+    let genotype = MultiListGenotype::builder()
+        .with_allele_lists(vec![
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 4),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 5),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 6),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 7),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 0),
+            build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 1),
+        ])
+        .with_genes_size(48)
         .build()
         .unwrap();
     let evolve = Evolve::builder()

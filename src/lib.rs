@@ -174,55 +174,92 @@ impl Debug for Instruction {
 
 impl_allele!(Instruction);
 
+pub fn build_input_instructions(num_operands: usize, operand1: usize) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(num_operands * num_operands);
+    for output in 0..num_operands {
+        add_operations_between(num_operands, operand1, output, &mut instructions);
+    }
+    instructions
+}
+
+pub fn build_output_instructions(num_operands: usize, output: usize) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(num_operands * num_operands);
+    for operand1 in 0..num_operands {
+        add_operations_between(num_operands, operand1, output, &mut instructions);
+    }
+    instructions
+}
+
+fn add_operations_between(num_operands: usize, operand1: usize, output: usize, instructions: &mut Vec<Instruction>) {
+    for swizzle in 0..23 {
+        instructions.push(Instruction {
+            operation: Operation::Swizzle(swizzle),
+            output,
+            operand1
+        });
+    }
+    for operand2 in 0..num_operands {
+        if operand2 != operand1 {
+            instructions.push(Instruction {
+                operation: Operation::Subtract(operand2),
+                output,
+                operand1
+            });
+        }
+    }
+    for operand2 in (operand1 + 1)..num_operands {
+        instructions.push(Instruction {
+            operation: Operation::Add(operand2),
+            output,
+            operand1,
+        });
+        instructions.push(Instruction {
+            operation: Operation::Xor(operand2),
+            output,
+            operand1
+        });
+        instructions.push(Instruction {
+            operation: Operation::Multiply(operand2),
+            output,
+            operand1,
+        });
+    }
+    for shift_amount in 1..=63 {
+        instructions.push(Instruction {
+            output,
+            operand1,
+            operation: Operation::ShiftLeft(shift_amount)
+        });
+        instructions.push(Instruction {
+            output,
+            operand1,
+            operation: Operation::ShiftRight(shift_amount)
+        });
+        instructions.push(Instruction {
+            output,
+            operand1,
+            operation: Operation::RotateLeft(shift_amount)
+        });
+    }
+}
+
 pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
     let mut instructions = Vec::with_capacity(num_operands * num_operands * (193 + 4 * num_operands));
 
+    // No-op instruction
+    instructions.push(Instruction {
+        operation: Operation::Copy,
+        operand1: 0, output: 0
+    });
     for output in 0..num_operands {
         for operand1 in 0..num_operands {
-            if operand1 != output || operand1 == 0 {
+            if operand1 != output {
                 instructions.push(Instruction {
                     operation: Operation::Copy,
                     operand1, output
                 });
             }
-            for swizzle in 0..23 {
-                instructions.push(Instruction {
-                    operation: Operation::Swizzle(swizzle),
-                    output, operand1
-                })
-            }
-            for operand2 in 0..num_operands {
-                instructions.push(Instruction {
-                    operation: Operation::Subtract(operand2),
-                    output,
-                    operand1
-                });
-            }
-            for operand2 in (operand1 + 1)..num_operands {
-            instructions.push(Instruction {
-                    operation: Operation::Add(operand2),
-                    output, operand1,
-                });
-            instructions.push(Instruction {
-                    operation: Operation::Xor(operand2),
-                    output, operand1
-                });
-            instructions.push(Instruction {
-                    operation: Operation::Multiply(operand2),
-                    output, operand1,
-                });
-            }
-            for shift_amount in 1..=63 {
-                instructions.push(Instruction {
-                    output, operand1, operation: Operation::ShiftLeft(shift_amount)
-                });
-                instructions.push(Instruction {
-                    output, operand1, operation: Operation::ShiftRight(shift_amount)
-                });
-                                instructions.push(Instruction {
-                    output, operand1, operation: Operation::RotateLeft(shift_amount)
-                });
-            }
+            add_operations_between(num_operands, operand1, output, &mut instructions);
         }
     }
     instructions
