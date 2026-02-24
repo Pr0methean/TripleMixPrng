@@ -139,7 +139,7 @@ impl TripleMixSimdCore {
 
         #[inline(always)]
         fn rotl(x: Simd64, k: u64) -> Simd64 {
-            (x << Simd::splat(k)) | (x >> Simd::splat((64 - k)))
+            (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
         }
 
         const MIXING_ROTATION_12: u64 = 7;
@@ -223,7 +223,7 @@ impl TripleMixSimdCore {
             // ----------------------------------------------------------
             let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
             let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-            let sl1 = simd_swizzle!(l1, [3, 2, 1, 0]);
+            let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
 
             l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
             l1 += rotl(sr1 ^ sl0, MIXING_ROTATION_06);
@@ -249,13 +249,12 @@ impl TripleMixSimdCore {
             let l1 = nl1;
             let r0 = nr0;
 
-            // Round 4 (transport): 3 xor, 3 add, 1 rotl, 2 simd_swizzle
+            // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
             // ---------------------------------------------------------
-            let sl0 = simd_swizzle!(l0, [3, 1, 2, 0]);
-            let sl1 = simd_swizzle!(l1, [1, 2, 0, 3]);
+            let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
 
             let tl0r1 = sl0 + r1;
-            let tl1r0 = rotl(sl1 ^ r0, MIXING_ROTATION_18);
+            let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
 
             let l0 = r0 ^ tl0r1;
             let l1 = r1 + tl1r0;
