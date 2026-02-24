@@ -23,7 +23,7 @@ use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
 use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
-use genetic_algorithm::genotype::{Genotype, ListGenotype};
+use genetic_algorithm::genotype::{ListGenotype};
 use genetic_algorithm::impl_allele;
 use hypors::chi_square::goodness_of_fit;
 use log::{debug, info, trace};
@@ -237,9 +237,7 @@ pub struct PrngMixingFitness;
 impl Fitness for PrngMixingFitness {
     type Genotype = ListGenotype<Instruction>;
 
-    fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, genotype: &Self::Genotype) -> Option<FitnessValue> {
-        debug!("Evaluating chromosome: {:?}", chromosome.genes());
-        let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
+    fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, _genotype: &Self::Genotype) -> Option<FitnessValue> {
         let mut complexity_cost = 0;
         let mut total_multiplies: usize = 0;
         let mut total_shifts: usize = 0;
@@ -289,298 +287,301 @@ impl Fitness for PrngMixingFitness {
         }
         debug!("Complexity cost: {}", complexity_cost);
         let mut test_failures_cost = 0;
-        {
-            // Avalanche test
-            let mut avalanche_failure_cost = 0;
-            let mut related_seed_related_output_cost = 0;
-            let core = prng.0.core.clone();
-            const AVALANCHE_ITERATIONS: usize = 20;
-            const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
-            let mut min_flips = u32::MAX;
-            let mut max_flips = 0;
-            let mut total_flips: u64 = 0;
-            let mut count: u64 = 0;
-            let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
-            let mut core1 = core.clone();
-            let mut output1 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
-            for output_block in output1.iter_mut() {
-                core1.generate(output_block);
-            }
-            let mut low_avalanches = 0;
-            for (field_idx, flips_total) in flips_per_bit.iter_mut().enumerate() {
-                for lane_idx in 0..SIMD_WIDTH {
-                    for bit_idx in 0usize..64 {
-                        if field_idx == 2 && bit_idx == 63 {
-                            continue;
-                        }
-                        if field_idx == 6 && bit_idx == 0 {
-                            continue;
-                        }
-                        //if field_idx == 7 && bit_idx >= 59 { continue; }
-                        let mut core2 = core.clone();
-                        match field_idx {
-                            0 => {
-                                let x = core2.xr0;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr0 = Simd64::from_array(arr);
+        for _ in 0..3 {
+            {
+                let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
+                // Avalanche test
+                let mut avalanche_failure_cost = 0;
+                let mut related_seed_related_output_cost = 0;
+                let core = prng.0.core.clone();
+                const AVALANCHE_ITERATIONS: usize = 20;
+                const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
+                let mut min_flips = u32::MAX;
+                let mut max_flips = 0;
+                let mut total_flips: u64 = 0;
+                let mut count: u64 = 0;
+                let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
+                let mut core1 = core.clone();
+                let mut output1 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
+                for output_block in output1.iter_mut() {
+                    core1.generate(output_block);
+                }
+                let mut low_avalanches = 0;
+                for (field_idx, flips_total) in flips_per_bit.iter_mut().enumerate() {
+                    for lane_idx in 0..SIMD_WIDTH {
+                        for bit_idx in 0usize..64 {
+                            if field_idx == 2 && bit_idx == 63 {
+                                continue;
                             }
-                            1 => {
-                                let x = core2.xr1;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.xr1 = Simd64::from_array(arr);
+                            if field_idx == 6 && bit_idx == 0 {
+                                continue;
                             }
-                            2 => {
-                                let x = core2.tm0;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm0 = Simd64::from_array(arr);
+                            //if field_idx == 7 && bit_idx >= 59 { continue; }
+                            let mut core2 = core.clone();
+                            match field_idx {
+                                0 => {
+                                    let x = core2.xr0;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.xr0 = Simd64::from_array(arr);
+                                }
+                                1 => {
+                                    let x = core2.xr1;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.xr1 = Simd64::from_array(arr);
+                                }
+                                2 => {
+                                    let x = core2.tm0;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.tm0 = Simd64::from_array(arr);
+                                }
+                                3 => {
+                                    let x = core2.tm1;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.tm1 = Simd64::from_array(arr);
+                                }
+                                4 => {
+                                    let x = core2.weyl_lo;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.weyl_lo = Simd64::from_array(arr);
+                                }
+                                5 => {
+                                    let x = core2.weyl_hi;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.weyl_hi = Simd64::from_array(arr);
+                                }
+                                6 => {
+                                    let x = core2.inc_lo;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.inc_lo = Simd64::from_array(arr);
+                                }
+                                7 => {
+                                    let x = core2.inc_hi;
+                                    let mut arr = x.to_array();
+                                    arr[lane_idx] ^= 1 << bit_idx;
+                                    core2.inc_hi = Simd64::from_array(arr);
+                                }
+                                _ => unreachable!(),
                             }
-                            3 => {
-                                let x = core2.tm1;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.tm1 = Simd64::from_array(arr);
+                            let mut output2 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
+                            for output_block in output2.iter_mut() {
+                                core2.generate(output_block);
                             }
-                            4 => {
-                                let x = core2.weyl_lo;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = Simd64::from_array(arr);
-                            }
-                            5 => {
-                                let x = core2.weyl_hi;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = Simd64::from_array(arr);
-                            }
-                            6 => {
-                                let x = core2.inc_lo;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = Simd64::from_array(arr);
-                            }
-                            7 => {
-                                let x = core2.inc_hi;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = Simd64::from_array(arr);
-                            }
-                            _ => unreachable!(),
-                        }
-                        let mut output2 = [[0u64; OUTPUT_LEN]; AVALANCHE_ITERATIONS];
-                        for output_block in output2.iter_mut() {
-                            core2.generate(output_block);
-                        }
-                        for i in 0..AVALANCHE_ITERATIONS {
-                            let mut flips = 0;
-                            for cell in 0..OUTPUT_LEN {
-                                if cell != 0
-                                    && (output2[i][cell].wrapping_sub(output2[i][0]) == output1[i][cell].wrapping_sub(output1[i][0])
-                                    || output2[i][cell] ^ output2[i][0] == output1[i][cell] ^ output1[i][0]) {
+                            for i in 0..AVALANCHE_ITERATIONS {
+                                let mut flips = 0;
+                                for cell in 0..OUTPUT_LEN {
+                                    if cell != 0
+                                        && (output2[i][cell].wrapping_sub(output2[i][0]) == output1[i][cell].wrapping_sub(output1[i][0])
+                                        || output2[i][cell] ^ output2[i][0] == output1[i][cell] ^ output1[i][0]) {
                                         trace!("Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference or xor between cells 0 and {cell} as before flipping");
                                         related_seed_related_output_cost += 50;
                                     }
-                                flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                                    flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                                }
+                                total_flips += flips as u64;
+                                if flips <= LOW_AVALANCHE_THRESHOLD {
+                                    low_avalanches += 1;
+                                }
+                                if flips < min_flips {
+                                    min_flips = flips;
+                                }
+                                max_flips = max_flips.max(flips);
+                                count += 1;
+                                flips_total[lane_idx][bit_idx] += flips;
                             }
-                            total_flips += flips as u64;
-                            if flips <= LOW_AVALANCHE_THRESHOLD {
-                                low_avalanches += 1;
-                            }
-                            if flips < min_flips {
-                                min_flips = flips;
-                            }
-                            max_flips = max_flips.max(flips);
-                            count += 1;
-                            flips_total[lane_idx][bit_idx] += flips;
                         }
                     }
                 }
+                let avg_flips = total_flips as f64 / count as f64;
+                debug!(
+                    "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
+                    count, avg_flips, min_flips, max_flips
+                );
+                const DEVIATION: f64 = 0.1;
+                const MIN_FLIPS: f64 = 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64);
+                const MAX_FLIPS: f64 = 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64);
+                if avg_flips < MIN_FLIPS {
+                    avalanche_failure_cost += 20 * (MIN_FLIPS - avg_flips) as u64;
+                } else if avg_flips > MAX_FLIPS {
+                    avalanche_failure_cost += 20 * (avg_flips - MAX_FLIPS) as u64;
+                }
+                let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
+                let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
+                let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
+                let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
+                debug!(
+                    "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
+                    low_avalanche_probability * count as f64,
+                    low_avalanches,
+                    low_avalanche_p_value
+                );
+                if low_avalanche_p_value < 0.01 {
+                    avalanche_failure_cost += Self::p_value_cost(low_avalanche_p_value);
+                }
+                avalanche_failure_cost = avalanche_failure_cost.min(MAX_PENALTY_PER_TEST);
+                related_seed_related_output_cost = related_seed_related_output_cost.min(MAX_PENALTY_PER_TEST);
+                debug!("Avalanche failure cost: {avalanche_failure_cost}");
+                debug!("Related seed / related output cost: {related_seed_related_output_cost}");
+                test_failures_cost += avalanche_failure_cost;
+                test_failures_cost += related_seed_related_output_cost;
             }
-            let avg_flips = total_flips as f64 / count as f64;
-            debug!(
-                "Avalanche stats ({} checks): Avg: {:.2}, Min: {}, Max: {}",
-                count, avg_flips, min_flips, max_flips
-            );
-            const DEVIATION: f64 = 0.1;
-            const MIN_FLIPS: f64 = 32.0 * (1.0 - DEVIATION) * (OUTPUT_LEN as f64);
-            const MAX_FLIPS: f64 = 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64);
-            if avg_flips < MIN_FLIPS {
-                avalanche_failure_cost += 20 * (MIN_FLIPS - avg_flips) as u64;
-            } else if avg_flips > MAX_FLIPS {
-                avalanche_failure_cost += 20 * (avg_flips - MAX_FLIPS) as u64;
-            }
-            let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
-            let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
-            let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
-            let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
-            debug!(
-                "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-                low_avalanche_probability * count as f64,
-                low_avalanches,
-                low_avalanche_p_value
-            );
-            if low_avalanche_p_value < 0.01 {
-                avalanche_failure_cost += Self::p_value_cost(low_avalanche_p_value);
-            }
-            avalanche_failure_cost = avalanche_failure_cost.min(MAX_PENALTY_PER_TEST);
-            related_seed_related_output_cost = related_seed_related_output_cost.min(MAX_PENALTY_PER_TEST);
-            debug!("Avalanche failure cost: {avalanche_failure_cost}");
-            debug!("Related seed / related output cost: {related_seed_related_output_cost}");
-            test_failures_cost += avalanche_failure_cost;
-            test_failures_cost += related_seed_related_output_cost;
-        }
 
-        // Byte and u16 frequency test
-        {
-            const FREQUENCIES_SAMPLES: usize = 1 << 24;
-            let mut frequencies_cost = 0;
-            let mut frequencies_prng = prng.clone();
-            let mut byte_frequencies = vec![0u32; u8::MAX as usize + 1];
-            let mut u16_frequencies = vec![0u32; u16::MAX as usize + 1];
-            for _ in 0..FREQUENCIES_SAMPLES {
-                let byte1: u8 = frequencies_prng.random();
-                byte_frequencies[byte1 as usize] += 1;
-                let byte2: u8 = frequencies_prng.random();
-                byte_frequencies[byte2 as usize] += 1;
-                let word: u16 = byte1 as u16 | (byte2 as u16) << 8;
-                u16_frequencies[word as usize] += 1;
+            // Byte and u16 frequency test
+            {
+                const FREQUENCIES_SAMPLES: usize = 1 << 24;
+                let mut frequencies_cost = 0;
+                let mut frequencies_prng = prng.clone();
+                let mut byte_frequencies = vec![0u32; u8::MAX as usize + 1];
+                let mut u16_frequencies = vec![0u32; u16::MAX as usize + 1];
+                for _ in 0..FREQUENCIES_SAMPLES {
+                    let byte1: u8 = frequencies_prng.random();
+                    byte_frequencies[byte1 as usize] += 1;
+                    let byte2: u8 = frequencies_prng.random();
+                    byte_frequencies[byte2 as usize] += 1;
+                    let word: u16 = byte1 as u16 | (byte2 as u16) << 8;
+                    u16_frequencies[word as usize] += 1;
+                }
+                let byte_chi_square = goodness_of_fit(
+                    byte_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
+                    vec![(FREQUENCIES_SAMPLES >> 8) as f64; u8::MAX as usize + 1],
+                    0.01,
+                ).unwrap();
+                trace!("Byte chi^2: {:?}", byte_chi_square);
+                if byte_chi_square.reject_null {
+                    frequencies_cost += 500 * Self::p_value_cost(byte_chi_square.p_value);
+                }
+                let u16_chi_square = goodness_of_fit(
+                    u16_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
+                    vec![(FREQUENCIES_SAMPLES >> 16) as f64; u16::MAX as usize + 1],
+                    0.01,
+                ).unwrap();
+                trace!("u16 chi^2: {:?}", u16_chi_square);
+                if u16_chi_square.reject_null {
+                    frequencies_cost += 500 * Self::p_value_cost(u16_chi_square.p_value);
+                }
+                frequencies_cost = frequencies_cost.min(MAX_PENALTY_PER_TEST);
+                debug!("Frequencies cost: {frequencies_cost}");
+                test_failures_cost += frequencies_cost;
             }
-            let byte_chi_square = goodness_of_fit(
-                byte_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
-                vec![(FREQUENCIES_SAMPLES >> 8) as f64; u8::MAX as usize + 1],
-                0.01,
-            ).unwrap();
-            trace!("Byte chi^2: {:?}", byte_chi_square);
-            if byte_chi_square.reject_null {
-                frequencies_cost += 50 * Self::p_value_cost(byte_chi_square.p_value);
-            }
-            let u16_chi_square = goodness_of_fit(
-                u16_frequencies.iter().map(|&x| x as f64).collect::<Vec<_>>(),
-                vec![(FREQUENCIES_SAMPLES >> 16) as f64; u16::MAX as usize + 1],
-                0.01,
-            ).unwrap();
-            trace!("u16 chi^2: {:?}", u16_chi_square);
-            if u16_chi_square.reject_null {
-                frequencies_cost += 50 * Self::p_value_cost(u16_chi_square.p_value);
-            }
-            frequencies_cost = frequencies_cost.min(MAX_PENALTY_PER_TEST);
-            debug!("Frequencies cost: {frequencies_cost}");
-            test_failures_cost += frequencies_cost;
-        }
 
-        {
-            // Bit correlation test
-            let mut correlation_cost = 0;
-            const SAMPLE_COUNT: usize = 1 << 16;
-            const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
-            let mut samples = vec![0u64; SAMPLE_COUNT];
-            prng.clone().fill(samples.as_mut());
-            for i in 0..=62 {
-                for j in (i + 1)..=63 {
-                    let mut bins = [0u64; 4];
-                    for sample in &samples {
-                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
-                    }
-                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
-                    if p < P_THRESHOLD {
-                        trace!("Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}");
-                        correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
+            {
+                // Bit correlation test
+                let mut correlation_cost = 0;
+                const SAMPLE_COUNT: usize = 1 << 16;
+                const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
+                let mut samples = vec![0u64; SAMPLE_COUNT];
+                prng.clone().fill(samples.as_mut());
+                for i in 0..=62 {
+                    for j in (i + 1)..=63 {
+                        let mut bins = [0u64; 4];
+                        for sample in &samples {
+                            bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
+                        }
+                        let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                        if p < P_THRESHOLD {
+                            trace!("Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}");
+                            correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
+                        }
                     }
                 }
-            }
-            for i in 0..=63 {
-                for j in 0..=63 {
-                    let mut lagged_bins = [0u64; 4];
-                    for pair in samples.windows(2) {
-                        let first = pair[0];
-                        let second = pair[1];
-                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
-                    }
-                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
-                    if p < P_THRESHOLD {
-                        trace!("Chi-square test failed for bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}");
-                        correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
-                    }
-                }
-            }
-            correlation_cost = correlation_cost.min(MAX_PENALTY_PER_TEST);
-            debug!("Correlation cost: {correlation_cost}");
-            test_failures_cost += correlation_cost;
-        }
-
-        {
-            // Low-bit-rank test
-            let mut low_bit_rank_cost = 0;
-            let mut rank60_count = 0;
-            let mut bit_rank_rng = prng.clone();
-            for _ in 0..10000 {
-                let matrix: [u64; 64] = from_fn(|_| bit_rank_rng.next_u64());
-                let rank = gf2_rank(matrix);
-                if rank <= 60 {
-                    trace!("Low GF2 rank: {rank}");
-                    rank60_count += 1;
-                    if rank60_count > 2 {
-                        low_bit_rank_cost += 100;
-                    }
-                    if rank < 60 {
-                        low_bit_rank_cost += 6200 - 100 * (rank as u64);
-                    }
-                    if low_bit_rank_cost >= MAX_PENALTY_PER_TEST {
-                        break;
+                for i in 0..=63 {
+                    for j in 0..=63 {
+                        let mut lagged_bins = [0u64; 4];
+                        for pair in samples.windows(2) {
+                            let first = pair[0];
+                            let second = pair[1];
+                            lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
+                        }
+                        let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                        if p < P_THRESHOLD {
+                            trace!("Chi-square test failed for bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}");
+                            correlation_cost += Self::p_value_cost(p * (0.01 / P_THRESHOLD));
+                        }
                     }
                 }
+                correlation_cost = correlation_cost.min(MAX_PENALTY_PER_TEST);
+                debug!("Correlation cost: {correlation_cost}");
+                test_failures_cost += correlation_cost;
             }
-            low_bit_rank_cost = low_bit_rank_cost.min(MAX_PENALTY_PER_TEST);
-            debug!("Low GF2 rank cost: {low_bit_rank_cost}");
-            test_failures_cost += low_bit_rank_cost;
-        }
 
-        const MAX_PENALTY_PER_TEST: u64 = 10_000;
-        {
-            // Lane correlation test
-            let mut lane_correlation_cost = 0;
-            const N: usize = 1 << 20;
-            let mut lanes = [0u64; SIMD_WIDTH];
-            for target_lane in 1..SIMD_WIDTH {
-                let mut sums = [0i64; 64];
-                for _ in 0..N {
-                    prng.fill(&mut lanes);
-                    for (bit, sum) in sums.iter_mut().enumerate() {
-                        let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
-                        let b = if (lanes[target_lane] >> bit) & 1 == 1 {
-                            1
-                        } else {
-                            -1
-                        };
-
-                        *sum += (a * b) as i64;
+            {
+                // Low-bit-rank test
+                let mut low_bit_rank_cost = 0;
+                let mut rank60_count = 0;
+                let mut bit_rank_rng = prng.clone();
+                for _ in 0..10000 {
+                    let matrix: [u64; 64] = from_fn(|_| bit_rank_rng.next_u64());
+                    let rank = gf2_rank(matrix);
+                    if rank <= 60 {
+                        trace!("Low GF2 rank: {rank}");
+                        rank60_count += 1;
+                        if rank60_count > 2 {
+                            low_bit_rank_cost += 100;
+                        }
+                        if rank < 60 {
+                            low_bit_rank_cost += 6200 - 100 * (rank as u64);
+                        }
+                        if low_bit_rank_cost >= MAX_PENALTY_PER_TEST {
+                            break;
+                        }
                     }
                 }
-                for (bit, sum) in sums.into_iter().enumerate() {
-                    let corr = sum as f64 / N as f64;
+                low_bit_rank_cost = low_bit_rank_cost.min(MAX_PENALTY_PER_TEST);
+                debug!("Low GF2 rank cost: {low_bit_rank_cost}");
+                test_failures_cost += low_bit_rank_cost;
+            }
 
-                    // For the binomial distribution, stddev = sqrt(N * p * (1 - p))
-                    // but its range is [0, N]; we've scaled it linearly to have the range [-1, 1]
-                    // so sigma = sqrt(N * 0.25) * 2 / N
-                    // = 1/sqrt(N)
-                    let sigma = 1.0 / (N as f64).sqrt();
-                    let z_score = corr.abs() / sigma;
-                    if z_score > 5.0 {
-                        trace!("Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})");
-                        lane_correlation_cost += (20.0 * (z_score - 4.0)) as u64;
+            const MAX_PENALTY_PER_TEST: u64 = 10_000;
+            {
+                // Lane correlation test
+                let mut lane_correlation_cost = 0;
+                const N: usize = 1 << 20;
+                let mut lanes = [0u64; SIMD_WIDTH];
+                for target_lane in 1..SIMD_WIDTH {
+                    let mut sums = [0i64; 64];
+                    for _ in 0..N {
+                        prng.fill(&mut lanes);
+                        for (bit, sum) in sums.iter_mut().enumerate() {
+                            let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
+                            let b = if (lanes[target_lane] >> bit) & 1 == 1 {
+                                1
+                            } else {
+                                -1
+                            };
+
+                            *sum += (a * b) as i64;
+                        }
+                    }
+                    for (bit, sum) in sums.into_iter().enumerate() {
+                        let corr = sum as f64 / N as f64;
+
+                        // For the binomial distribution, stddev = sqrt(N * p * (1 - p))
+                        // but its range is [0, N]; we've scaled it linearly to have the range [-1, 1]
+                        // so sigma = sqrt(N * 0.25) * 2 / N
+                        // = 1/sqrt(N)
+                        let sigma = 1.0 / (N as f64).sqrt();
+                        let z_score = corr.abs() / sigma;
+                        if z_score > 5.0 {
+                            trace!("Lane bit correlation detected on bit {bit} betweeen lanes 0 and {target_lane}: {corr} (σ={sigma})");
+                            lane_correlation_cost += (20.0 * (z_score - 4.0)) as u64;
+                        }
                     }
                 }
+                lane_correlation_cost = lane_correlation_cost.min(MAX_PENALTY_PER_TEST);
+                debug!("Lane correlation cost: {lane_correlation_cost}");
+                test_failures_cost += lane_correlation_cost;
             }
-            lane_correlation_cost = lane_correlation_cost.min(MAX_PENALTY_PER_TEST);
-            debug!("Lane correlation cost: {lane_correlation_cost}");
-            test_failures_cost += lane_correlation_cost;
         }
 
         debug!("Total test failure cost: {test_failures_cost}");
-        let cost = test_failures_cost * genotype.current_scale_index() + complexity_cost;
-        info!("Total cost for instance {:?}: {cost}", chromosome.genes_hash());
+        let cost = test_failures_cost + complexity_cost;
+        info!("Function:\n{:?}\nTotal cost: {cost}", chromosome.genes());
         Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
 }
@@ -761,62 +762,63 @@ impl TripleMixPrng {
 
 impl TripleMixPrng {
     fn from_instructions(instructions: Vec<Instruction>) -> Self {
-        let mut seed = [0u8; 256];
-        rng().fill(&mut seed);
-        debug!("Seed generated");
+        let mut rng = rng();
         const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
-        let mut xr0_s = [0u64; SIMD_WIDTH];
-        let mut xr1_s = [0u64; SIMD_WIDTH];
-        let mut tm0_s = [0u64; SIMD_WIDTH];
-        let mut tm1_s = [0u64; SIMD_WIDTH];
-        let mut w_lo_s = [0u64; SIMD_WIDTH];
-        let mut w_hi_s = [0u64; SIMD_WIDTH];
-        let mut i_lo_s = [0u64; SIMD_WIDTH];
-        let mut i_hi_s = [0u64; SIMD_WIDTH];
-
-        let mut master_hasher = Shake256Hasher::<64>::default();
-        master_hasher.write(b"TripleMix V11");
-        master_hasher.write(&seed);
+        let mut xr0_s = Simd::splat(0);
+        rng.fill(&mut xr0_s);
+        let mut xr1_s = Simd::splat(0);
+        rng.fill(&mut xr1_s);
+        let mut tm0_s = Simd::splat(0);
+        rng.fill(&mut tm0_s);
+        tm0_s &= Simd::splat(TINYMT64_LANE_MASK);
+        let mut tm1_s = Simd::splat(0);
+        rng.fill(&mut tm1_s);
+        let mut w_lo_s = Simd::splat(0);
+        rng.fill(&mut w_lo_s);
+        w_lo_s |= Simd::splat(1);
+        let mut w_hi_s = Simd::splat(0);
+        rng.fill(&mut w_hi_s);
+        let mut i_lo_s = Simd::splat(0);
+        rng.fill(&mut i_lo_s);
+        i_lo_s |= Simd::splat(1);
+        let mut i_hi_s = Simd::splat(0);
+        rng.fill(&mut i_hi_s);
 
         for i in 0..SIMD_WIDTH {
-            let mut count: u128 = 0;
-            let mut lane_hasher = master_hasher.clone();
-            lane_hasher.write(&[i as u8]);
-            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
-            'generate: loop {
-                let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
-                let out_bytes: &[u8] = output.as_ref();
-
-                [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
-                tm0_s[i] &= TINYMT64_LANE_MASK;
-
-                if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
-                    lane_hasher.write(&count.to_ne_bytes());
-                    count += 1;
-                    continue;
-                }
-                for j in 0..i {
-                    if unlikely(
-                        (xr0_s[j] == xr0_s[i] && xr1_s[j] == xr1_s[i])
-                            || (tm0_s[j] == tm0_s[i] && tm1_s[j] == tm1_s[i]),
-                    ) {
-                        lane_hasher.write(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
-                }
-                [w_lo_s[i], w_hi_s[i], i_lo_s[i], i_hi_s[i]] = read_words(&out_bytes[32..64]);
-                for j in 0..i {
-                    if unlikely(w_lo_s[j] == w_lo_s[i] || i_lo_s[j] == i_lo_s[i]) {
-                        lane_hasher.write(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
-                }
-                break;
+            while unlikely((xr0_s[i] == 0 && xr1_s[i] == 0)
+                || (i != 0 && xr0_s[i] == xr0_s[0] && xr1_s[i] == xr1_s[0])) {
+                xr0_s[i] = rng.next_u64();
+                xr1_s[i] = rng.next_u64();
             }
+            while unlikely((tm0_s[i] == 0 && tm1_s[i] == 0)
+                || (i != 0 && tm0_s[i] == tm0_s[0] && tm1_s[i] == tm1_s[0])) {
+                tm0_s[i] = rng.next_u64() & TINYMT64_LANE_MASK;
+                tm1_s[i] = rng.next_u64();
+            }
+            if i != 0 {
+                while unlikely(w_lo_s[i] == w_lo_s[0]) {
+                    w_lo_s[i] = rng.next_u64() | 1;
+                }
+                while unlikely(i_lo_s[i] == i_lo_s[0]) {
+                    i_lo_s[i] = rng.next_u64() | 1;
+                }
+            }
+            break;
         }
-        debug!("Internal state generated");
+        TripleMixPrng(BlockRng::new(TripleMixSimdCore {
+            mixing_instructions: instructions.into_boxed_slice(),
+            xr0: xr0_s,
+            xr1: xr1_s,
+            tm0: tm0_s,
+            tm1: tm1_s,
+            weyl_lo: w_lo_s,
+            weyl_hi: w_hi_s,
+            inc_lo: i_lo_s,
+            inc_hi: i_hi_s,
+        }))
+    }
+}
+trace!("Internal state generated");
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(xr0_s),
             xr1: Simd64::from_array(xr1_s),
