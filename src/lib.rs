@@ -8,17 +8,17 @@
 mod avx2;
 
 use core::convert::Infallible;
-use generic_array::{GenericArray, typenum};
+use generic_array::typenum;
 use rand::{rng, RngExt};
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
-use rand_core::{Rng, SeedableRng, TryRng};
+use rand_core::{Rng, TryRng};
 use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
 use rs_shake256::Shake256Hasher;
 use std::hash::{Hash, Hasher};
 use std::hint::unlikely;
 use std::iter::repeat;
-use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
@@ -26,10 +26,8 @@ use genetic_algorithm::allele::Allele;
 use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
 use genetic_algorithm::genotype::ListGenotype;
 use hypors::chi_square::goodness_of_fit;
-use log::{debug, info, trace};
-use rand::rngs::SysRng;
+use log::{debug, trace};
 use statrs::distribution::{Binomial, DiscreteCDF};
-use typenum::U;
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
 // ============================================================================
