@@ -581,7 +581,7 @@ impl Fitness for PrngMixingFitness {
 
         debug!("Total test failure cost: {test_failures_cost}");
         let cost = test_failures_cost + complexity_cost;
-        info!("Function:\n{:?}\nTotal cost: {cost}", chromosome.genes());
+        info!("Total cost: {cost} (complexity {complexity_cost}, test failures {test_failures_cost}), function: {:?}", chromosome.genes());
         Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
 }
@@ -714,16 +714,24 @@ impl TripleMixSimdCore {
 
             let mut operands = [Simd64::splat(0); Self::NUM_OPERANDS];
             // === 2. Mixing ===
+            // Operands 0 and 1 are outputs
             operands[0] = b_l0;
             operands[1] = b_l1;
             operands[2] = b_r0;
             operands[3] = b_r1;
-            operands[4] = i_hi;
-            operands[5] = FEISTEL_CONSTANT_1;
-            operands[6] = FEISTEL_CONSTANT_2;
-            operands[7] = FEISTEL_CONSTANT_3;
-            operands[8] = FEISTEL_CONSTANT_4;
-            operands[9] = Simd::splat(u64::MAX);
+
+            // Duplicate state so that functions are encouraged to copy from input to output with modifications
+            operands[4] = b_l0;
+            operands[5] = b_l1;
+            operands[6] = b_r0;
+            operands[7] = b_r1;
+
+            operands[8] = i_hi;
+            operands[9] = FEISTEL_CONSTANT_1;
+            operands[10] = FEISTEL_CONSTANT_2;
+            operands[11] = FEISTEL_CONSTANT_3;
+            operands[12] = FEISTEL_CONSTANT_4;
+            operands[13] = Simd::splat(u64::MAX);
             for instruction in self.mixing_instructions.iter() {
                 let input = operands[instruction.operand1];
                 let result = match instruction.operation {
