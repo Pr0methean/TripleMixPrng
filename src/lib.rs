@@ -285,8 +285,13 @@ impl Fitness for PrngMixingFitness {
         debug!("Complexity cost: {}", complexity_cost);
         let mut test_failures_cost = 0;
         let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
-        for _ in 0..3 {
-            prng.reseed();
+        const EVAL_SEEDS: usize = 8;
+        for seed_idx in 0..EVAL_SEEDS {
+            match seed_idx {
+                0 => {},
+                1 => prng.set_max_state(),
+                _ => prng.reseed()
+            }
             {
                 // Avalanche test
                 let mut avalanche_failure_cost = 0;
@@ -806,14 +811,25 @@ impl TripleMixPrng {
         TripleMixPrng(BlockRng::new(TripleMixSimdCore {
             mixing_instructions: instructions.into_boxed_slice(),
             xr0: Default::default(),
-            xr1: Default::default(),
+            xr1: Simd::from_array([1, 2, 3, 4]),
             tm0: Default::default(),
-            tm1: Default::default(),
-            weyl_lo: Default::default(),
+            tm1: Simd::from_array([1, 2, 3, 4]),
+            weyl_lo: Simd::from_array([0, 1, 2, 3]),
             weyl_hi: Default::default(),
-            inc_lo: Default::default(),
+            inc_lo: Simd::from_array([1, 3, 5, 7]),
             inc_hi: Default::default(),
         }))
+    }
+
+    fn set_max_state(&mut self) {
+        self.0.core.xr0 = Simd::from_array([u64::MAX, u64::MAX - 1, u64::MAX - 2, u64::MAX - 3]);
+        self.0.core.xr1 = Simd::splat(u64::MAX);
+        self.0.core.tm0 = Simd::splat(TINYMT64_LANE_MASK);
+        self.0.core.tm1 = Simd::from_array([u64::MAX, u64::MAX - 1, u64::MAX - 2, u64::MAX - 3]);
+        self.0.core.weyl_lo = Simd::from_array([u64::MAX, u64::MAX - 1, u64::MAX - 2, u64::MAX - 3]);
+        self.0.core.weyl_hi = Simd::splat(u64::MAX);
+        self.0.core.inc_lo = Simd::from_array([u64::MAX, u64::MAX - 2, u64::MAX - 4, u64::MAX - 6]);
+        self.0.core.inc_hi = Simd::splat(u64::MAX);
     }
 }
 
