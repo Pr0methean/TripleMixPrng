@@ -14,7 +14,7 @@ use log::info;
 use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, Instruction, PrngMixingFitness};
 
 const TOTAL_POPULATION: usize = 1 << 10;
-const HILL_CLIMBED_POPULATION: usize = 1 << 7;
+const HILL_CLIMBED_POPULATION: usize = 1 << 5;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const GENERATIONS_PER_REPORT: usize = 4;
     let body_operands = build_list_of_instructions(false);
@@ -74,20 +74,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let genotype = genotype_builder.clone().build().unwrap();
     let mut rng = ga_rand::thread_rng();
     let random_population: Vec<_> = repeat_with(|| genotype.chromosome_constructor_random(&mut rng).genes)
-        .take(TOTAL_POPULATION - 2 * HILL_CLIMBED_POPULATION)
+        .take(TOTAL_POPULATION - HILL_CLIMBED_POPULATION)
         .collect();
     let (best_sgd, sgd_climbs) = HillClimbBuilder::new()
         .with_genotype(genotype)
         .with_variant(HillClimbVariant::Stochastic)
         .with_fitness(PrngMixingFitness)
+        .with_fitness_cache(1 << 24)
         .with_par_fitness(true)
-        .with_max_stale_generations(32)
+        .with_max_generations(128)
+        .with_max_stale_generations(16)
         .with_reporter(HillClimbReporterSimple::new(GENERATIONS_PER_REPORT))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
     let (best_genes, best_fitness_score) = best_sgd.best_genes_and_fitness_score().unwrap();
     info!("SGD bootstrap results: Score: {best_fitness_score:?}\n\rGenes:\n\r{best_genes:?}");
-    let bootstrapped_genotype = genotype_builder.with_seed_genes_list(
+    let bootstrapped_genotype = genotype_builder.clone().with_seed_genes_list(
         sgd_climbs.into_iter().flat_map(|hc| hc.best_genes())
             .chain(random_population).collect()
     ).build().unwrap();
@@ -105,8 +107,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_reporter(EvolveReporterSimple::new(GENERATIONS_PER_REPORT))    // optional builder step, report every 100 generations
     .call()
     .unwrap();
-
     let (best_genes, best_fitness_score) = evolve.best_genes_and_fitness_score().unwrap();
-    info!("Results: Score: {best_fitness_score}\n\rGenes:\n\r{best_genes:?}");
+    info!("GA results: Score: {best_fitness_score}\n\rGenes:\n\r{best_genes:?}");
+    let post_genotype = genotype_builder.with_seed_genes_list(vec![best_genes]).build().unwrap();
+    let (post_sgd_genes, post_sgd_score) = HillClimbBuilder::new()
+        .with_genotype(post_genotype)
+        .with_variant(HillClimbVariant::Stochastic)
+        .with_fitness(PrngMixingFitness)
+        .with_fitness_cache(1 << 12)
+        .with_max_stale_generations(32)
+        .with_reporter(HillClimbReporterSimple::new(GENERATIONS_PER_REPORT))
+        .call()
+        .unwrap()
+        .best_genes_and_fitness_score().unwrap();
+    info!("Post-GA SGD results: Score: {post_sgd_score}\n\rGenes:\n\r{post_sgd_genes:?}");
     Ok(())
 }
