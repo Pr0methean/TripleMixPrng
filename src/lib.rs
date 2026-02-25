@@ -177,12 +177,13 @@ impl_allele!(Instruction);
 
 const READ_WRITE_OPERANDS: Range<usize> = TripleMixSimdCore::FIRST_WRITE_OPERAND..TripleMixSimdCore::NUM_OPERANDS;
 const READ_ONLY_OPERANDS: Range<usize> = 0..TripleMixSimdCore::FIRST_WRITE_OPERAND;
+const PRESET_OPERANDS: Range<usize> = 0..11;
 const ALL_OPERANDS: Range<usize> = 0..TripleMixSimdCore::NUM_OPERANDS;
 
 pub fn build_input_instructions(operand1: usize) -> Vec<Instruction> {
     let mut instructions = Vec::with_capacity(TripleMixSimdCore::NUM_OPERANDS * (TripleMixSimdCore::NUM_OPERANDS - TripleMixSimdCore::FIRST_WRITE_OPERAND));
     for output in READ_WRITE_OPERANDS {
-        add_operations_between(READ_ONLY_OPERANDS, operand1, output, &mut instructions);
+        add_operations_between(PRESET_OPERANDS, operand1, output, &mut instructions);
     }
     instructions
 }
@@ -774,15 +775,12 @@ impl TripleMixSimdCore {
             operands[4] = i_hi;
 
             // Read-write operands
-            operands[5] = b_l0;
-            operands[6] = b_l1;
-            operands[7] = b_r0;
-            operands[8] = b_r1;
-            operands[9] = FEISTEL_CONSTANT_1;
-            operands[10] = FEISTEL_CONSTANT_2;
-            operands[11] = FEISTEL_CONSTANT_3;
-            operands[12] = FEISTEL_CONSTANT_4;
-            operands[13] = Simd::splat(u64::MAX);
+            operands[5] = FEISTEL_CONSTANT_1;
+            operands[6] = FEISTEL_CONSTANT_2;
+            operands[7] = FEISTEL_CONSTANT_3;
+            operands[8] = FEISTEL_CONSTANT_4;
+            operands[9] = Simd::splat(u64::MAX);
+            // No-op: operands[10] = Simd::splat(0);
             for instruction in self.mixing_instructions.iter() {
                 let input = operands[instruction.operand1];
                 let result = match instruction.operation {
@@ -798,8 +796,8 @@ impl TripleMixSimdCore {
                 };
                 operands[instruction.output] = result;
             }
-            operands[0].copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            operands[1].copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+            operands[14].copy_to_slice(&mut block[0..SIMD_WIDTH]);
+            operands[15].copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
 
         // Zero-cost transmute back from portable Simd<u64, 4> to Simd64

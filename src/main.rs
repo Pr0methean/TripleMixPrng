@@ -62,8 +62,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 body_operands.clone(),
                 body_operands.clone(),
                 body_operands,
-                build_output_instructions(0),
-                build_output_instructions(1),
+                build_output_instructions(14),
+                build_output_instructions(15),
         ])
         .with_genes_size(48)
         .build()
