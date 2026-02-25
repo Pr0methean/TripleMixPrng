@@ -525,7 +525,7 @@ impl Fitness for PrngMixingFitness {
             {
                 // Bit correlation test
                 let mut correlation_cost = 0;
-                const SAMPLE_COUNT: usize = 1 << 16;
+                const SAMPLE_COUNT: usize = 1 << 20;
                 const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
                 let mut samples = vec![0u64; SAMPLE_COUNT];
                 prng.clone().fill(samples.as_mut());
