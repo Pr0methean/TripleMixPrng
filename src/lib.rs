@@ -176,7 +176,6 @@ impl Debug for Instruction {
 impl_allele!(Instruction);
 
 const READ_WRITE_OPERANDS: Range<usize> = TripleMixSimdCore::FIRST_WRITE_OPERAND..TripleMixSimdCore::NUM_OPERANDS;
-const READ_ONLY_OPERANDS: Range<usize> = 0..TripleMixSimdCore::FIRST_WRITE_OPERAND;
 const PRESET_OPERANDS: Range<usize> = 0..11;
 const ALL_OPERANDS: Range<usize> = 0..TripleMixSimdCore::NUM_OPERANDS;
 
