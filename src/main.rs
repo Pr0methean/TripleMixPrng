@@ -14,7 +14,7 @@ use log::info;
 use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, Instruction, PrngMixingFitness};
 
 const TOTAL_POPULATION: usize = 1 << 10;
-const HILL_CLIMBED_POPULATION: usize = 1 << 8;
+const HILL_CLIMBED_POPULATION: usize = 1 << 7;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let body_operands = build_list_of_instructions(false);
     simple_log::console("debug")?;
@@ -73,9 +73,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let genotype = genotype_builder.clone().build().unwrap();
     let mut rng = ga_rand::thread_rng();
     let random_population: Vec<_> = repeat_with(|| genotype.chromosome_constructor_random(&mut rng).genes)
-        .take(TOTAL_POPULATION - HILL_CLIMBED_POPULATION)
+        .take(TOTAL_POPULATION - 2 * HILL_CLIMBED_POPULATION)
         .collect();
-    let (best_hill_climb, hill_climbs) = HillClimbBuilder::new()
+    let (best_greedy, greedy_climbs) = HillClimbBuilder::new()
+        .with_genotype(genotype.clone())
+        .with_variant(HillClimbVariant::Stochastic)
+        .with_fitness(PrngMixingFitness)
+        .with_par_fitness(true)
+        .with_max_stale_generations(2)
+        .with_reporter(HillClimbReporterSimple::new(4))
+        .call_par_repeatedly(HILL_CLIMBED_POPULATION)
+        .unwrap();
+    let (best_genes, best_fitness_score) = best_greedy.best_genes_and_fitness_score().unwrap();
+    info!("Greedy bootstrap results: Score: {best_fitness_score:?}\n\rGenes:\n\r{best_genes:?}");
+    let (best_sgd, sgd_climbs) = HillClimbBuilder::new()
         .with_genotype(genotype)
         .with_variant(HillClimbVariant::Stochastic)
         .with_fitness(PrngMixingFitness)
@@ -84,10 +95,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_reporter(HillClimbReporterSimple::new(4))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
-    let (best_genes, best_fitness_score) = best_hill_climb.best_genes_and_fitness_score().unwrap();
-    info!("Bootstrap results: Score: {best_fitness_score:?}\n\rGenes:\n\r{best_genes:?}");
+    let (best_genes, best_fitness_score) = best_sgd.best_genes_and_fitness_score().unwrap();
+    info!("SGD bootstrap results: Score: {best_fitness_score:?}\n\rGenes:\n\r{best_genes:?}");
     let bootstrapped_genotype = genotype_builder.with_seed_genes_list(
-        hill_climbs.into_iter().flat_map(|hc| hc.best_genes())
+        greedy_climbs.into_iter().flat_map(|hc| hc.best_genes())
+            .chain(sgd_climbs.into_iter().flat_map(|hc| hc.best_genes()))
             .chain(random_population).collect()
     ).build().unwrap();
     let evolve = Evolve::<MultiListGenotype<Instruction>,_,_,_,_,_,_>::builder()
