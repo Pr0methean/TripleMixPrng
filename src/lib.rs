@@ -627,7 +627,7 @@ impl Fitness for PrngMixingFitness {
         }
 
         debug!("Total test failure cost: {test_failures_cost}");
-        let cost = test_failures_cost + complexity_cost;
+        let cost = test_failures_cost + 10 * complexity_cost;
         info!("Total cost: {cost} (complexity {complexity_cost}, test failures {test_failures_cost}), function: {:?}", chromosome.genes());
         Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
