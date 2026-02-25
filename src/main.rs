@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_par_fitness(true)
     .with_fitness_cache(1 << 24)
     .with_fitness_ordering(FitnessOrdering::Maximize) // optional, default is Maximize, aim towards the most true values
-    .with_target_population_size(1 << 9)                 // evolve with 100 chromosomes
+    .with_target_population_size(1 << 8)                 // evolve with 100 chromosomes
     .with_max_stale_generations(32)
     .with_reporter(EvolveReporterSimple::new(4))    // optional builder step, report every 100 generations
     .call()

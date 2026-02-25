@@ -329,7 +329,7 @@ impl Fitness for PrngMixingFitness {
         debug!("Complexity cost: {}", complexity_cost);
         let mut test_failures_cost = 0;
         let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
-        const EVAL_SEEDS: usize = 8;
+        const EVAL_SEEDS: usize = 16;
         for seed_idx in 0..EVAL_SEEDS {
             match seed_idx {
                 0 => {},
