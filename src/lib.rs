@@ -440,7 +440,7 @@ impl Fitness for PrngMixingFitness {
                                 }
                                 max_flips = max_flips.max(flips);
                                 count += 1;
-                                flips_total_for_bit += flips;
+                                *flips_total_for_bit += flips;
                             }
                         }
                     }
