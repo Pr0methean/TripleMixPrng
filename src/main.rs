@@ -2,24 +2,29 @@
 
 use genetic_algorithm::crossover::CrossoverUniform;
 use genetic_algorithm::fitness::FitnessOrdering;
-use genetic_algorithm::genotype::{Genotype, ListGenotype, MultiListGenotype};
+use genetic_algorithm::genotype::{Genotype, MultiListGenotype};
 use genetic_algorithm::mutate::MutateSingleGene;
 use genetic_algorithm::select::SelectElite;
 use genetic_algorithm::strategy::evolve::EvolveReporterSimple;
 use genetic_algorithm::strategy::prelude::Evolve;
 use genetic_algorithm::strategy::Strategy;
 use log::info;
-use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, PrngMixingFitness, TripleMixSimdCore};
+use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, Instruction, PrngMixingFitness, TripleMixSimdCore};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let body_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS);
+    let body_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS, false);
+    let near_head_and_tail_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS, true);
     simple_log::console("debug")?;
     let genotype = MultiListGenotype::builder()
         .with_allele_lists(vec![
-            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 4),
-            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 5),
-            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 6),
-            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 7),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 0),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 1),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 2),
+            build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 3),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
             body_operands.clone(),
             body_operands.clone(),
             body_operands.clone(),
@@ -54,21 +59,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             body_operands.clone(),
             body_operands.clone(),
             body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
-            body_operands.clone(),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
+            near_head_and_tail_operands.clone(),
             build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 0),
             build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 1),
         ])
         .with_genes_size(48)
         .build()
         .unwrap();
-    let evolve = Evolve::builder()
+    let evolve = Evolve::<MultiListGenotype<Instruction>,_,_,_,_,_,_>::builder()
     .with_genotype(genotype)
     .with_select(SelectElite::new(0.7, 0.0625))         // sort the chromosomes by fitness to determine crossover order. Strive to replace 50% of the population with offspring. Allow 2% through the non-generational best chromosomes gate before selection and replacement
     .with_crossover(CrossoverUniform::new(0.7, 0.8))  // crossover all individual genes between 2 chromosomes for offspring with 70% parent selection (30% do not produce offspring) and 80% chance of crossover (20% of parents just clone)

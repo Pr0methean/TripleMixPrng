@@ -20,7 +20,7 @@ use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
 use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
-use genetic_algorithm::genotype::{ListGenotype};
+use genetic_algorithm::genotype::{MultiListGenotype};
 use genetic_algorithm::impl_allele;
 use hypors::chi_square::goodness_of_fit;
 use log::{debug, info, trace};
@@ -218,11 +218,6 @@ fn add_operations_between(num_operands: usize, operand1: usize, output: usize, i
             output,
             operand1
         });
-        instructions.push(Instruction {
-            operation: Operation::Multiply(operand2),
-            output,
-            operand1,
-        });
     }
     for shift_amount in 1..=63 {
         instructions.push(Instruction {
@@ -243,14 +238,17 @@ fn add_operations_between(num_operands: usize, operand1: usize, output: usize, i
     }
 }
 
-pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
+pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) -> Vec<Instruction> {
     let mut instructions = Vec::with_capacity(num_operands * num_operands * (193 + 4 * num_operands));
 
     // No-op instruction
-    instructions.push(Instruction {
-        operation: Operation::Copy,
-        operand1: 0, output: 0
-    });
+    if !near_head_or_tail {
+        instructions.push(Instruction {
+            operation: Operation::Copy,
+            operand1: 0,
+            output: 0
+        });
+    }
     for output in 0..num_operands {
         for operand1 in 0..num_operands {
             if operand1 != output {
@@ -258,6 +256,15 @@ pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
                     operation: Operation::Copy,
                     operand1, output
                 });
+            }
+            if !near_head_or_tail {
+                for operand2 in (operand1 + 1)..num_operands {
+                    instructions.push(Instruction {
+                        operation: Operation::Multiply(operand2),
+                        output,
+                        operand1,
+                    });
+                }
             }
             add_operations_between(num_operands, operand1, output, &mut instructions);
         }
@@ -269,7 +276,7 @@ pub fn build_list_of_instructions(num_operands: usize) -> Vec<Instruction> {
 pub struct PrngMixingFitness;
 
 impl Fitness for PrngMixingFitness {
-    type Genotype = ListGenotype<Instruction>;
+    type Genotype = MultiListGenotype<Instruction>;
 
     fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, _genotype: &Self::Genotype) -> Option<FitnessValue> {
         let mut complexity_cost = 0;
