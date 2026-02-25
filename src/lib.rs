@@ -8,7 +8,6 @@
 mod avx2;
 
 use core::convert::Infallible;
-use core::ops::Range;
 use std::array::from_fn;
 use std::fmt::{Debug, Formatter};
 use rand::{rng, RngExt};
@@ -16,12 +15,14 @@ use rand_core::block::{BlockRng, Generator};
 use rand_core::{Rng, TryRng};
 use std::hash::{Hash};
 use std::hint::unlikely;
+use std::ops::RangeInclusive;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
+use std::sync::LazyLock;
 use genetic_algorithm::fitness::{Fitness, FitnessChromosome, FitnessValue};
-use genetic_algorithm::genotype::{MultiListGenotype};
+use genetic_algorithm::genotype::{MultiRangeGenotype};
 use genetic_algorithm::impl_allele;
 use hypors::chi_square::goodness_of_fit;
 use log::{debug, info, trace};
@@ -63,7 +64,7 @@ const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
-enum Operation {
+pub enum Operation {
     Copy,
     Add(usize),
     Subtract(usize),
@@ -129,7 +130,7 @@ const SIMD_SWIZZLES: [fn(Simd64) -> Simd64; 23] = [
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone)]
 pub struct Instruction {
-    operation: Operation,
+    operation: &'static Operation,
     operand1: usize,
     output: usize,
 }
@@ -167,7 +168,7 @@ impl Debug for Instruction {
                 write!(f, "rotl(op[{}], {amount})", self.operand1)
             }
             Operation::Swizzle(swizzle) => {
-                write!(f, "simd_swizzle!(op[{}], {})", self.operand1, SIMD_SWIZZLE_DESCRIPTIONS[swizzle])
+                write!(f, "simd_swizzle!(op[{}], {})", self.operand1, SIMD_SWIZZLE_DESCRIPTIONS[*swizzle])
             }
         }
     }
@@ -175,119 +176,56 @@ impl Debug for Instruction {
 
 impl_allele!(Instruction);
 
-const READ_WRITE_OPERANDS: Range<usize> = TripleMixSimdCore::FIRST_WRITE_OPERAND..TripleMixSimdCore::NUM_OPERANDS;
-const PRESET_OPERANDS: Range<usize> = 0..11;
-const ALL_OPERANDS: Range<usize> = 0..TripleMixSimdCore::NUM_OPERANDS;
+pub const READ_WRITE_OPERANDS: RangeInclusive<u32> = TripleMixSimdCore::FIRST_WRITE_OPERAND..=(TripleMixSimdCore::NUM_OPERANDS - 1);
+pub const PRESET_OPERANDS: RangeInclusive<u32> = 0..=10;
+pub const ALL_OPERANDS: RangeInclusive<u32> = 0..=(TripleMixSimdCore::NUM_OPERANDS - 1);
 
-pub fn build_input_instructions(operand1: usize) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(TripleMixSimdCore::NUM_OPERANDS * (TripleMixSimdCore::NUM_OPERANDS - TripleMixSimdCore::FIRST_WRITE_OPERAND));
-    for output in READ_WRITE_OPERANDS {
-        add_operations_between(PRESET_OPERANDS, operand1, output, &mut instructions);
+pub fn build_list_of_operations() -> Vec<Operation> {
+    let mut operations = Vec::with_capacity(((TripleMixSimdCore::NUM_OPERANDS - TripleMixSimdCore::FIRST_WRITE_OPERAND) * (193 + 4 * TripleMixSimdCore::NUM_OPERANDS)) as usize);
+
+    operations.push(Operation::Copy);
+    for operand2 in ALL_OPERANDS {
+        let operand2 = operand2 as usize;
+        operations.push(Operation::Multiply(operand2));
+        operations.push(Operation::Xor(operand2));
+        operations.push(Operation::Add(operand2));
+        operations.push(Operation::Subtract(operand2));
     }
-    instructions
-}
-
-pub fn build_output_instructions(output: usize) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(READ_WRITE_OPERANDS.len() * ALL_OPERANDS.len());
-    for operand1 in READ_WRITE_OPERANDS {
-        add_operations_between(ALL_OPERANDS, operand1, output, &mut instructions);
-    }
-    instructions
-}
-
-fn add_operations_between(input_operands: Range<usize>, operand1: usize, output: usize, instructions: &mut Vec<Instruction>) {
-    for operand2 in input_operands {
-        if operand2 == operand1 {
-            continue;
-        }
-        instructions.push(Instruction {
-            operation: Operation::Subtract(operand2),
-            output,
-            operand1
-        });
-        instructions.push(Instruction {
-            operation: Operation::Add(operand2),
-            output,
-            operand1,
-        });
-        instructions.push(Instruction {
-            operation: Operation::Xor(operand2),
-            output,
-            operand1
-        });
+    for swizzle in 0..23 {
+        operations.push(Operation::Swizzle(swizzle));
     }
     for shift_amount in 1..=63 {
-        instructions.push(Instruction {
-            output,
-            operand1,
-            operation: Operation::ShiftLeft(shift_amount)
-        });
-        instructions.push(Instruction {
-            output,
-            operand1,
-            operation: Operation::ShiftRight(shift_amount)
-        });
-        instructions.push(Instruction {
-            output,
-            operand1,
-            operation: Operation::RotateLeft(shift_amount)
-        });
+        operations.push(Operation::ShiftLeft(shift_amount));
+        operations.push(Operation::ShiftRight(shift_amount));
+        operations.push(Operation::RotateLeft(shift_amount));
     }
+    operations
 }
 
-pub fn build_list_of_instructions(near_head_or_tail: bool) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(READ_WRITE_OPERANDS.len() * ALL_OPERANDS.len() * (193 + 4 * TripleMixSimdCore::NUM_OPERANDS));
-
-    // No-op instruction
-    if !near_head_or_tail {
-        instructions.push(Instruction {
-            operation: Operation::Copy,
-            operand1: 0,
-            output: 0
-        });
-    }
-    for output in READ_WRITE_OPERANDS {
-        for operand1 in ALL_OPERANDS {
-            if operand1 != output {
-                instructions.push(Instruction {
-                    operation: Operation::Copy,
-                    operand1, output
-                });
-            }
-            if !near_head_or_tail {
-                for operand2 in (operand1 + 1)..TripleMixSimdCore::NUM_OPERANDS {
-                    instructions.push(Instruction {
-                        operation: Operation::Multiply(operand2),
-                        output,
-                        operand1,
-                    });
-                }
-               for swizzle in 0..23 {
-                    instructions.push(Instruction {
-                        operation: Operation::Swizzle(swizzle),
-                        output,
-                        operand1
-                    });
-                }
-            }
-            add_operations_between(ALL_OPERANDS, operand1, output, &mut instructions);
-        }
-    }
-    instructions
-}
+pub static OPERATIONS: LazyLock<Vec<Operation>> = LazyLock::new(build_list_of_operations);
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PrngMixingFitness;
 
+pub fn as_instructions(instructions_usizes: &[u32]) -> impl Iterator<Item=Instruction> {
+     instructions_usizes.chunks_exact(3)
+            .map(|chunk| Instruction {
+                output: chunk[0] as usize,
+                operation: &OPERATIONS[chunk[1] as usize],
+                operand1: chunk[2] as usize,
+            })
+}
+
 impl Fitness for PrngMixingFitness {
-    type Genotype = MultiListGenotype<Instruction>;
+    type Genotype = MultiRangeGenotype<u32>;
 
     fn calculate_for_chromosome(&mut self, chromosome: &FitnessChromosome<Self>, _genotype: &Self::Genotype) -> Option<FitnessValue> {
+        let instructions: Vec<Instruction> = as_instructions(chromosome.genes()).collect();
         let mut complexity_cost = 0;
         let mut total_multiplies: usize = 0;
         let mut total_shifts: usize = 0;
         let mut total_swizzles: usize = 0;
-        for instruction in chromosome.genes().iter() {
+        for instruction in &instructions {
             complexity_cost += match instruction.operation {
                 Operation::Copy => if instruction.operand1 == instruction.output { 0 } else { 5 },
                 Operation::Xor(_) => 8,
@@ -332,7 +270,8 @@ impl Fitness for PrngMixingFitness {
         }
         debug!("Complexity cost: {}", complexity_cost);
         let mut test_failures_cost = 0;
-        let mut prng = TripleMixPrng::from_instructions(chromosome.genes().clone());
+        let instructions_string = instructions.iter().map(|instruction| format!("{:?}", instruction)).collect::<Vec<_>>().join("; ");
+        let mut prng = TripleMixPrng::from_instructions(instructions);
         const EVAL_SEEDS: usize = 16;
         for seed_idx in 0..EVAL_SEEDS {
             match seed_idx {
@@ -632,7 +571,7 @@ impl Fitness for PrngMixingFitness {
 
         debug!("Total test failure cost: {test_failures_cost}");
         let cost = test_failures_cost + 10 * complexity_cost;
-        info!("Total cost: {cost} (complexity {complexity_cost}, test failures {test_failures_cost}), function: {:?}", chromosome.genes());
+        info!("Total cost: {cost} (complexity {complexity_cost}, test failures {test_failures_cost}), function: {instructions_string}");
         Some(FitnessValue::from(0isize.saturating_sub_unsigned(cost as usize)))
     }
 }
@@ -684,8 +623,8 @@ impl std::fmt::Debug for TripleMixSimdCore {
 }
 
 impl TripleMixSimdCore {
-    pub const NUM_OPERANDS: usize = 16;
-    pub const FIRST_WRITE_OPERAND: usize = 5;
+    pub const NUM_OPERANDS: u32 = 16;
+    pub const FIRST_WRITE_OPERAND: u32 = 5;
     const TINYMT_MAT1: u64 = 0xdaa51b54;
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
@@ -764,7 +703,7 @@ impl TripleMixSimdCore {
             let b_r0 =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
-            let mut operands = [Simd64::splat(0); Self::NUM_OPERANDS];
+            let mut operands = [Simd64::splat(0); Self::NUM_OPERANDS as usize];
             // === 2. Mixing ===
             // Read-only operands
             operands[0] = b_l0;
@@ -784,14 +723,14 @@ impl TripleMixSimdCore {
                 let input = operands[instruction.operand1];
                 let result = match instruction.operation {
                     Operation::Copy => input,
-                    Operation::Add(operand2) => input + operands[operand2],
-                    Operation::Subtract(operand2) => input - operands[operand2],
-                    Operation::Multiply(operand2) => simd_mul(input, operands[operand2]),
-                    Operation::Xor(operand2) => input ^ operands[operand2],
+                    Operation::Add(operand2) => input + operands[*operand2],
+                    Operation::Subtract(operand2) => input - operands[*operand2],
+                    Operation::Multiply(operand2) => simd_mul(input, operands[*operand2]),
+                    Operation::Xor(operand2) => input ^ operands[*operand2],
                     Operation::ShiftLeft(amount) => input << amount,
                     Operation::ShiftRight(amount) => input >> amount,
-                    Operation::RotateLeft(amount) => rotl(input, amount),
-                    Operation::Swizzle(swizzle) => SIMD_SWIZZLES[swizzle](input),
+                    Operation::RotateLeft(amount) => rotl(input, *amount),
+                    Operation::Swizzle(swizzle) => SIMD_SWIZZLES[*swizzle](input),
                 };
                 operands[instruction.output] = result;
             }
