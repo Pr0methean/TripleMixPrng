@@ -130,7 +130,7 @@ const SIMD_SWIZZLES: [fn(Simd64) -> Simd64; 23] = [
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone)]
 pub struct Instruction {
-    operation: &'static Operation,
+    operation: Operation,
     operand1: usize,
     output: usize,
 }
@@ -168,7 +168,7 @@ impl Debug for Instruction {
                 write!(f, "rotl(op[{}], {amount})", self.operand1)
             }
             Operation::Swizzle(swizzle) => {
-                write!(f, "simd_swizzle!(op[{}], {})", self.operand1, SIMD_SWIZZLE_DESCRIPTIONS[*swizzle])
+                write!(f, "simd_swizzle!(op[{}], {})", self.operand1, SIMD_SWIZZLE_DESCRIPTIONS[swizzle])
             }
         }
     }
@@ -211,7 +211,7 @@ pub fn as_instructions(instructions_usizes: &[u32]) -> impl Iterator<Item=Instru
      instructions_usizes.chunks_exact(3)
             .map(|chunk| Instruction {
                 output: chunk[0] as usize,
-                operation: &OPERATIONS[chunk[1] as usize],
+                operation: OPERATIONS[chunk[1] as usize].clone(),
                 operand1: chunk[2] as usize,
             })
 }
@@ -723,14 +723,14 @@ impl TripleMixSimdCore {
                 let input = operands[instruction.operand1];
                 let result = match instruction.operation {
                     Operation::Copy => input,
-                    Operation::Add(operand2) => input + operands[*operand2],
-                    Operation::Subtract(operand2) => input - operands[*operand2],
-                    Operation::Multiply(operand2) => simd_mul(input, operands[*operand2]),
-                    Operation::Xor(operand2) => input ^ operands[*operand2],
+                    Operation::Add(operand2) => input + operands[operand2],
+                    Operation::Subtract(operand2) => input - operands[operand2],
+                    Operation::Multiply(operand2) => simd_mul(input, operands[operand2]),
+                    Operation::Xor(operand2) => input ^ operands[operand2],
                     Operation::ShiftLeft(amount) => input << amount,
                     Operation::ShiftRight(amount) => input >> amount,
-                    Operation::RotateLeft(amount) => rotl(input, *amount),
-                    Operation::Swizzle(swizzle) => SIMD_SWIZZLES[*swizzle](input),
+                    Operation::RotateLeft(amount) => rotl(input, amount),
+                    Operation::Swizzle(swizzle) => SIMD_SWIZZLES[swizzle](input),
                 };
                 operands[instruction.output] = result;
             }
