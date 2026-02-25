@@ -8,6 +8,7 @@
 mod avx2;
 
 use core::convert::Infallible;
+use core::ops::Range;
 use std::array::from_fn;
 use std::fmt::{Debug, Formatter};
 use rand::{rng, RngExt};
@@ -174,33 +175,36 @@ impl Debug for Instruction {
 
 impl_allele!(Instruction);
 
-pub fn build_input_instructions(num_operands: usize, operand1: usize) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(num_operands * num_operands);
-    for output in 0..num_operands {
-        add_operations_between(num_operands, operand1, output, &mut instructions);
+const READ_WRITE_OPERANDS: Range<usize> = TripleMixSimdCore::FIRST_WRITE_OPERAND..TripleMixSimdCore::NUM_OPERANDS;
+const READ_ONLY_OPERANDS: Range<usize> = 0..TripleMixSimdCore::FIRST_WRITE_OPERAND;
+const ALL_OPERANDS: Range<usize> = 0..TripleMixSimdCore::NUM_OPERANDS;
+
+pub fn build_input_instructions(operand1: usize) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(TripleMixSimdCore::NUM_OPERANDS * (TripleMixSimdCore::NUM_OPERANDS - TripleMixSimdCore::FIRST_WRITE_OPERAND));
+    for output in READ_WRITE_OPERANDS {
+        add_operations_between(READ_ONLY_OPERANDS, operand1, output, &mut instructions);
     }
     instructions
 }
 
-pub fn build_output_instructions(num_operands: usize, output: usize) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(num_operands * num_operands);
-    for operand1 in 0..num_operands {
-        add_operations_between(num_operands, operand1, output, &mut instructions);
+pub fn build_output_instructions(output: usize) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(READ_WRITE_OPERANDS.len() * ALL_OPERANDS.len());
+    for operand1 in READ_WRITE_OPERANDS {
+        add_operations_between(ALL_OPERANDS, operand1, output, &mut instructions);
     }
     instructions
 }
 
-fn add_operations_between(num_operands: usize, operand1: usize, output: usize, instructions: &mut Vec<Instruction>) {
-    for operand2 in 0..num_operands {
-        if operand2 != operand1 {
-            instructions.push(Instruction {
-                operation: Operation::Subtract(operand2),
-                output,
-                operand1
-            });
+fn add_operations_between(input_operands: Range<usize>, operand1: usize, output: usize, instructions: &mut Vec<Instruction>) {
+    for operand2 in input_operands {
+        if operand2 == operand1 {
+            continue;
         }
-    }
-    for operand2 in (operand1 + 1)..num_operands {
+        instructions.push(Instruction {
+            operation: Operation::Subtract(operand2),
+            output,
+            operand1
+        });
         instructions.push(Instruction {
             operation: Operation::Add(operand2),
             output,
@@ -231,8 +235,8 @@ fn add_operations_between(num_operands: usize, operand1: usize, output: usize, i
     }
 }
 
-pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) -> Vec<Instruction> {
-    let mut instructions = Vec::with_capacity(num_operands * num_operands * (193 + 4 * num_operands));
+pub fn build_list_of_instructions(near_head_or_tail: bool) -> Vec<Instruction> {
+    let mut instructions = Vec::with_capacity(READ_WRITE_OPERANDS.len() * ALL_OPERANDS.len() * (193 + 4 * TripleMixSimdCore::NUM_OPERANDS));
 
     // No-op instruction
     if !near_head_or_tail {
@@ -242,8 +246,8 @@ pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) 
             output: 0
         });
     }
-    for output in 0..num_operands {
-        for operand1 in 0..num_operands {
+    for output in READ_WRITE_OPERANDS {
+        for operand1 in ALL_OPERANDS {
             if operand1 != output {
                 instructions.push(Instruction {
                     operation: Operation::Copy,
@@ -251,7 +255,7 @@ pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) 
                 });
             }
             if !near_head_or_tail {
-                for operand2 in (operand1 + 1)..num_operands {
+                for operand2 in (operand1 + 1)..TripleMixSimdCore::NUM_OPERANDS {
                     instructions.push(Instruction {
                         operation: Operation::Multiply(operand2),
                         output,
@@ -266,7 +270,7 @@ pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) 
                     });
                 }
             }
-            add_operations_between(num_operands, operand1, output, &mut instructions);
+            add_operations_between(ALL_OPERANDS, operand1, output, &mut instructions);
         }
     }
     instructions
@@ -681,6 +685,7 @@ impl std::fmt::Debug for TripleMixSimdCore {
 
 impl TripleMixSimdCore {
     pub const NUM_OPERANDS: usize = 16;
+    pub const FIRST_WRITE_OPERAND: usize = 5;
     const TINYMT_MAT1: u64 = 0xdaa51b54;
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
@@ -761,19 +766,18 @@ impl TripleMixSimdCore {
 
             let mut operands = [Simd64::splat(0); Self::NUM_OPERANDS];
             // === 2. Mixing ===
-            // Operands 0 and 1 are outputs
+            // Read-only operands
             operands[0] = b_l0;
             operands[1] = b_l1;
             operands[2] = b_r0;
             operands[3] = b_r1;
+            operands[4] = i_hi;
 
-            // Duplicate state so that functions are encouraged to copy from input to output with modifications
-            operands[4] = b_l0;
-            operands[5] = b_l1;
-            operands[6] = b_r0;
-            operands[7] = b_r1;
-
-            operands[8] = i_hi;
+            // Read-write operands
+            operands[5] = b_l0;
+            operands[6] = b_l1;
+            operands[7] = b_r0;
+            operands[8] = b_r1;
             operands[9] = FEISTEL_CONSTANT_1;
             operands[10] = FEISTEL_CONSTANT_2;
             operands[11] = FEISTEL_CONSTANT_3;
