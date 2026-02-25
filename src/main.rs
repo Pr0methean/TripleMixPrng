@@ -16,58 +16,59 @@ use triple_mix_prng::{build_input_instructions, build_list_of_instructions, buil
 const TOTAL_POPULATION: usize = 1 << 10;
 const HILL_CLIMBED_POPULATION: usize = 1 << 7;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    const GENERATIONS_PER_REPORT: usize = 4;
     let body_operands = build_list_of_instructions(false);
     simple_log::console("debug")?;
     let genotype_builder = MultiListGenotype::builder()
         .with_allele_lists(vec![
-                build_input_instructions(0),
-                build_input_instructions(1),
-                build_input_instructions(2),
-                build_input_instructions(3),
-                build_input_instructions(4),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands.clone(),
-                body_operands,
-                build_output_instructions(14),
-                build_output_instructions(15),
+            build_input_instructions(0),
+            build_input_instructions(1),
+            build_input_instructions(2),
+            build_input_instructions(3),
+            build_input_instructions(4),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands,
+            build_output_instructions(14),
+            build_output_instructions(15),
         ])
         .with_genes_size(48);
     let genotype = genotype_builder.clone().build().unwrap();
@@ -77,11 +78,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let (best_greedy, greedy_climbs) = HillClimbBuilder::new()
         .with_genotype(genotype.clone())
-        .with_variant(HillClimbVariant::Stochastic)
+        .with_variant(HillClimbVariant::SteepestAscent)
         .with_fitness(PrngMixingFitness)
         .with_par_fitness(true)
         .with_max_stale_generations(2)
-        .with_reporter(HillClimbReporterSimple::new(4))
+        .with_reporter(HillClimbReporterSimple::new(GENERATIONS_PER_REPORT))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
     let (best_genes, best_fitness_score) = best_greedy.best_genes_and_fitness_score().unwrap();
@@ -92,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fitness(PrngMixingFitness)
         .with_par_fitness(true)
         .with_max_stale_generations(32)
-        .with_reporter(HillClimbReporterSimple::new(4))
+        .with_reporter(HillClimbReporterSimple::new(GENERATIONS_PER_REPORT))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
     let (best_genes, best_fitness_score) = best_sgd.best_genes_and_fitness_score().unwrap();
@@ -113,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_fitness_ordering(FitnessOrdering::Maximize) // optional, default is Maximize, aim towards the most true values
     .with_target_population_size(1 << 10)                 // evolve with 100 chromosomes
     .with_max_stale_generations(32)
-    .with_reporter(EvolveReporterSimple::new(4))    // optional builder step, report every 100 generations
+    .with_reporter(EvolveReporterSimple::new(GENERATIONS_PER_REPORT))    // optional builder step, report every 100 generations
     .call()
     .unwrap();
 
