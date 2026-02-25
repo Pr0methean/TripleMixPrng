@@ -13,7 +13,6 @@ use triple_mix_prng::{build_input_instructions, build_list_of_instructions, buil
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let body_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS, false);
-    let near_head_and_tail_operands = build_list_of_instructions(TripleMixSimdCore::NUM_OPERANDS, true);
     simple_log::console("debug")?;
     let genotype = MultiListGenotype::builder()
         .with_allele_lists(vec![
@@ -21,10 +20,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 1),
             build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 2),
             build_input_instructions(TripleMixSimdCore::NUM_OPERANDS, 3),
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
+            body_operands.clone(),
             body_operands.clone(),
             body_operands.clone(),
             body_operands.clone(),
@@ -59,10 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             body_operands.clone(),
             body_operands.clone(),
             body_operands,
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands.clone(),
-            near_head_and_tail_operands,
             build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 0),
             build_output_instructions(TripleMixSimdCore::NUM_OPERANDS, 1),
         ])
