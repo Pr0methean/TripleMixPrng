@@ -9,6 +9,7 @@ use super::Simd64;
 /// Multiply two vectors of u64 lanes, keeping the low 64 bits of each product.
 /// This uses `_mm256_mul_epu32` to avoid the scalarization that portable SIMD does.
 #[inline(always)]
+#[allow(clippy::missing_transmute_annotations)]
 pub fn mullo(a: Simd64, b: Simd64) -> Simd64 {
     unsafe {
         let a = std::mem::transmute(a);

@@ -354,9 +354,9 @@ impl Fitness for PrngMixingFitness {
                     core1.generate(output_block);
                 }
                 let mut low_avalanches = 0;
-                for (field_idx, flips_total) in flips_per_bit.iter_mut().enumerate() {
-                    for lane_idx in 0..SIMD_WIDTH {
-                        for bit_idx in 0usize..64 {
+                for (field_idx, flips_total_for_field) in flips_per_bit.iter_mut().enumerate() {
+                    for (lane_idx, flips_total_for_lane) in flips_total_for_field.iter_mut().enumerate() {
+                        for (bit_idx, flips_total_for_bit) in flips_total_for_lane.iter_mut().enumerate() {
                             if field_idx == 2 && bit_idx == 63 {
                                 continue;
                             }
@@ -440,7 +440,7 @@ impl Fitness for PrngMixingFitness {
                                 }
                                 max_flips = max_flips.max(flips);
                                 count += 1;
-                                flips_total[lane_idx][bit_idx] += flips;
+                                flips_total_for_bit += flips;
                             }
                         }
                     }
