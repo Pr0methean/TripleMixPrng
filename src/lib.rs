@@ -191,13 +191,6 @@ pub fn build_output_instructions(num_operands: usize, output: usize) -> Vec<Inst
 }
 
 fn add_operations_between(num_operands: usize, operand1: usize, output: usize, instructions: &mut Vec<Instruction>) {
-    for swizzle in 0..23 {
-        instructions.push(Instruction {
-            operation: Operation::Swizzle(swizzle),
-            output,
-            operand1
-        });
-    }
     for operand2 in 0..num_operands {
         if operand2 != operand1 {
             instructions.push(Instruction {
@@ -263,6 +256,13 @@ pub fn build_list_of_instructions(num_operands: usize, near_head_or_tail: bool) 
                         operation: Operation::Multiply(operand2),
                         output,
                         operand1,
+                    });
+                }
+               for swizzle in 0..23 {
+                    instructions.push(Instruction {
+                        operation: Operation::Swizzle(swizzle),
+                        output,
+                        operand1
                     });
                 }
             }
