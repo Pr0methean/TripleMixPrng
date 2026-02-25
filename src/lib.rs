@@ -151,7 +151,7 @@ impl Debug for Instruction {
             Operation::Subtract(operand2) => {
                 write!(f, "op[{}] - op[{}]", self.operand1, operand2)
             }
-            Operation::Multiply(_) => {
+            Operation::Multiply(operand2) => {
                 write!(f, "simd_mul(op[{}], op[{}])", self.operand1, operand2)
             }
             Operation::Xor(operand2) => {
