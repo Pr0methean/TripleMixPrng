@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_variant(HillClimbVariant::Stochastic)
         .with_fitness(PrngMixingFitness)
         .with_par_fitness(true)
-        .with_max_stale_generations(8)
+        .with_max_stale_generations(32)
         .with_reporter(HillClimbReporterSimple::new(4))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
