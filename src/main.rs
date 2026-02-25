@@ -6,7 +6,8 @@ use genetic_algorithm::genotype::{Genotype, MultiListGenotype};
 use genetic_algorithm::mutate::MutateSingleGene;
 use genetic_algorithm::select::SelectElite;
 use genetic_algorithm::strategy::evolve::EvolveReporterSimple;
-use genetic_algorithm::strategy::prelude::Evolve;
+use genetic_algorithm::strategy::hill_climb::HillClimbVariant;
+use genetic_algorithm::strategy::prelude::{Evolve, HillClimbBuilder};
 use genetic_algorithm::strategy::Strategy;
 use log::info;
 use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, Instruction, PrngMixingFitness};
@@ -14,7 +15,7 @@ use triple_mix_prng::{build_input_instructions, build_list_of_instructions, buil
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let body_operands = build_list_of_instructions(false);
     simple_log::console("debug")?;
-    let genotype = MultiListGenotype::builder()
+    let genotype_builder = MultiListGenotype::builder()
         .with_allele_lists(vec![
                 build_input_instructions(0),
                 build_input_instructions(1),
@@ -65,11 +66,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 build_output_instructions(14),
                 build_output_instructions(15),
         ])
-        .with_genes_size(48)
-        .build()
+        .with_genes_size(48);
+    let (best_hill_climb, hill_climbs) = HillClimbBuilder::new()
+        .with_genotype(genotype_builder.clone().build().unwrap())
+        .with_variant(HillClimbVariant::Stochastic)
+        .with_fitness(PrngMixingFitness)
+        .with_par_fitness(true)
+        .with_max_stale_generations(32)
+        .call_par_repeatedly(32)
         .unwrap();
+    let (best_genes, best_fitness_score) = best_hill_climb.best_genes_and_fitness_score().unwrap();
+    info!("Bootstrap results: Score: {best_fitness_score:?}\n\rGenes:\n\r{best_genes:?}");
+    let bootstrapped_genotype = genotype_builder.with_seed_genes_list(
+        hill_climbs.into_iter().flat_map(|hc| hc.best_genes()).collect()
+    ).build().unwrap();
     let evolve = Evolve::<MultiListGenotype<Instruction>,_,_,_,_,_,_>::builder()
-    .with_genotype(genotype)
+    .with_genotype(bootstrapped_genotype)
     .with_select(SelectElite::new(0.3, 0.0625))
     .with_crossover(CrossoverUniform::new(0.8, 0.9))
     .with_mutate(MutateSingleGene::new(0.25))
