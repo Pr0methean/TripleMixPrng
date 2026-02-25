@@ -14,7 +14,7 @@ use log::info;
 use triple_mix_prng::{build_input_instructions, build_list_of_instructions, build_output_instructions, Instruction, PrngMixingFitness};
 
 const TOTAL_POPULATION: usize = 1 << 10;
-const HILL_CLIMBED_POPULATION: usize = 1 << 5;
+const HILL_CLIMBED_POPULATION: usize = 16;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const GENERATIONS_PER_REPORT: usize = 4;
     let body_operands = build_list_of_instructions(false);
@@ -82,8 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_fitness(PrngMixingFitness)
         .with_fitness_cache(1 << 24)
         .with_par_fitness(true)
-        .with_max_generations(128)
-        .with_max_stale_generations(16)
+        .with_max_generations(256)
+        .with_max_stale_generations(32)
         .with_reporter(HillClimbReporterSimple::new(GENERATIONS_PER_REPORT))
         .call_par_repeatedly(HILL_CLIMBED_POPULATION)
         .unwrap();
