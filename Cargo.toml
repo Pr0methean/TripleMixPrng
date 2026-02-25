@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 rand_core = "0.10.0"
 rand = "0.10.0"
+ga_rand = { package = "rand", version = "0.8.5" }
 genetic_algorithm = "0.27.0"
 log = "0.4.29"
 simple-log = "2.4.0"
