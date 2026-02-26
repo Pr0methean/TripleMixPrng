@@ -196,12 +196,12 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
     const MIXING_ROTATION_10: u64 = 9;
     const MIXING_ROTATION_07: u64 = 11;
     const MIXING_ROTATION_19: u64 = 13;
-    const MIXING_ROTATION_16: u64 = 14;
+    const MIXING_ROTATION_02: u64 = 14;
     const MIXING_ROTATION_14: u64 = 17;
     const MIXING_ROTATION_13: u64 = 19;
     const MIXING_ROTATION_00: u64 = 22;
     const MIXING_ROTATION_05: u64 = 23;
-    const MIXING_ROTATION_02: u64 = 29;
+    const MIXING_ROTATION_16: u64 = 29;
     const MIXING_ROTATION_03: u64 = 31;
     const MIXING_ROTATION_23: u64 = 39;
     const MIXING_ROTATION_01: u64 = 41;
@@ -213,10 +213,10 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
     const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
 
-    let l0 = b_l0;
-    let l1 = b_l1;
-    let r0 = b_r0;
-    let r1 = b_r1;
+    let mut l0 = b_l0;
+    let mut l1 = b_l1;
+    let mut r0 = b_r0;
+    let mut r1 = b_r1;
 
     // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
     // too weak.
@@ -225,15 +225,15 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
 
     // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
     // ------------------------------------------
-    let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
-    let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
-    let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-    let tl1 = l1 + l0;
+    let tr0 = (r0 ^ rotl(r1, MIXING_ROTATION_01)) + l1;
+    let tr1 = ((r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ l0;
+    let tl0 = ((l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi) + r0;
+    let tl1 = l1 + tr1;
 
-    let mut l0 = r0 ^ tl0;
-    let mut l1 = r1 + tl1;
-    let mut r0 = tr0 + l1;
-    let mut r1 = tr1 ^ l0;
+    let mut l0 = tl0;
+    let mut l1 = tl1;
+    let mut r0 = tr0;
+    let mut r1 = tr1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
