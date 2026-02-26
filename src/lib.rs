@@ -526,7 +526,7 @@ impl Generator for TripleMixSimdCore {
 mod tests {
     use super::*;
     use hypors::chi_square::goodness_of_fit;
-    use rand::RngExt;
+    use rand::{rng, RngExt};
     use rand_core::{Rng, SeedableRng, UnwrapErr};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
@@ -536,9 +536,15 @@ mod tests {
 
     #[test]
     pub fn test_mix_matrix() {
+        let mut random_inputs = [Simd64::splat(0); 5];
+        let mut seed_rng = rng();
+        for cell in random_inputs.iter_mut() {
+            seed_rng.fill(cell.as_mut_array());
+        }
         let mix_inputs = [
             [Simd64::splat(0); 5],
             [Simd64::splat(u64::MAX); 5],
+            random_inputs
         ];
         for base_input in mix_inputs {
             let (base_out0, base_out1) = mix(base_input[0], base_input[1], base_input[2], base_input[3], base_input[4]);
@@ -568,7 +574,92 @@ mod tests {
                     }
                 }
             }
+            let row_weights = (0..512).map(|row| xor_matrix.row(row).count_ones()).collect::<Vec<_>>();
+            let min_row_weight = row_weights.iter().copied().min().unwrap();
+            let max_row_weight = row_weights.iter().copied().max().unwrap();
+            let col_weights = (0..1280).map(|col| xor_matrix.col(col).count_ones()).collect::<Vec<_>>();
+            let min_col_weight = col_weights.iter().copied().min().unwrap();
+            let max_col_weight = col_weights.iter().copied().max().unwrap();
+            println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
+            println!("Row weights:");
+            for row_chunk in row_weights.chunks_exact(64) {
+                println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>() );
+            }
+            println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
+            println!("Column weights:");
+            for col_chunk in col_weights.chunks_exact(64) {
+                println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>() );
+            }
+            let total_weight = row_weights.into_iter().sum::<usize>();
+            let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
+            let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
+            println!("Total weight: {total_weight} (z={z})");
+            assert!(min_col_weight >= 200);
+            assert!(min_row_weight >= 550);
+            assert!(z >= -3.0, "Total weight too low");
+            assert!(z <= 3.0, "Total weight too high");
             assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+        }
+    }
+
+    #[test]
+    pub fn test_second_order_derivative() {
+        let mut random_inputs = [Simd64::splat(0); 5];
+        let mut seed_rng = rng();
+        for cell in random_inputs.iter_mut() {
+            seed_rng.fill(cell.as_mut_array());
+        }
+        let mix_inputs = [
+            [Simd64::splat(0); 5],
+            [Simd64::splat(u64::MAX); 5],
+            random_inputs
+        ];
+        for base_input in mix_inputs {
+            let (base_out0, base_out1) = mix(base_input[0], base_input[1], base_input[2], base_input[3], base_input[4]);
+            let mut weights = Vec::new();
+            for var_idx_1 in 0..5 {
+                for var_idx_2 in var_idx_1..5 {
+                    for lane_idx_1 in 0..SIMD_WIDTH {
+                        for lane_idx_2 in lane_idx_1..SIMD_WIDTH {
+                            if lane_idx_1 == lane_idx_2 && var_idx_1 == var_idx_2 {
+                                for bit_idx_1 in 0..63 {
+                                    for bit_idx_2 in bit_idx_1..64 {
+                                        let mut modified_input = base_input.clone();
+                                        modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx_1 | 1 << bit_idx_2;
+                                        let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
+                                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                        weights.push(out_xor_0.to_array().into_iter().map(u64::count_ones).sum::<u32>()
+                                            + out_xor_1.to_array().into_iter().map(u64::count_ones).sum::<u32>());
+                                    }
+                                }
+                            } else {
+                                for bit_idx in 0..64 {
+                                    let mut modified_input = base_input.clone();
+                                    modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
+                                    modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
+                                    let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
+                                    let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                    weights.push(out_xor_0.to_array().into_iter().map(u64::count_ones).sum::<u32>()
+                                        + out_xor_1.to_array().into_iter().map(u64::count_ones).sum::<u32>());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let sample_size = weights.len();
+            let min_weight = weights.iter().copied().min().unwrap();
+            let max_weight = weights.iter().copied().max().unwrap();
+            let mean_weight = weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
+            let variance_weight = weights.iter().copied().map(|weight| weight as f64 - mean_weight).map(|x| x * x).sum::<f64>() / (sample_size - 1) as f64;
+            let stdev_weight = variance_weight.sqrt();
+            println!("N={sample_size}, min={min_weight}, max={max_weight}, mean={mean_weight}, sd={stdev_weight}");
+            assert!(min_weight >= 150);
+            assert!(max_weight <= 362);
+            assert!(mean_weight >= 254.0);
+            assert!(mean_weight <= 258.0);
+            assert!(stdev_weight >= 11.0);
+            assert!(stdev_weight <= 14.0);
         }
     }
 
