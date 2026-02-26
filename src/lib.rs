@@ -109,9 +109,6 @@ impl TripleMixSimdCore {
         if blocks.is_empty() {
             return;
         }
-        // The first 16 64-bit words of the Golden Ratio, transposed.
-        const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
-        const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
 
         // These are the hexadecimal expansion of pi, except that the first digit is changed in the
         // first and last constant to increase low-bit rank and avalanche effect.
@@ -132,33 +129,6 @@ impl TripleMixSimdCore {
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
 
-        // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-        // too weak.
-        let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-        let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
-
-        #[inline(always)]
-        fn rotl(x: Simd64, k: u64) -> Simd64 {
-            (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
-        }
-
-        const MIXING_ROTATION_12: u64 = 7;
-        const MIXING_ROTATION_10: u64 = 9;
-        const MIXING_ROTATION_07: u64 = 11;
-        const MIXING_ROTATION_19: u64 = 13;
-        const MIXING_ROTATION_16: u64 = 14;
-        const MIXING_ROTATION_14: u64 = 17;
-        const MIXING_ROTATION_13: u64 = 19;
-        const MIXING_ROTATION_00: u64 = 22;
-        const MIXING_ROTATION_05: u64 = 23;
-        const MIXING_ROTATION_02: u64 = 29;
-        const MIXING_ROTATION_03: u64 = 31;
-        const MIXING_ROTATION_23: u64 = 39;
-        const MIXING_ROTATION_01: u64 = 41;
-        const MIXING_ROTATION_21: u64 = 43;
-        const MIXING_ROTATION_09: u64 = 44;
-        const MIXING_ROTATION_22: u64 = 49;
-        const MIXING_ROTATION_18: u64 = 54;
         for block in blocks {
             // === 1. Source Generation ===
 
@@ -199,77 +169,7 @@ impl TripleMixSimdCore {
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
             // === 2. Mixing ===
-            let l0 = b_l0;
-            let l1 = b_l1;
-            let r0 = b_r0;
-            let r1 = b_r1;
-
-            // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
-            // ------------------------------------------
-            let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
-            let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
-            let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
-            let tl1 = l1 + l0;
-
-            let mut l0 = r0 ^ tl0;
-            let mut l1 = r1 + tl1;
-            let mut r0 = tr0 + l1;
-            let mut r1 = tr1 ^ l0;
-
-            // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
-            // ----------------------------------------------------------
-            let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
-            let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-            let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-
-            l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-            l1 += sr1 ^ sl0;
-            r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-            r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
-
-            // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
-            // -------------------------------------------------------------------
-            let x = r0 ^ (r1 >> MIXING_ROTATION_10);
-            let y = l0 + (l1 >> MIXING_ROTATION_12);
-            let m = simd_mul(x, y);
-
-            let m1 = rotl(m, MIXING_ROTATION_13);
-            let m2 = m ^ (m >> MIXING_ROTATION_14);
-
-            // asymmetric feedback (no duplicated structure)
-            let nl0 = r0 ^ m1;
-            let nl1 = r1 + m2;
-            let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
-            let r1 = l1 ^ m1 ^ m2;
-
-            let l0 = nl0;
-            let l1 = nl1;
-            let r0 = nr0;
-
-            // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-            // ---------------------------------------------------------
-            let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
-
-            let tl0r1 = sl0 + r1;
-            let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
-
-            let l0 = r0 ^ tl0r1;
-            let l1 = r1 + tl1r0;
-            let r0 = tl0r1 + l1;
-            let r1 = tl1r0 ^ l0;
-
-            // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-            // ---------------------------------------------------
-            let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-            let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
-
-            let mut out0 = t0 + t1;
-            let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-
-            // single cross-mix (sufficient)
-            out0 ^= out1 >> MIXING_ROTATION_22;
-            out1 += out0 << MIXING_ROTATION_23;
-
+            let (out0, out1) = mix(b_l0, b_l1, b_r0, b_r1, i_hi);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
@@ -282,6 +182,113 @@ impl TripleMixSimdCore {
         self.weyl_lo = w_lo;
         self.weyl_hi = w_hi;
     }
+}
+
+#[inline(always)]
+fn rotl(x: Simd64, k: u64) -> Simd64 {
+    (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
+}
+
+
+#[inline(always)]
+fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
+    const MIXING_ROTATION_12: u64 = 7;
+    const MIXING_ROTATION_10: u64 = 9;
+    const MIXING_ROTATION_07: u64 = 11;
+    const MIXING_ROTATION_19: u64 = 13;
+    const MIXING_ROTATION_16: u64 = 14;
+    const MIXING_ROTATION_14: u64 = 17;
+    const MIXING_ROTATION_13: u64 = 19;
+    const MIXING_ROTATION_00: u64 = 22;
+    const MIXING_ROTATION_05: u64 = 23;
+    const MIXING_ROTATION_02: u64 = 29;
+    const MIXING_ROTATION_03: u64 = 31;
+    const MIXING_ROTATION_23: u64 = 39;
+    const MIXING_ROTATION_01: u64 = 41;
+    const MIXING_ROTATION_21: u64 = 43;
+    const MIXING_ROTATION_09: u64 = 44;
+    const MIXING_ROTATION_22: u64 = 49;
+    const MIXING_ROTATION_18: u64 = 54;
+    // The first 16 64-bit words of the Golden Ratio, transposed.
+    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
+    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
+
+    let l0 = b_l0;
+    let l1 = b_l1;
+    let r0 = b_r0;
+    let r1 = b_r1;
+
+    // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
+    // too weak.
+    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
+    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
+
+    // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
+    // ------------------------------------------
+    let tr0 = r0 ^ rotl(r1, MIXING_ROTATION_01);
+    let tr1 = (r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+    let tl0 = (l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
+    let tl1 = l1 + l0;
+
+    let mut l0 = r0 ^ tl0;
+    let mut l1 = r1 + tl1;
+    let mut r0 = tr0 + l1;
+    let mut r1 = tr1 ^ l0;
+
+    // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
+    // ----------------------------------------------------------
+    let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
+    let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
+    let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+
+    l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
+    l1 += sr1 ^ sl0;
+    r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
+    r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
+
+    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
+    // -------------------------------------------------------------------
+    let x = r0 ^ (r1 >> MIXING_ROTATION_10);
+    let y = l0 + (l1 >> MIXING_ROTATION_12);
+    let m = simd_mul(x, y);
+
+    let m1 = rotl(m, MIXING_ROTATION_13);
+    let m2 = m ^ (m >> MIXING_ROTATION_14);
+
+    // asymmetric feedback (no duplicated structure)
+    let nl0 = r0 ^ m1;
+    let nl1 = r1 + m2;
+    let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
+    let r1 = l1 ^ m1 ^ m2;
+
+    let l0 = nl0;
+    let l1 = nl1;
+    let r0 = nr0;
+
+    // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
+    // ---------------------------------------------------------
+    let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
+
+    let tl0r1 = sl0 + r1;
+    let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
+
+    let l0 = r0 ^ tl0r1;
+    let l1 = r1 + tl1r0;
+    let r0 = tl0r1 + l1;
+    let r1 = tl1r0 ^ l0;
+
+    // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
+    // ---------------------------------------------------
+    let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
+    let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
+
+    let mut out0 = t0 + t1;
+    let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
+
+    // single cross-mix (sufficient)
+    out0 ^= out1 >> MIXING_ROTATION_22;
+    out1 += out0 << MIXING_ROTATION_23;
+    (out0, out1)
 }
 
 #[derive(Clone)]
@@ -524,7 +531,46 @@ mod tests {
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
+    use gf2::{BitMatrix, BitStore};
     use rand::rngs::SysRng;
+
+    #[test]
+    pub fn test_mix_matrix() {
+        let mix_inputs = [
+            [Simd64::splat(0); 5],
+            [Simd64::splat(u64::MAX); 5],
+        ];
+        for base_input in mix_inputs {
+            let (base_out0, base_out1) = mix(base_input[0], base_input[1], base_input[2], base_input[3], base_input[4]);
+            let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
+            let mut i = 0;
+            for variable_idx in 0..5 {
+                for lane_idx in 0..SIMD_WIDTH {
+                    for bit_idx in 0..64 {
+                        let mut modified_input = base_input.clone();
+                        modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
+                        let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
+                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                        let mut j = 0;
+                        for out_lane_idx in 0..SIMD_WIDTH {
+                            for out_bit_idx in 0..64 {
+                                xor_matrix.set(j, i, (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0);
+                                j += 1;
+                            }
+                        }
+                        for out_lane_idx in 0..SIMD_WIDTH {
+                            for out_bit_idx in 0..64 {
+                                xor_matrix.set(j, i, (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0);
+                                j += 1;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+        }
+    }
 
     pub fn create_rngs() -> [TripleMixPrng; 5] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);

@@ -31,8 +31,8 @@ codegen-units = 1
 opt-level = 3
 
 [dev-dependencies]
-rand = "0.10.0"
 hypors = "0.3.0"
 bytemuck = "1.25.0"
 statrs = "0.18.0"
 criterion = "0.8.2"
+gf2 = "2.1.0"
