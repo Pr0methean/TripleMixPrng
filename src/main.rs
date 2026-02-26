@@ -1,19 +1,63 @@
 #![feature(portable_simd)]
 
 use std::iter::{repeat_n};
+use std::time::Instant;
+use ga_rand::Rng;
 use genetic_algorithm::crossover::CrossoverUniform;
 use genetic_algorithm::fitness::FitnessOrdering;
 use genetic_algorithm::genotype::{Genotype, MultiRangeGenotype, MutationType};
-use genetic_algorithm::mutate::MutateSingleGene;
+use genetic_algorithm::mutate::{Mutate, MutateMultiGeneRange, MutateSingleGene};
+use genetic_algorithm::mutate::MutateWrapper::MultiGeneRange;
 use genetic_algorithm::select::SelectElite;
-use genetic_algorithm::strategy::evolve::EvolveReporterSimple;
+use genetic_algorithm::strategy::evolve::{EvolveConfig, EvolveReporterSimple, EvolveState};
 use genetic_algorithm::strategy::hill_climb::HillClimbVariant;
 use genetic_algorithm::strategy::prelude::{Evolve, HillClimbBuilder, HillClimbReporterSimple};
-use genetic_algorithm::strategy::Strategy;
+use genetic_algorithm::strategy::{Strategy, StrategyAction, StrategyReporter, StrategyState};
 use log::info;
 use triple_mix_prng::{as_instructions, PrngMixingFitness, ALL_OPERANDS, OPERATIONS, READ_WRITE_OPERANDS};
 
+const PROGRAM_LENGTH: usize = 48;
 const TOTAL_POPULATION: usize = 1 << 8;
+
+#[derive(Clone, Debug)]
+struct MutateAddingRandom;
+
+/// Mutates either a single gene or an entire program instruction. Generates a random individual if
+/// stale_generations > 0.
+impl Mutate for MutateAddingRandom {
+    type Genotype = MultiRangeGenotype<u32>;
+
+    fn call<R: Rng, SR: StrategyReporter<Genotype=Self::Genotype>>(&mut self, genotype: &Self::Genotype, state: &mut EvolveState<Self::Genotype>, _config: &EvolveConfig, _reporter: &mut SR, rng: &mut R) {
+        let now = Instant::now();
+        for chromosome in state
+            .population
+            .chromosomes
+            .iter_mut()
+            .filter(|c| c.is_offspring())
+        {
+            match rng.gen_range(0..=7) {
+                0 => genotype.mutate_chromosome_genes(
+                    1,
+                    true,
+                    chromosome,
+                    rng,
+                ),
+                1 => {
+                    let instruction = rng.gen_range(0..PROGRAM_LENGTH);
+                    genotype.mutate_gene(chromosome, instruction * 3, rng);
+                    genotype.mutate_gene(chromosome, instruction * 3 + 1, rng);
+                    genotype.mutate_gene(chromosome, instruction * 3 + 2, rng);
+                }
+                _ => {}
+            }
+        }
+        if state.stale_generations > 0 {
+            state.population.chromosomes.push(genotype.chromosome_constructor_random(rng));
+        }
+        state.add_duration(StrategyAction::Mutate, now.elapsed());
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const GENERATIONS_PER_REPORT: usize = 4;
     simple_log::console("debug")?;
@@ -39,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         READ_WRITE_OPERANDS,
         operation_indexes.clone(),
         ALL_OPERANDS
-    ], 41).flatten());
+    ], PROGRAM_LENGTH - 7).flatten());
     allele_ranges.extend(vec![
         14..=14, // output 47
         operation_indexes.clone(), // operation 47
@@ -56,13 +100,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_genotype(genotype)
     .with_select(SelectElite::new(0.3, 0.0625))
     .with_crossover(CrossoverUniform::new(0.8, 0.9))
-    .with_mutate(MutateSingleGene::new(0.25))
+    .with_mutate(MutateAddingRandom)
     .with_fitness(PrngMixingFitness)
     .with_par_fitness(true)
     .with_fitness_cache(1 << 24)
     .with_fitness_ordering(FitnessOrdering::Maximize) // optional, default is Maximize, aim towards the most true values
     .with_target_population_size(TOTAL_POPULATION)                 // evolve with 100 chromosomes
-    .with_max_stale_generations(32)
+    .with_max_stale_generations(16)
     .with_reporter(EvolveReporterSimple::new(GENERATIONS_PER_REPORT))    // optional builder step, report every 100 generations
     .call()
     .unwrap();
