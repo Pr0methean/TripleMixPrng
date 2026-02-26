@@ -213,11 +213,6 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
     const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
 
-    let mut l0 = b_l0;
-    let mut l1 = b_l1;
-    let mut r0 = b_r0;
-    let mut r1 = b_r1;
-
     // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
     // too weak.
     let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
@@ -225,10 +220,10 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
 
     // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
     // ------------------------------------------
-    let tr0 = (r0 ^ rotl(r1, MIXING_ROTATION_01)) + l1;
-    let tr1 = ((r1 + rotl(r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ l0;
-    let tl0 = ((l0 ^ rotl(l1, MIXING_ROTATION_03)) + second_mix_with_i_hi) + r0;
-    let tl1 = l1 + tr1;
+    let tr0 = (b_r0 ^ rotl(b_r1, MIXING_ROTATION_01)) + b_l1;
+    let tr1 = ((b_r1 + rotl(b_r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ b_l0;
+    let tl0 = ((b_l0 ^ rotl(b_l1, MIXING_ROTATION_03)) + second_mix_with_i_hi) + b_r0;
+    let tl1 = b_l1 + tr1;
 
     let mut l0 = tl0;
     let mut l1 = tl1;
