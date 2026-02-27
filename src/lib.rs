@@ -13,11 +13,11 @@ use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
-use std::hint::unlikely;
-use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
-use std::simd::num::SimdUint;
-use std::simd::*;
-use std::slice::from_mut;
+use core::hint::unlikely;
+use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use core::simd::num::SimdUint;
+use core::simd::*;
+use core::slice::from_mut;
 use tiny_keccak::{CShake, Hasher, Xof};
 use typenum::U;
 
