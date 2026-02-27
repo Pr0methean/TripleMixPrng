@@ -528,7 +528,7 @@ mod tests {
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
-    use std::mem;
+    use bytemuck::{cast_slice_mut};
     use gf2::{BitMatrix, BitStore};
     use rand::rngs::SysRng;
 
@@ -773,23 +773,27 @@ mod tests {
         let seed = [0u8; TripleMixPrng::SEED_SIZE];
         let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        const UNALIGNED_LENGTH: usize = 1021; // Force misalignment of written regions
-        const TOTAL_LENGTH: usize = 1024;
+        for length in [1, 2, 4, 8, 16, 32, 64, 1024] {
+            for misalignment in 0..size_of::<u64>() {
 
-        // Force buffer edges to be aligned on 64 bits, so that written portion will be misaligned
-        let mut buf1: [u8; TOTAL_LENGTH] = unsafe { mem::transmute([0u64; TOTAL_LENGTH / 8]) };
-        let buf1 = &mut buf1[(TOTAL_LENGTH - UNALIGNED_LENGTH)..];
-        prng1.fill_bytes(buf1);
-
-        let mut buf2 = vec![0u8; UNALIGNED_LENGTH];
-        let (chunks, tail) = buf2.as_chunks_mut::<8>();
-        for chunk in chunks {
-            let val = prng2.next_u64();
-            chunk.copy_from_slice(&val.to_ne_bytes());
+                // Force buffer edges to be aligned on 64 bits, so that written portion will be misaligned
+                let mut buf1 = vec![0u64; (length + size_of::<u64>()) / size_of::<u64>() + 1];
+                let buf1: &mut [u8] = cast_slice_mut(&mut buf1);
+                let buf1 = &mut buf1[misalignment..(length + misalignment)];
+                prng1.fill_bytes(buf1);
+                let mut buf2 = vec![0u64; (length + size_of::<u64>()) / size_of::<u64>() + 1];
+                let buf2: &mut [u8] = cast_slice_mut(&mut buf2);
+                let buf2 = &mut buf2[0..length];
+                if length.is_multiple_of(size_of::<u64>()) {
+                    for chunk in buf2.chunks_exact_mut(size_of::<u64>()) {
+                        chunk.copy_from_slice(&prng2.next_u64().to_le_bytes());
+                    }
+                } else {
+                    prng2.fill_bytes(buf2);
+                }
+                assert_eq!(&*buf1, &*buf2);
+            }
         }
-        prng2.fill_bytes(tail);
-
-        assert_eq!(buf1, buf2);
     }
 
     #[test]
