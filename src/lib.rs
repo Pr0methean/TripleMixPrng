@@ -447,6 +447,34 @@ impl SeedableRng for TripleMixPrng {
     }
 }
 
+impl TripleMixPrng {
+    #[inline(always)]
+    fn fill_u64s_from_stream(&mut self, u64s: &mut [u64]) {
+        if u64s.is_empty() {
+            return;
+        }
+
+        let remaining = self.0.remaining_results();
+        if u64s.len() <= remaining.len() {
+            for word in u64s.iter_mut() {
+                *word = self.0.next_word();
+            }
+            return;
+        }
+
+        let remaining_len = remaining.len();
+        u64s[..remaining_len].copy_from_slice(remaining);
+        let (dst_blocks, tail) = u64s[remaining_len..].as_chunks_mut();
+        if !dst_blocks.is_empty() {
+            self.0.core.fill_blocks(dst_blocks);
+        }
+        self.0.reset_and_skip(0);
+        for tail_u64 in tail {
+            *tail_u64 = self.0.next_word();
+        }
+    }
+}
+
 impl TryRng for TripleMixPrng {
     type Error = Infallible;
 
@@ -464,28 +492,46 @@ impl TryRng for TripleMixPrng {
     #[inline(always)]
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
         let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
-        if !prefix.is_empty() {
-            self.0.fill_bytes(prefix);
+
+        if prefix.is_empty() {
+            self.fill_u64s_from_stream(u64s);
+            if !suffix.is_empty() {
+                self.0.fill_bytes(suffix);
+            }
+            return Ok(());
         }
-        let u64s_needed = u64s.len();
-        let remaining = self.0.remaining_results();
-        if u64s_needed < remaining.len() {
-            for word in u64s.iter_mut() {
-                *word = self.0.next_word();
-            }
-        } else {
-            u64s[0..remaining.len()].copy_from_slice(&remaining);
-            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
-            if !dst_blocks.is_empty() {
-                self.0.core.fill_blocks(dst_blocks);
-            }
-            self.0.reset_and_skip(0);
-            for tail_u64 in tail {
-                *tail_u64 = self.0.next_word();
-            }
+
+        // If there is no aligned middle to accelerate, keep canonical behavior.
+        if u64s.is_empty() {
+            self.0.fill_bytes(dst);
+            return Ok(());
         }
+
+        // Misaligned destination: compose aligned output words from adjacent
+        // stream words so byte-stream output stays identical.
+        let byte_shift = prefix.len();
+        let bit_shift = byte_shift * 8;
+        let carry_shift = 64 - bit_shift;
+
+        let mut prev = self.0.next_word();
+        prefix.copy_from_slice(&prev.to_le_bytes()[..byte_shift]);
+
+        self.fill_u64s_from_stream(u64s);
+        for word in u64s.iter_mut() {
+            let next = *word;
+            *word = (prev >> bit_shift) | (next << carry_shift);
+            prev = next;
+        }
+
         if !suffix.is_empty() {
-            self.0.fill_bytes(suffix);
+            let prev_bytes = prev.to_le_bytes();
+            let first_len = (8 - byte_shift).min(suffix.len());
+            suffix[..first_len].copy_from_slice(&prev_bytes[byte_shift..(byte_shift + first_len)]);
+            if first_len < suffix.len() {
+                let next = self.0.next_word().to_le_bytes();
+                let remainder_len = suffix.len() - first_len;
+                suffix[first_len..].copy_from_slice(&next[..remainder_len]);
+            }
         }
         Ok(())
     }
