@@ -189,6 +189,9 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
+
+    // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
+    // no pairs that sum to 64 are used.
     const MIXING_ROTATION_12: u64 = 7;
     const MIXING_ROTATION_10: u64 = 9;
     const MIXING_ROTATION_07: u64 = 11;
@@ -206,6 +209,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     const MIXING_ROTATION_09: u64 = 44;
     const MIXING_ROTATION_22: u64 = 49;
     const MIXING_ROTATION_18: u64 = 54;
+
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
     // Words 2, 6, 10 and 14 of the fractional part of the Golden Ratio.
