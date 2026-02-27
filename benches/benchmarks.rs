@@ -12,12 +12,12 @@ fn fill_bytes(c: &mut Criterion) {
     // Allocate buffer as u64's so that it's aligned
     const MAX_ALIGNMENT: usize = size_of::<u64>() - 1;
     const BUFFER_LEN: usize = 1024 * 1024;
-    let mut buffer = vec![0u64; BUFFER_LEN / size_of::<u64>()]; // 1 MiB
+    let mut buffer = vec![0u64; BUFFER_LEN / size_of::<u64>() + 1]; // 1 MiB plus de-alignment padding
     for alignment in 0..=MAX_ALIGNMENT {
         let (_, buffer, _) = unsafe {
             buffer.align_to_mut::<u8>()
         };
-        let misaligned_buffer = &mut buffer[alignment..(BUFFER_LEN - MAX_ALIGNMENT + alignment)];
+        let misaligned_buffer = &mut buffer[alignment..(BUFFER_LEN + alignment)];
         let misaligned_name = format!("fill_bytes 1MB (misalignment: {})", alignment);
         let mut group = c.benchmark_group(misaligned_name);
         group.bench_function("TripleMixPrng", |b| b.iter(|| {
