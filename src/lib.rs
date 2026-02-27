@@ -229,12 +229,9 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 
     // Read-write operands
     let op14 = op2 ^ op3;
-    let op7 = (op4 ^ FEISTEL_CONSTANT_3) ^ op14;
-    let op9 = rotl(op7, 23);
-    let op15 = op1 ^ op0;
-    let op12 = op15 ^ op14;
+    let op12 = (op1 ^ op0) ^ op14;
     let op13 = op3 ^ op12;
-    let op9 = op12 ^ op9;
+    let op9 = op12 ^ rotl((op4 ^ FEISTEL_CONSTANT_3) ^ op14, 23);
     let op5 = op4 ^ op13;
     let op8 = rotl(op9, 35);
     let op7 = op5 ^ op2;
