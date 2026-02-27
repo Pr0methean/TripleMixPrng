@@ -274,7 +274,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     let op15 = op15;
     let op14 = op14;
     let op12 = op12;
-    let op14 = op6 << 18;
+    let op14 = op6 >> 18;
     let op12 = op12;
     let op11 = simd_swizzle!(op6, [3, 2, 1, 0]);
     let op12 = rotl(op11, 40);
