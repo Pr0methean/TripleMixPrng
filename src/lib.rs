@@ -230,14 +230,11 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     let op11 = rotl(op12 ^ rotl((i_hi ^ FEISTEL_CONSTANT_3) ^ op14, 23), 35) ^ ((op7 + op13) ^ w_lo);
     let op15 = simd_swizzle!(op11, [1, 3, 0, 2]);
     let op6 = (i_hi ^ op11) ^ op15;
-    let op14 = op6 >> 18;
     let op11 = simd_swizzle!(op6, [3, 2, 1, 0]);
-    let op12 = rotl(op11, 40);
-    let op8 = op14 ^ (op15 ^ op7);
-    let op5 = op11 + op8;
+    let op5 = op11 + ((op6 >> 18) ^ (op15 ^ op7));
     let op7 = op15;
     let op7 = op7;
-    let op11 = simd_mul(op12, op5);
+    let op11 = simd_mul(rotl(op11, 40), op5);
     let op12 = rotl(op11, 33);
     let op8 = simd_swizzle!(op11, [3, 2, 0, 1]);
     let op14 = op8 - op12;
