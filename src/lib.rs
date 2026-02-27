@@ -221,26 +221,21 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     ]);
 
     // Read-only operands
-    let op0 = w_lo;
-    let op1 = x_in;
-    let op2 = t;
-    let op3 = w_hi;
-    let op4 = i_hi;
 
     // Read-write operands
-    let op14 = op2 ^ op3;
-    let op12 = (op1 ^ op0) ^ op14;
-    let op13 = op3 ^ op12;
-    let op9 = op12 ^ rotl((op4 ^ FEISTEL_CONSTANT_3) ^ op14, 23);
-    let op5 = op4 ^ op13;
+    let op14 = t ^ w_hi;
+    let op12 = (x_in ^ w_lo) ^ op14;
+    let op13 = w_hi ^ op12;
+    let op9 = op12 ^ rotl((i_hi ^ FEISTEL_CONSTANT_3) ^ op14, 23);
+    let op5 = i_hi ^ op13;
     let op8 = rotl(op9, 35);
-    let op7 = op5 ^ op2;
+    let op7 = op5 ^ t;
     let op15 = op7 + op13;
     let op7 = op7;
-    let op11 = op15 ^ op0;
+    let op11 = op15 ^ w_lo;
     let op11 = op8 ^ op11;
     let op15 = simd_swizzle!(op11, [1, 3, 0, 2]);
-    let op5 = op4 ^ op11;
+    let op5 = i_hi ^ op11;
     let op8 = op15 ^ op7;
     let op6 = op5 ^ op15;
     let op15 = op15;
