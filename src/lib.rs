@@ -1,4 +1,9 @@
-#![feature(likely_unlikely, portable_simd, generic_const_exprs, target_feature_inline_always)]
+#![feature(
+    likely_unlikely,
+    portable_simd,
+    generic_const_exprs,
+    target_feature_inline_always
+)]
 #![allow(incomplete_features)]
 #[cfg(all(
     target_arch = "x86_64",
@@ -58,7 +63,6 @@ const OUTPUTS_PER_STEP: usize = 2;
 const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
-
 
 // ============================================================================
 // Core struct
@@ -188,100 +192,79 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
     (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
 }
 
-
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
-    const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_10: u64 = 9;
-    const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_19: u64 = 13;
-    const MIXING_ROTATION_02: u64 = 14;
-    const MIXING_ROTATION_14: u64 = 17;
-    const MIXING_ROTATION_13: u64 = 19;
-    const MIXING_ROTATION_00: u64 = 22;
-    const MIXING_ROTATION_05: u64 = 23;
-    const MIXING_ROTATION_16: u64 = 29;
-    const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 39;
-    const MIXING_ROTATION_01: u64 = 41;
-    const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 44;
-    const MIXING_ROTATION_22: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 54;
     // The first 16 64-bit words of the Golden Ratio, transposed.
-    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
-    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
+    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
+        0x9E3779B97F4A7C15,
+        0x2767f0b153d27b7f,
+        0xf06ad7ae9717877e,
+        0x626e33b8d04b4331,
+    ]);
+    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
+        0xf39cc0605cedc834,
+        0x0347045b5bf1827f,
+        0x85839d6effbd7dc6,
+        0xbbf73c790d94f79d,
+    ]);
+    const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([
+        0x1082276bf3a27251,
+        0x01886f0928403002,
+        0x64d325d1c5371682,
+        0x471c4ab3ed3d82a5,
+    ]);
+    const FEISTEL_CONSTANT_4: Simd64 = Simd::from_array([
+        0xf86c6a11d0c18e95,
+        0xc1d64ba40f335e36,
+        0xcadd0cccfdffbbe1,
+        0xfec507705e4ae6e5,
+    ]);
 
-    // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-    // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
+    // Read-only operands
+    let op0 = w_lo;
+    let op1 = x_in;
+    let op2 = t;
+    let op3 = w_hi;
+    let op4 = i_hi;
 
-    // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
-    // ------------------------------------------
-    let tr0 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
-    let tr1 = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
-    let tl0 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
-    let tl1 = x_in + tr1;
-
-    let mut l0 = tl0;
-    let mut l1 = tl1;
-    let mut r0 = tr0;
-    let mut r1 = tr1;
-
-    // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
-    // ----------------------------------------------------------
-    let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
-    let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-    let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
-
-    l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-    l1 += sr1 ^ sl0;
-    r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-    r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
-
-    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
-    // -------------------------------------------------------------------
-    let x = r0 ^ (r1 >> MIXING_ROTATION_10);
-    let y = l0 + (l1 >> MIXING_ROTATION_12);
-    let m = simd_mul(x, y);
-
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
-
-    // asymmetric feedback (no duplicated structure)
-    let nl0 = r0 ^ m1;
-    let nl1 = r1 + m2;
-    let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
-    let r1 = l1 ^ m1 ^ m2;
-
-    let l0 = nl0;
-    let l1 = nl1;
-    let r0 = nr0;
-
-    // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-    // ---------------------------------------------------------
-    let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
-
-    let tl0r1 = sl0 + r1;
-    let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
-
-    let l0 = r0 ^ tl0r1;
-    let l1 = r1 + tl1r0;
-    let r0 = tl0r1 + l1;
-    let r1 = tl1r0 ^ l0;
-
-    // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-    // ---------------------------------------------------
-    let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-    let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
-
-    let mut out0 = t0 + t1;
-    let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-
-    // single cross-mix (sufficient)
-    out0 ^= out1 >> MIXING_ROTATION_22;
-    out1 += out0 << MIXING_ROTATION_23;
+    // Read-write operands
+    let op7 = FEISTEL_CONSTANT_3;
+    let op15 = op0;
+    let op15 = op1 ^ op15;
+    let op14 = op2 ^ op3;
+    let op13 = op3;
+    let op12 = op4 ^ op7;
+    let op7 = op12 ^ op14;
+    let op9 = rotl(op7, 23);
+    let op15 = op15;
+    let op12 = op15 ^ op14;
+    let op13 = op13 ^ op12;
+    let op9 = op12 ^ op9;
+    let op5 = op4 ^ op13;
+    let op8 = rotl(op9, 35);
+    let op7 = op5 ^ op2;
+    let op15 = op7 + op13;
+    let op7 = op7;
+    let op11 = op15 ^ op0;
+    let op11 = op8 ^ op11;
+    let op15 = simd_swizzle!(op11, [1, 3, 0, 2]);
+    let op5 = op4 ^ op11;
+    let op8 = op15 ^ op7;
+    let op6 = op5 ^ op15;
+    let op15 = op15;
+    let op14 = op6 << 18;
+    let op11 = simd_swizzle!(op6, [3, 2, 1, 0]);
+    let op12 = rotl(op11, 40);
+    let op8 = op14 ^ op8;
+    let op5 = op11 + op8;
+    let op7 = op15;
+    let op11 = simd_mul(op12, op5);
+    let op12 = rotl(op11, 33);
+    let op8 = simd_swizzle!(op11, [3, 2, 0, 1]);
+    let op14 = op8 - op12;
+    let op15 = op14 - op7;
+    let out0 = op14;
+    let out1 = op15;
     (out0, out1)
 }
 
@@ -519,14 +502,14 @@ impl Generator for TripleMixSimdCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
-    use rand::{rng, RngExt};
+    use rand::rngs::SysRng;
+    use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng, UnwrapErr};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
-    use gf2::{BitMatrix, BitStore};
-    use rand::rngs::SysRng;
 
     #[test]
     pub fn test_mix_matrix() {
@@ -538,10 +521,16 @@ mod tests {
         let mix_inputs = [
             [Simd64::splat(0); 5],
             [Simd64::splat(u64::MAX); 5],
-            random_inputs
+            random_inputs,
         ];
         for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(base_input[0], base_input[1], base_input[2], base_input[3], base_input[4]);
+            let (base_out0, base_out1) = mix(
+                base_input[0],
+                base_input[1],
+                base_input[2],
+                base_input[3],
+                base_input[4],
+            );
             let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
             let mut i = 0;
             for variable_idx in 0..5 {
@@ -549,18 +538,32 @@ mod tests {
                     for bit_idx in 0..64 {
                         let mut modified_input = base_input.clone();
                         modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
-                        let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
+                        let (mod_out0, mod_out1) = mix(
+                            modified_input[0],
+                            modified_input[1],
+                            modified_input[2],
+                            modified_input[3],
+                            modified_input[4],
+                        );
                         let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
                         let mut j = 0;
                         for out_lane_idx in 0..SIMD_WIDTH {
                             for out_bit_idx in 0..64 {
-                                xor_matrix.set(j, i, (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0);
+                                xor_matrix.set(
+                                    j,
+                                    i,
+                                    (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                                );
                                 j += 1;
                             }
                         }
                         for out_lane_idx in 0..SIMD_WIDTH {
                             for out_bit_idx in 0..64 {
-                                xor_matrix.set(j, i, (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0);
+                                xor_matrix.set(
+                                    j,
+                                    i,
+                                    (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                                );
                                 j += 1;
                             }
                         }
@@ -568,21 +571,25 @@ mod tests {
                     }
                 }
             }
-            let row_weights = (0..512).map(|row| xor_matrix.row(row).count_ones()).collect::<Vec<_>>();
+            let row_weights = (0..512)
+                .map(|row| xor_matrix.row(row).count_ones())
+                .collect::<Vec<_>>();
             let min_row_weight = row_weights.iter().copied().min().unwrap();
             let max_row_weight = row_weights.iter().copied().max().unwrap();
-            let col_weights = (0..1280).map(|col| xor_matrix.col(col).count_ones()).collect::<Vec<_>>();
+            let col_weights = (0..1280)
+                .map(|col| xor_matrix.col(col).count_ones())
+                .collect::<Vec<_>>();
             let min_col_weight = col_weights.iter().copied().min().unwrap();
             let max_col_weight = col_weights.iter().copied().max().unwrap();
             println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
             println!("Row weights:");
             for row_chunk in row_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>() );
+                println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>());
             }
             println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
             println!("Column weights:");
             for col_chunk in col_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>() );
+                println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
             }
             let total_weight = row_weights.into_iter().sum::<usize>();
             let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
@@ -606,10 +613,16 @@ mod tests {
         let mix_inputs = [
             [Simd64::splat(0); 5],
             [Simd64::splat(u64::MAX); 5],
-            random_inputs
+            random_inputs,
         ];
         for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(base_input[0], base_input[1], base_input[2], base_input[3], base_input[4]);
+            let (base_out0, base_out1) = mix(
+                base_input[0],
+                base_input[1],
+                base_input[2],
+                base_input[3],
+                base_input[4],
+            );
             let mut weights = Vec::new();
             for var_idx_1 in 0..5 {
                 for var_idx_2 in var_idx_1..5 {
@@ -619,11 +632,29 @@ mod tests {
                                 for bit_idx_1 in 0..63 {
                                     for bit_idx_2 in bit_idx_1..64 {
                                         let mut modified_input = base_input.clone();
-                                        modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx_1 | 1 << bit_idx_2;
-                                        let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
-                                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                                        weights.push(out_xor_0.to_array().into_iter().map(u64::count_ones).sum::<u32>()
-                                            + out_xor_1.to_array().into_iter().map(u64::count_ones).sum::<u32>());
+                                        modified_input[var_idx_1][lane_idx_1] ^=
+                                            1 << bit_idx_1 | 1 << bit_idx_2;
+                                        let (mod_out0, mod_out1) = mix(
+                                            modified_input[0],
+                                            modified_input[1],
+                                            modified_input[2],
+                                            modified_input[3],
+                                            modified_input[4],
+                                        );
+                                        let (out_xor_0, out_xor_1) =
+                                            (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                        weights.push(
+                                            out_xor_0
+                                                .to_array()
+                                                .into_iter()
+                                                .map(u64::count_ones)
+                                                .sum::<u32>()
+                                                + out_xor_1
+                                                    .to_array()
+                                                    .into_iter()
+                                                    .map(u64::count_ones)
+                                                    .sum::<u32>(),
+                                        );
                                     }
                                 }
                             } else {
@@ -631,10 +662,27 @@ mod tests {
                                     let mut modified_input = base_input.clone();
                                     modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
                                     modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
-                                    let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
-                                    let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                                    weights.push(out_xor_0.to_array().into_iter().map(u64::count_ones).sum::<u32>()
-                                        + out_xor_1.to_array().into_iter().map(u64::count_ones).sum::<u32>());
+                                    let (mod_out0, mod_out1) = mix(
+                                        modified_input[0],
+                                        modified_input[1],
+                                        modified_input[2],
+                                        modified_input[3],
+                                        modified_input[4],
+                                    );
+                                    let (out_xor_0, out_xor_1) =
+                                        (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                    weights.push(
+                                        out_xor_0
+                                            .to_array()
+                                            .into_iter()
+                                            .map(u64::count_ones)
+                                            .sum::<u32>()
+                                            + out_xor_1
+                                                .to_array()
+                                                .into_iter()
+                                                .map(u64::count_ones)
+                                                .sum::<u32>(),
+                                    );
                                 }
                             }
                         }
@@ -644,10 +692,19 @@ mod tests {
             let sample_size = weights.len();
             let min_weight = weights.iter().copied().min().unwrap();
             let max_weight = weights.iter().copied().max().unwrap();
-            let mean_weight = weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
-            let variance_weight = weights.iter().copied().map(|weight| weight as f64 - mean_weight).map(|x| x * x).sum::<f64>() / (sample_size - 1) as f64;
+            let mean_weight =
+                weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
+            let variance_weight = weights
+                .iter()
+                .copied()
+                .map(|weight| weight as f64 - mean_weight)
+                .map(|x| x * x)
+                .sum::<f64>()
+                / (sample_size - 1) as f64;
             let stdev_weight = variance_weight.sqrt();
-            println!("N={sample_size}, min={min_weight}, max={max_weight}, mean={mean_weight}, sd={stdev_weight}");
+            println!(
+                "N={sample_size}, min={min_weight}, max={max_weight}, mean={mean_weight}, sd={stdev_weight}"
+            );
             assert!(min_weight >= 150);
             assert!(max_weight <= 362);
             assert!(mean_weight >= 254.0);
@@ -660,8 +717,10 @@ mod tests {
     pub fn create_rngs() -> [TripleMixPrng; 5] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
         const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
-        const LARGEST_DISTINCT_ODD: Simd64 = Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
-        const LARGEST_DISTINCT: Simd64 = Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
+        const LARGEST_DISTINCT_ODD: Simd64 =
+            Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
+        const LARGEST_DISTINCT: Simd64 =
+            Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
         let rng1 = TripleMixPrng::almost_all_zeroes_state();
         let rng2 = TripleMixPrng::from_core(TripleMixSimdCore {
             xr0: Simd::splat(0),
@@ -701,7 +760,7 @@ mod tests {
                 repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
                 0.01,
             )
-                .unwrap();
+            .unwrap();
             println!("{:?}", chi_square);
             assert!(!chi_square.reject_null);
         }
@@ -720,7 +779,7 @@ mod tests {
                 repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
                 0.01,
             )
-                .unwrap();
+            .unwrap();
             println!("{:?}", chi_square);
             assert!(!chi_square.reject_null);
         }
@@ -739,7 +798,13 @@ mod tests {
                     for sample in &samples {
                         bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                     }
-                    let p = goodness_of_fit(bins.map(|bin| bin as f64), [SAMPLE_COUNT as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                    let p = goodness_of_fit(
+                        bins.map(|bin| bin as f64),
+                        [SAMPLE_COUNT as f64 * 0.25; 4],
+                        P_THRESHOLD,
+                    )
+                    .unwrap()
+                    .p_value;
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
@@ -754,7 +819,13 @@ mod tests {
                         let second = pair[1];
                         lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                     }
-                    let p = goodness_of_fit(lagged_bins.map(|bin| bin as f64), [(SAMPLE_COUNT - 1) as f64 * 0.25; 4], P_THRESHOLD).unwrap().p_value;
+                    let p = goodness_of_fit(
+                        lagged_bins.map(|bin| bin as f64),
+                        [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
+                        P_THRESHOLD,
+                    )
+                    .unwrap()
+                    .p_value;
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
@@ -966,8 +1037,10 @@ mod tests {
                 "Average diffusion too high?"
             );
             let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
-            let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
-            let low_avalanche_distribution = Binomial::new(low_avalanche_probability, count).unwrap();
+            let low_avalanche_probability =
+                bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
+            let low_avalanche_distribution =
+                Binomial::new(low_avalanche_probability, count).unwrap();
             let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
             println!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
@@ -1161,7 +1234,10 @@ mod tests {
                 assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
                 if rank == 60 {
                     rank60_count += 1;
-                    assert!(rank60_count <= 2, "Too many low-bit rank deficiencies (rank 60)");
+                    assert!(
+                        rank60_count <= 2,
+                        "Too many low-bit rank deficiencies (rank 60)"
+                    );
                 }
             }
         }
