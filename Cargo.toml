@@ -6,8 +6,7 @@ edition = "2024"
 [dependencies]
 rand_core = "0.10.0"
 generic-array = "1.3.5"
-rs_shake256 = "0.1.2"
-rs_hasher_ctx = "0.1.3"
+tiny-keccak = { version = "2.0.2", features = ["cshake"] }
 rand = "0.10.0"
 hex = { version = "0.4.3", optional = true }
 rdrand = { version = "0.8.3", optional = true }

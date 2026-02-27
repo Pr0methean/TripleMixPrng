@@ -13,14 +13,12 @@ use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
-use rs_hasher_ctx::{ByteArrayWrapper, HasherContext};
-use rs_shake256::Shake256Hasher;
-use std::hash::Hasher;
 use std::hint::unlikely;
 use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use std::simd::num::SimdUint;
 use std::simd::*;
 use std::slice::from_mut;
+use tiny_keccak::{CShake, Hasher, Xof};
 use typenum::U;
 
 // ============================================================================
@@ -290,6 +288,7 @@ pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
 
 impl TripleMixPrng {
     pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
+    pub const OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
     pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
         TripleMixPrng(BlockRng::new(core))
@@ -310,57 +309,41 @@ impl TripleMixPrng {
             inc_hi: Simd::splat(0),
         })
     }
-}
 
-impl SeedableRng for TripleMixPrng {
-    type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
-
-    fn from_seed(seed: Self::Seed) -> Self {
-        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
-        let mut xr0_s = [0u64; SIMD_WIDTH];
-        let mut xr1_s = [0u64; SIMD_WIDTH];
-        let mut tm0_s = [0u64; SIMD_WIDTH];
-        let mut tm1_s = [0u64; SIMD_WIDTH];
-        let mut w_lo_s = [0u64; SIMD_WIDTH];
-        let mut w_hi_s = [0u64; SIMD_WIDTH];
-        let mut i_lo_s = [0u64; SIMD_WIDTH];
-        let mut i_hi_s = [0u64; SIMD_WIDTH];
-
-        let mut master_hasher = Shake256Hasher::<64>::default();
-        master_hasher.write(b"TripleMix V11");
-        master_hasher.write(&seed);
-
+    pub fn from_any_size_seed(seed: &[u8]) -> TripleMixPrng {
+                const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
+        let mut xr0 = Simd::splat(0);
+        let mut xr1 = Simd::splat(0);
+        let mut tm0 = Simd::splat(0);
+        let mut tm1 = Simd::splat(0);
+        let mut weyl_lo = Simd::splat(0);
+        let mut weyl_hi = Simd::splat(0);
+        let mut inc_lo = Simd::splat(0);
+        let mut inc_hi = Simd::splat(0);
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
-            let mut lane_hasher = master_hasher.clone();
-            lane_hasher.write(&[i as u8]);
-            lane_hasher.write(&seed[i * LANE_CHUNK_SIZE..(i + 1) * LANE_CHUNK_SIZE]);
+            let mut lane_hasher = CShake::v256(Self::OID.as_bytes(), &[i as u8 + 1]);
+            lane_hasher.update(seed);
+            let mut out_bytes = [0u8; LANE_CHUNK_SIZE];
             'generate: loop {
-                let output: ByteArrayWrapper<64> = HasherContext::finish(&mut lane_hasher);
-                let out_bytes: &[u8] = output.as_ref();
+                lane_hasher.squeeze(&mut out_bytes);
+                [xr0[i], xr1[i], tm0[i], tm1[i], weyl_lo[i], weyl_hi[i], inc_lo[i], inc_hi[i]]
+                    = read_words(&out_bytes[0..32]);
+                tm0[i] &= TINYMT64_LANE_MASK;
+                inc_lo[i] |= 1;
 
-                [xr0_s[i], xr1_s[i], tm0_s[i], tm1_s[i]] = read_words(&out_bytes[0..32]);
-                tm0_s[i] &= TINYMT64_LANE_MASK;
-
-                if unlikely((xr0_s[i] == 0 && xr1_s[i] == 0) || (tm0_s[i] == 0 && tm1_s[i] == 0)) {
-                    lane_hasher.write(&count.to_ne_bytes());
+                if unlikely((xr0[i] == 0 && xr1[i] == 0) || (tm0[i] == 0 && tm1[i] == 0)) {
+                    lane_hasher.update(&count.to_ne_bytes());
                     count += 1;
                     continue;
                 }
                 for j in 0..i {
                     if unlikely(
-                        (xr0_s[j] == xr0_s[i] && xr1_s[j] == xr1_s[i])
-                            || (tm0_s[j] == tm0_s[i] && tm1_s[j] == tm1_s[i]),
-                    ) {
-                        lane_hasher.write(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
-                }
-                [w_lo_s[i], w_hi_s[i], i_lo_s[i], i_hi_s[i]] = read_words(&out_bytes[32..64]);
-                for j in 0..i {
-                    if unlikely(w_lo_s[j] == w_lo_s[i] || i_lo_s[j] == i_lo_s[i]) {
-                        lane_hasher.write(&count.to_ne_bytes());
+                        (xr0[j] == xr0[i] && xr1[j] == xr1[i])
+                            || (tm0[j] == tm0[i] && tm1[j] == tm1[i])
+                            || (weyl_lo[j] == weyl_lo[i] && weyl_hi[j] == weyl_hi[i])
+                            || (inc_lo[j] == inc_lo[i] && inc_hi[j] == inc_hi[i])) {
+                        lane_hasher.update(&count.to_ne_bytes());
                         count += 1;
                         continue 'generate;
                     }
@@ -370,16 +353,24 @@ impl SeedableRng for TripleMixPrng {
         }
 
         let core = TripleMixSimdCore {
-            xr0: Simd64::from_array(xr0_s),
-            xr1: Simd64::from_array(xr1_s),
-            tm0: Simd64::from_array(tm0_s),
-            tm1: Simd64::from_array(tm1_s),
-            weyl_lo: Simd64::from_array(w_lo_s),
-            weyl_hi: Simd64::from_array(w_hi_s),
-            inc_lo: Simd64::from_array(i_lo_s),
-            inc_hi: Simd64::from_array(i_hi_s),
+            xr0,
+            xr1,
+            tm0,
+            tm1,
+            weyl_lo,
+            weyl_hi,
+            inc_lo,
+            inc_hi,
         };
         TripleMixPrng(BlockRng::new(core))
+    }
+}
+
+impl SeedableRng for TripleMixPrng {
+    type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
+
+    fn from_seed(seed: Self::Seed) -> Self {
+        Self::from_any_length_seed(&seed)
     }
 
     fn fork(&mut self) -> Self {
