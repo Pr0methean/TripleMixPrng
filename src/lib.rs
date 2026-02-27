@@ -140,11 +140,10 @@ impl TripleMixSimdCore {
                 .select(Simd::splat(1), Simd::splat(0));
             w_hi = w_hi + high_product + i_hi + carry;
             w_lo = next_w_lo;
-            let b_l0 = w_lo + LANE_CONSTANTS;
-            let b_r1 = w_hi;
+            let w_lo_out = w_lo + LANE_CONSTANTS;
 
             // Xoroshiro update
-            let b_l1 = xr0 + xr1;
+            let xr_out = xr0 + xr1;
             let t = xr0 ^ xr1;
             xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
             xr1 = rotl(t, 36);
@@ -165,11 +164,11 @@ impl TripleMixSimdCore {
 
             let mut ty = tm0 + tm1;
             ty ^= tm0 >> Simd::splat(8);
-            let b_r0 =
+            let t_out =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
             // === 2. Mixing ===
-            let (out0, out1) = mix(b_l0, b_l1, b_r0, b_r1, i_hi);
+            let (out0, out1) = mix(w_lo_out, xr_out, t_out, w_hi, i_hi);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
@@ -191,98 +190,63 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 
 #[inline(always)]
-fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
-    const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_10: u64 = 9;
-    const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_19: u64 = 13;
-    const MIXING_ROTATION_02: u64 = 14;
-    const MIXING_ROTATION_14: u64 = 17;
-    const MIXING_ROTATION_13: u64 = 19;
-    const MIXING_ROTATION_00: u64 = 22;
-    const MIXING_ROTATION_05: u64 = 23;
-    const MIXING_ROTATION_16: u64 = 29;
-    const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 39;
-    const MIXING_ROTATION_01: u64 = 41;
-    const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 44;
-    const MIXING_ROTATION_22: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 54;
-    // The first 16 64-bit words of the Golden Ratio, transposed.
+fn mix(mut w_lo: Simd64, mut xr: Simd64, mut t: Simd64, mut w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([0x9E3779B97F4A7C15, 0x2767f0b153d27b7f, 0xf06ad7ae9717877e, 0x626e33b8d04b4331]);
     const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([0xf39cc0605cedc834, 0x0347045b5bf1827f, 0x85839d6effbd7dc6, 0xbbf73c790d94f79d]);
 
-    // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-    // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
+    // Phase 1: break LCG algebra
+    // --------------------------
+    // Inject high-word entropy into low
+    w_lo += rotl(w_hi, 29);
 
-    // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
-    // ------------------------------------------
-    let tr0 = (b_r0 ^ rotl(b_r1, MIXING_ROTATION_01)) + b_l1;
-    let tr1 = ((b_r1 + rotl(b_r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ b_l0;
-    let tl0 = ((b_l0 ^ rotl(b_l1, MIXING_ROTATION_03)) + second_mix_with_i_hi) + b_r0;
-    let tl1 = b_l1 + tr1;
+    // Break linear relation further
+    w_hi ^= rotl(w_lo, 37);
 
-    let mut l0 = tl0;
-    let mut l1 = tl1;
-    let mut r0 = tr0;
-    let mut r1 = tr1;
+    // Inject increment asymmetrically
+    w_lo ^= rotl(i_hi, 17);
+    w_hi += rotl(i_hi, 43);
 
-    // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
-    // ----------------------------------------------------------
-    let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
-    let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-    let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+    // Phase 2: fold in remaining inputs
+    // ---------------------------------
+    xr += rotl(t, 23);
+    t += rotl(xr, 41);
 
-    l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-    l1 += sr1 ^ sl0;
-    r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-    r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
+    // Cross-couple LCG state with x,y
+    w_lo += rotl(xr, 11);
+    w_hi += rotl(t, 31);
+    xr += rotl(w_lo, 7);
+    t += rotl(w_hi, 13);
+    w_lo += rotl(w_hi, 9);
+    w_hi += rotl(w_lo, 21);
+    xr   += rotl(t, 13);
+    t    += rotl(xr, 33);
 
-    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
-    // -------------------------------------------------------------------
-    let x = r0 ^ (r1 >> MIXING_ROTATION_10);
-    let y = l0 + (l1 >> MIXING_ROTATION_12);
-    let m = simd_mul(x, y);
+    // Phase 3: nonlinear core
+    // -----------------------
+    let mut m = (w_lo ^ xr) + (w_hi ^ t ^ FEISTEL_CONSTANT_2);
+    m = simd_mul(m, FEISTEL_CONSTANT_1);
+    m ^= m >> 31;
 
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
+    let s0 = simd_swizzle!(m, [2, 3, 0, 1]);
+    let s1 = simd_swizzle!(w_lo, [3, 0, 1, 2]);
+    let s2 = simd_swizzle!(w_hi, [1, 2, 3, 0]);
+    w_lo += s0;
+    w_hi ^= s1;
+    w_lo += rotl(w_hi, 17);
+    w_hi ^= rotl(w_lo, 31);
+    xr += s2;
+    w_lo ^= rotl(xr, 9);
+    w_hi += rotl(t, 21);
 
-    // asymmetric feedback (no duplicated structure)
-    let nl0 = r0 ^ m1;
-    let nl1 = r1 + m2;
-    let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
-    let r1 = l1 ^ m1 ^ m2;
+    // Round 4: reduction to 512 bits
+    let mut out0 = w_lo + rotl(xr, 19);
+    let mut out1 = w_hi ^ rotl(t, 27);
 
-    let l0 = nl0;
-    let l1 = nl1;
-    let r0 = nr0;
+    out0 ^= rotl(m, 13);
+    out1 += rotl(m, 37);
 
-    // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-    // ---------------------------------------------------------
-    let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
-
-    let tl0r1 = sl0 + r1;
-    let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
-
-    let l0 = r0 ^ tl0r1;
-    let l1 = r1 + tl1r0;
-    let r0 = tl0r1 + l1;
-    let r1 = tl1r0 ^ l0;
-
-    // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-    // ---------------------------------------------------
-    let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-    let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
-
-    let mut out0 = t0 + t1;
-    let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-
-    // single cross-mix (sufficient)
-    out0 ^= out1 >> MIXING_ROTATION_22;
-    out1 += out0 << MIXING_ROTATION_23;
+    out0 += rotl(out1, 17);
+    out1 ^= rotl(out0, 43);
     (out0, out1)
 }
 
@@ -588,7 +552,7 @@ mod tests {
             let total_weight = row_weights.into_iter().sum::<usize>();
             let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
-            println!("Total weight: {total_weight} (z={z})");
+            println!("Total weight: {total_weight} (sigma={sigma}, z={z})");
             assert!(min_col_weight >= 200);
             assert!(min_row_weight >= 550);
             assert!(z >= -3.0, "Total weight too low");
