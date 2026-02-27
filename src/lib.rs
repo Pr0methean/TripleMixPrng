@@ -222,69 +222,60 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 
     // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
     // ------------------------------------------
-    let tr0 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
-    let tr1 = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
-    let tl0 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
-    let tl1 = x_in + tr1;
+    let p = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
 
-    let mut l0 = tl0;
-    let mut l1 = tl1;
-    let mut r0 = tr0;
-    let mut r1 = tr1;
+    let l0_1 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
+    let l1_1 = x_in + p;
+    let r0_1 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
+    let r1_1 = p;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
-    let sr1 = simd_swizzle!(r1, [2, 3, 0, 1]);
-    let sl0 = simd_swizzle!(l0, [3, 0, 1, 2]);
-    let sl1 = simd_swizzle!(l1, [1, 2, 3, 0]);
+    let sr1_1 = simd_swizzle!(r1_1, [2, 3, 0, 1]);
+    let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
+    let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
 
-    l0 ^= rotl(r0 ^ sl1, MIXING_ROTATION_05);
-    l1 += sr1 ^ sl0;
-    r0 ^= rotl(sl1 + sr1, MIXING_ROTATION_07);
-    r1 += rotl(sl0 + r0, MIXING_ROTATION_09);
+    let l0_2 = l0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
+    let l1_2 = l1_1 + (sr1_1 ^ sl0_1);
+    let r0_2 = r0_1 ^ rotl(sl1_1 + sr1_1, MIXING_ROTATION_07);
+    let r1_2 = r1_1 + rotl(sl0_1 + r0_2, MIXING_ROTATION_09);
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
-    let x = r0 ^ (r1 >> MIXING_ROTATION_10);
-    let y = l0 + (l1 >> MIXING_ROTATION_12);
+    let x = r0_2 ^ (r1_2 >> MIXING_ROTATION_10);
+    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12);
     let m = simd_mul(x, y);
 
     let m1 = rotl(m, MIXING_ROTATION_13);
     let m2 = m ^ (m >> MIXING_ROTATION_14);
 
     // asymmetric feedback (no duplicated structure)
-    let nl0 = r0 ^ m1;
-    let nl1 = r1 + m2;
-    let nr0 = l0 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
-    let r1 = l1 ^ m1 ^ m2;
-
-    let l0 = nl0;
-    let l1 = nl1;
-    let r0 = nr0;
+    let l0_3 = r0_2 ^ m1;
+    let l1_3 = r1_2 + m2;
+    let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16);  // carry injection
+    let r1_3 = l1_2 ^ m1 ^ m2;
 
     // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
     // ---------------------------------------------------------
-    let sl0 = simd_swizzle!(l0, [2, 3, 1, 0]);
+    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
 
-    let tl0r1 = sl0 + r1;
-    let tl1r0 = rotl(l1 ^ r0, MIXING_ROTATION_18);
+    let tl0r1 = sl0_3 + r1_3;
+    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
 
-    let l0 = r0 ^ tl0r1;
-    let l1 = r1 + tl1r0;
-    let r0 = tl0r1 + l1;
-    let r1 = tl1r0 ^ l0;
+    let l0_4 = r0_3 ^ tl0r1;
+    let l1_4 = r1_3 + tl1r0;
+    let r0_4 = tl0r1 + l1_4;
+    let r1_4 = tl1r0 ^ l0_4;
 
     // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
     // ---------------------------------------------------
-    let t0 = (r0 + l0) ^ (r1 - l1);    // strong carry interaction
-    let t1 = (l1 ^ r0) + (r1 << MIXING_ROTATION_19);
+    let t0 = (r0_4 + l0_4) ^ (r1_4 - l1_4);    // strong carry interaction
+    let t1 = (l1_4 ^ r0_4) + (r1_4 << MIXING_ROTATION_19);
+    let t2 = t0 + t1;
+    let t3 = t1 ^ rotl(t0, MIXING_ROTATION_21);
+    let out0 = t2 ^ (t3 >> MIXING_ROTATION_22);
+    let out1 = t3 + (out0 << MIXING_ROTATION_23);
 
-    let mut out0 = t0 + t1;
-    let mut out1 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-
-    // single cross-mix (sufficient)
-    out0 ^= out1 >> MIXING_ROTATION_22;
-    out1 += out0 << MIXING_ROTATION_23;
     (out0, out1)
 }
 
