@@ -333,7 +333,7 @@ impl TripleMixPrng {
             'generate: loop {
                 lane_hasher.squeeze(&mut out_bytes);
                 [xr0[i], xr1[i], tm0[i], tm1[i], weyl_lo[i], weyl_hi[i], inc_lo[i], inc_hi[i]]
-                    = read_words(&out_bytes[0..32]);
+                    = read_words(&out_bytes);
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
@@ -375,7 +375,7 @@ impl SeedableRng for TripleMixPrng {
     type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
 
     fn from_seed(seed: Self::Seed) -> Self {
-        Self::from_any_length_seed(&seed)
+        Self::from_any_size_seed(&seed)
     }
 
     fn fork(&mut self) -> Self {
