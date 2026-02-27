@@ -22,11 +22,11 @@ fn fill_bytes(c: &mut Criterion) {
         let mut group = c.benchmark_group(misaligned_name);
         group.bench_function("TripleMixPrng", |b| b.iter(|| {
             triple_mix.fill_bytes(misaligned_buffer);
-            black_box(misaligned_buffer);
+            black_box(&*misaligned_buffer);
         }));
         group.bench_function("ThreadRng", |b| b.iter(|| {
             thread_rng.fill_bytes(misaligned_buffer);
-            black_box(misaligned_buffer);
+            black_box(&*misaligned_buffer);
         }));
         group.finish();
     }
