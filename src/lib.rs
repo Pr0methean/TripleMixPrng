@@ -467,13 +467,22 @@ impl TryRng for TripleMixPrng {
         if !prefix.is_empty() {
             self.0.fill_bytes(prefix);
         }
-        let (dst_blocks, tail) = u64s.as_chunks_mut();
-        if !dst_blocks.is_empty() {
+        let u64s_needed = u64s.len();
+        let remaining = self.0.remaining_results();
+        if u64s_needed < remaining.len() {
+            for word in u64s.iter_mut() {
+                *word = self.0.next_word();
+            }
+        } else {
+            u64s[0..remaining.len()].copy_from_slice(&remaining);
+            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
+            if !dst_blocks.is_empty() {
+                self.0.core.fill_blocks(dst_blocks);
+            }
             self.0.reset_and_skip(0);
-            self.0.core.fill_blocks(dst_blocks);
-        }
-        for tail_u64 in tail {
-            *tail_u64 = self.0.next_word();
+            for tail_u64 in tail {
+                *tail_u64 = self.0.next_word();
+            }
         }
         if !suffix.is_empty() {
             self.0.fill_bytes(suffix);
@@ -512,6 +521,7 @@ mod tests {
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
     use std::iter::repeat;
+    use std::mem;
     use gf2::{BitMatrix, BitStore};
     use rand::rngs::SysRng;
 
@@ -756,15 +766,21 @@ mod tests {
         let seed = [0u8; TripleMixPrng::SEED_SIZE];
         let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
         let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        const UNALIGNED_LENGTH: usize = 1021; // Force misalignment of written regions
+        const TOTAL_LENGTH: usize = 1024;
 
-        let mut buf1 = vec![0u8; 1024];
-        prng1.fill_bytes(&mut buf1);
+        // Force buffer edges to be aligned on 64 bits, so that written portion will be misaligned
+        let mut buf1: [u8; TOTAL_LENGTH] = unsafe { mem::transmute([0u64; TOTAL_LENGTH / 8]) };
+        let buf1 = &mut buf1[(TOTAL_LENGTH - UNALIGNED_LENGTH)..];
+        prng1.fill_bytes(buf1);
 
-        let mut buf2 = vec![0u8; 1024];
-        for chunk in buf2.chunks_exact_mut(8) {
+        let mut buf2 = vec![0u8; UNALIGNED_LENGTH];
+        let (chunks, tail) = buf2.as_chunks_mut::<8>();
+        for chunk in chunks {
             let val = prng2.next_u64();
             chunk.copy_from_slice(&val.to_ne_bytes());
         }
+        prng2.fill_bytes(tail);
 
         assert_eq!(buf1, buf2);
     }
