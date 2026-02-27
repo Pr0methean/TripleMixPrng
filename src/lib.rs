@@ -140,11 +140,10 @@ impl TripleMixSimdCore {
                 .select(Simd::splat(1), Simd::splat(0));
             w_hi = w_hi + high_product + i_hi + carry;
             w_lo = next_w_lo;
-            let b_l0 = w_lo + LANE_CONSTANTS;
-            let b_r1 = w_hi;
+            let w_lo_out = w_lo + LANE_CONSTANTS;
 
             // Xoroshiro update
-            let b_l1 = xr0 + xr1;
+            let x_out = xr0 + xr1;
             let t = xr0 ^ xr1;
             xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
             xr1 = rotl(t, 36);
@@ -165,11 +164,11 @@ impl TripleMixSimdCore {
 
             let mut ty = tm0 + tm1;
             ty ^= tm0 >> Simd::splat(8);
-            let b_r0 =
+            let t_out =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
             // === 2. Mixing ===
-            let (out0, out1) = mix(b_l0, b_l1, b_r0, b_r1, i_hi);
+            let (out0, out1) = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
@@ -191,7 +190,7 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 
 #[inline(always)]
-fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
+fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
     const MIXING_ROTATION_12: u64 = 7;
     const MIXING_ROTATION_10: u64 = 9;
     const MIXING_ROTATION_07: u64 = 11;
@@ -220,10 +219,10 @@ fn mix(b_l0: Simd64, b_l1: Simd64, b_r0: Simd64, b_r1: Simd64, i_hi: Simd64) -> 
 
     // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
     // ------------------------------------------
-    let tr0 = (b_r0 ^ rotl(b_r1, MIXING_ROTATION_01)) + b_l1;
-    let tr1 = ((b_r1 + rotl(b_r0, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ b_l0;
-    let tl0 = ((b_l0 ^ rotl(b_l1, MIXING_ROTATION_03)) + second_mix_with_i_hi) + b_r0;
-    let tl1 = b_l1 + tr1;
+    let tr0 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
+    let tr1 = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
+    let tl0 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
+    let tl1 = x_in + tr1;
 
     let mut l0 = tl0;
     let mut l1 = tl1;
