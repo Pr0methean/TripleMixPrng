@@ -435,6 +435,7 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
             let mut lane_hasher = Sha3_512::default();
+            Update::update(&mut lane_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
             Update::update(&mut lane_hasher, seed.as_ref());
             Update::update(&mut lane_hasher, &[i as u8]);
             let mut out_bytes = lane_hasher.finalize_fixed();
@@ -449,6 +450,7 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                     xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i,
                 )) {
                     let mut retry_hasher = Sha3_512::default();
+                    Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
                     Update::update(&mut retry_hasher, seed.as_ref());
                     Update::update(&mut retry_hasher, &[i as u8 + 4]);
                     Update::update(&mut retry_hasher, count.to_le_bytes().as_ref());
