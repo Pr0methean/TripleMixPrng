@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
-use triple_mix_prng::{TripleMixPrng, SEED_SIZE};
+use triple_mix_prng::{SEED_SIZE, TripleMixPrng};
 
 const OS_ENTROPY_BYTES: usize = 32;
 

@@ -18,7 +18,7 @@ use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
-use generic_array::{GenericArray};
+use generic_array::GenericArray;
 use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -75,7 +75,7 @@ pub struct TripleMixSimdCore {
     weyl_lo: Simd64,
     weyl_hi: Simd64,
     inc_lo: Simd64,
-    inc_hi: Simd64
+    inc_hi: Simd64,
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {
@@ -300,11 +300,12 @@ pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
 pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
-impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
-
-
+impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
     pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
-        Self { block_core: BlockRng::new(core), reproducibility: PhantomData }
+        Self {
+            block_core: BlockRng::new(core),
+            reproducibility: PhantomData,
+        }
     }
 
     /// Creates an instance in a relatively predictable state. Intended only for testing.
@@ -319,7 +320,7 @@ impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> 
             weyl_lo: Simd::splat(0),
             weyl_hi: Simd::splat(0),
             inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0)
+            inc_hi: Simd::splat(0),
         })
     }
 
@@ -347,8 +348,9 @@ impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> 
                 inc_lo[i] |= 1;
 
                 if unlikely(
-                        unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
-                        || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0))) {
+                    unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
+                        || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0)),
+                ) {
                     lane_hasher.update(&count.to_ne_bytes());
                     count += 1;
                     continue;
@@ -357,8 +359,14 @@ impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> 
                     if unlikely(
                         unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
                             || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
-                            || unlikely(unlikely(weyl_lo[j] == weyl_lo[i]) && unlikely(weyl_hi[j] == weyl_hi[i]))
-                            || unlikely(unlikely(inc_lo[j] == inc_lo[i]) && unlikely(inc_hi[j] == inc_hi[i])),
+                            || unlikely(
+                                unlikely(weyl_lo[j] == weyl_lo[i])
+                                    && unlikely(weyl_hi[j] == weyl_hi[i]),
+                            )
+                            || unlikely(
+                                unlikely(inc_lo[j] == inc_lo[i])
+                                    && unlikely(inc_hi[j] == inc_hi[i]),
+                            ),
                     ) {
                         lane_hasher.update(&count.to_ne_bytes());
                         count += 1;
@@ -377,14 +385,17 @@ impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> 
             weyl_lo,
             weyl_hi,
             inc_lo,
-            inc_hi
+            inc_hi,
         };
-        TripleMixPrng { block_core: BlockRng::new(core), reproducibility: PhantomData }
+        TripleMixPrng {
+            block_core: BlockRng::new(core),
+            reproducibility: PhantomData,
+        }
     }
 }
 
-impl <Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Reproducibility> {
-    type Seed = GenericArray<u8, U<{SEED_SIZE}>>;
+impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Reproducibility> {
+    type Seed = GenericArray<u8, U<{ SEED_SIZE }>>;
 
     fn from_seed(seed: Self::Seed) -> Self {
         Self::from_any_size_seed(&seed)
@@ -464,7 +475,10 @@ impl <Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<R
         child_core.weyl_lo ^= entropy[6];
         child_core.weyl_hi ^= entropy[7];
 
-        Self { block_core: BlockRng::new(child_core), reproducibility: PhantomData }
+        Self {
+            block_core: BlockRng::new(child_core),
+            reproducibility: PhantomData,
+        }
     }
 }
 
@@ -566,7 +580,7 @@ impl FillBytesReproducibility for CrossPlatform {
     }
 }
 
-impl <Reproducibility: FillBytesReproducibility> TryRng for TripleMixPrng<Reproducibility> {
+impl<Reproducibility: FillBytesReproducibility> TryRng for TripleMixPrng<Reproducibility> {
     type Error = Infallible;
 
     #[inline(always)]
@@ -615,7 +629,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use rand::rngs::SysRng;
-    use rand::{rng, RngExt};
+    use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::any::TypeId;
@@ -824,7 +838,8 @@ mod tests {
         }
     }
 
-    pub fn create_rngs<Reproducibility: FillBytesReproducibility>() -> [TripleMixPrng<Reproducibility>; 5] {
+    pub fn create_rngs<Reproducibility: FillBytesReproducibility>()
+    -> [TripleMixPrng<Reproducibility>; 5] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
         const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
         const LARGEST_DISTINCT_ODD: Simd64 =
@@ -964,7 +979,9 @@ mod tests {
                 if length.is_multiple_of(size_of::<u64>()) {
                     for chunk in buf2.chunks_exact_mut(size_of::<u64>()) {
                         let next_word = prng2.next_u64();
-                        chunk.copy_from_slice(&if TypeId::of::<Reproducibility>() == TypeId::of::<CrossPlatform>() {
+                        chunk.copy_from_slice(&if TypeId::of::<Reproducibility>()
+                            == TypeId::of::<CrossPlatform>()
+                        {
                             next_word.to_le_bytes()
                         } else {
                             next_word.to_ne_bytes()
@@ -1203,7 +1220,8 @@ mod tests {
             for bit_index in 0..=7 {
                 let mut seed = [0u8; SEED_SIZE];
                 seed[byte_index] = 1 << bit_index;
-                let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
+                let mut rng2 =
+                    TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
                 let start_val2 = rng2.try_next_u64().unwrap();
                 let flipped_bits = (start_val1 ^ start_val2).count_ones();
                 assert!(

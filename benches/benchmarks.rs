@@ -3,7 +3,7 @@ use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use std::hint::black_box;
-use triple_mix_prng::{CrossPlatform, NotReproducible, SameEndianness, TripleMixPrng, SEED_SIZE};
+use triple_mix_prng::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
 
 fn fill_bytes(c: &mut Criterion) {
     let mut seed = [0u8; SEED_SIZE];
@@ -28,13 +28,13 @@ fn fill_bytes(c: &mut Criterion) {
                 black_box(&*misaligned_buffer);
             })
         });
-                group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
+        group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
             b.iter(|| {
                 triple_mix_reproducible.fill_bytes(misaligned_buffer);
                 black_box(&*misaligned_buffer);
             })
         });
-                group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
+        group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
             b.iter(|| {
                 triple_mix_x_reproducible.fill_bytes(misaligned_buffer);
                 black_box(&*misaligned_buffer);
