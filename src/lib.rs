@@ -466,10 +466,14 @@ impl <Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<R
     }
 }
 
+/// Levels of reproducibility for output of [`TripleMixPrng::fill_bytes`] and output after
+/// fill_bytes has been called.
 pub trait FillBytesReproducibility: Clone + Copy {
     fn fill_bytes(core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]);
 }
 
+/// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
+/// address alignment where the byte slice starts and ends and the machine endianness.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct NotReproducible;
 
@@ -507,9 +511,14 @@ impl FillBytesReproducibility for NotReproducible {
     }
 }
 
+/// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
+/// machine's endianness, but not on any attribute of the byte slice itself except its length.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SameEndianness;
 
+/// Output of the PRNG will be the same as for an instance created with the same seed and receiving
+/// the same calls (counting two `fill_bytes` as the same when they write to slices of the same
+/// length), as long as both instances are created on machines with the same endianness.
 impl FillBytesReproducibility for SameEndianness {
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         let (prefix, u64s, suffix) = unsafe { bytes.align_to_mut::<u64>() };
@@ -539,6 +548,9 @@ impl FillBytesReproducibility for SameEndianness {
     }
 }
 
+/// Output of the PRNG will be the same as for an instance created with the same seed and receiving
+/// the same calls (counting two `fill_bytes` as the same when they write to slices of the same
+/// length) on another machine, even if that machine has a different CPU architecture.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct CrossPlatform;
 
