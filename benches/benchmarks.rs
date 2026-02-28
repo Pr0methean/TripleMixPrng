@@ -1,12 +1,16 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rng;
 use rand::rngs::SysRng;
-use rand_core::{Rng, SeedableRng};
+use rand_core::{Rng, SeedableRng, TryRng};
 use std::hint::black_box;
-use triple_mix_prng::TripleMixPrng;
+use triple_mix_prng::{CrossPlatform, NotReproducible, SameEndianness, TripleMixPrng, SEED_SIZE};
 
 fn fill_bytes(c: &mut Criterion) {
-    let mut triple_mix = TripleMixPrng::try_from_rng(&mut SysRng).unwrap();
+    let mut seed = [0u8; SEED_SIZE];
+    SysRng.try_fill_bytes(&mut seed).unwrap();
+    let mut triple_mix = TripleMixPrng::<NotReproducible>::from_any_size_seed(&seed);
+    let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from_any_size_seed(&seed);
+    let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from_any_size_seed(&seed);
     let mut thread_rng = rng();
 
     // Allocate buffer as u64's so that it's aligned
@@ -21,6 +25,18 @@ fn fill_bytes(c: &mut Criterion) {
         group.bench_function("TripleMixPrng", |b| {
             b.iter(|| {
                 triple_mix.fill_bytes(misaligned_buffer);
+                black_box(&*misaligned_buffer);
+            })
+        });
+                group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
+            b.iter(|| {
+                triple_mix_reproducible.fill_bytes(misaligned_buffer);
+                black_box(&*misaligned_buffer);
+            })
+        });
+                group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
+            b.iter(|| {
+                triple_mix_x_reproducible.fill_bytes(misaligned_buffer);
                 black_box(&*misaligned_buffer);
             })
         });

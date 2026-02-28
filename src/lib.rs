@@ -18,14 +18,14 @@ use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
-use generic_array::{GenericArray, typenum};
+use generic_array::{GenericArray};
 use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
+use std::marker::PhantomData;
 use tiny_keccak::{CShake, Hasher, Xof};
 use typenum::U;
-
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
 // ============================================================================
@@ -67,7 +67,7 @@ pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 // ============================================================================
 
 #[derive(Clone)]
-struct TripleMixSimdCore {
+pub struct TripleMixSimdCore {
     xr0: Simd64,
     xr1: Simd64,
     tm0: Simd64,
@@ -75,7 +75,7 @@ struct TripleMixSimdCore {
     weyl_lo: Simd64,
     weyl_hi: Simd64,
     inc_lo: Simd64,
-    inc_hi: Simd64,
+    inc_hi: Simd64
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {
@@ -292,18 +292,23 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 }
 
 #[derive(Clone)]
-pub struct TripleMixPrng(BlockRng<TripleMixSimdCore>);
+pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
+    block_core: BlockRng<TripleMixSimdCore>,
+    reproducibility: PhantomData<Reproducibility>,
+}
 
-impl TripleMixPrng {
-    pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
-    pub const OID: &str = "1.3.6.1.4.1.54392.5.3311";
+pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
+pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
+
+impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
+
 
     pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
-        TripleMixPrng(BlockRng::new(core))
+        Self { block_core: BlockRng::new(core), reproducibility: PhantomData }
     }
 
     /// Creates an instance in a relatively predictable state. Intended only for testing.
-    pub fn almost_all_zeroes_state() -> TripleMixPrng {
+    pub fn almost_all_zeroes_state() -> Self {
         const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
         TripleMixPrng::from_core(TripleMixSimdCore {
@@ -314,11 +319,11 @@ impl TripleMixPrng {
             weyl_lo: Simd::splat(0),
             weyl_hi: Simd::splat(0),
             inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0),
+            inc_hi: Simd::splat(0)
         })
     }
 
-    pub fn from_any_size_seed(seed: &[u8]) -> TripleMixPrng {
+    pub fn from_any_size_seed(seed: &[u8]) -> Self {
         const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
         let mut xr0 = Simd::splat(0);
         let mut xr1 = Simd::splat(0);
@@ -330,7 +335,7 @@ impl TripleMixPrng {
         let mut inc_hi = Simd::splat(0);
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
-            let mut lane_hasher = CShake::v256(Self::OID.as_bytes(), &[i as u8 + 1]);
+            let mut lane_hasher = CShake::v256(TRIPLE_MIX_PRNG_OID.as_bytes(), &[i as u8 + 1]);
             lane_hasher.update(seed);
             let mut out_bytes = [0u8; LANE_CHUNK_SIZE];
             'generate: loop {
@@ -370,14 +375,14 @@ impl TripleMixPrng {
             weyl_lo,
             weyl_hi,
             inc_lo,
-            inc_hi,
+            inc_hi
         };
-        TripleMixPrng(BlockRng::new(core))
+        TripleMixPrng { block_core: BlockRng::new(core), reproducibility: PhantomData }
     }
 }
 
-impl SeedableRng for TripleMixPrng {
-    type Seed = GenericArray<u8, U<{ TripleMixPrng::SEED_SIZE }>>;
+impl <Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Reproducibility> {
+    type Seed = GenericArray<u8, U<{SEED_SIZE}>>;
 
     fn from_seed(seed: Self::Seed) -> Self {
         Self::from_any_size_seed(&seed)
@@ -389,7 +394,7 @@ impl SeedableRng for TripleMixPrng {
             self.fill(cell.as_mut_array());
         }
 
-        let mut child_core = self.0.core.clone();
+        let mut child_core = self.block_core.core.clone();
 
         let a = child_core.xr0;
         let b = entropy[2];
@@ -448,20 +453,106 @@ impl SeedableRng for TripleMixPrng {
             }
         }
         if unlikely(rejected) {
-            let mut seed = [0u8; Self::SEED_SIZE];
-            self.0.fill_bytes(&mut seed);
-            return Self::from_seed(GenericArray::from(seed));
+            let mut seed = [0u8; SEED_SIZE];
+            self.block_core.fill_bytes(&mut seed);
+            return Self::from_seed(seed.into());
         }
         child_core.inc_lo = entropy[0] | Simd::splat(1);
         child_core.inc_hi = entropy[1];
         child_core.weyl_lo ^= entropy[6];
         child_core.weyl_hi ^= entropy[7];
 
-        TripleMixPrng(BlockRng::new(child_core))
+        Self { block_core: BlockRng::new(child_core), reproducibility: PhantomData }
     }
 }
 
-impl TryRng for TripleMixPrng {
+pub trait FillBytesReproducibility: Clone + Copy {
+    fn fill_bytes(core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]);
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct NotReproducible;
+
+impl FillBytesReproducibility for NotReproducible {
+    fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
+        let (prefix, u64s, suffix) = unsafe { bytes.align_to_mut::<u64>() };
+        if u64s.is_empty() {
+            // There's no benefit to bypassing the buffer or consolidating
+            // writes if we can't write at least one aligned u64.
+            block_core.fill_bytes(bytes);
+            return;
+        }
+        if !prefix.is_empty() {
+            block_core.fill_bytes(prefix);
+        }
+        let remaining = block_core.remaining_results();
+        if u64s.len() <= remaining.len() {
+            for word in u64s.iter_mut() {
+                *word = block_core.next_word();
+            }
+        } else {
+            u64s[0..remaining.len()].copy_from_slice(remaining);
+            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
+            if !dst_blocks.is_empty() {
+                block_core.core.fill_blocks(dst_blocks);
+            }
+            block_core.reset_and_skip(0); // mark the buffer contents as used
+            for tail_u64 in tail {
+                *tail_u64 = block_core.next_word();
+            }
+        }
+        if !suffix.is_empty() {
+            block_core.fill_bytes(suffix);
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct SameEndianness;
+
+impl FillBytesReproducibility for SameEndianness {
+    fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
+        let (prefix, u64s, suffix) = unsafe { bytes.align_to_mut::<u64>() };
+        if u64s.is_empty() || !prefix.is_empty() {
+            block_core.fill_bytes(bytes);
+            return;
+        }
+        let remaining = block_core.remaining_results();
+        if u64s.len() <= remaining.len() {
+            for word in u64s.iter_mut() {
+                *word = block_core.next_word();
+            }
+        } else {
+            u64s[0..remaining.len()].copy_from_slice(remaining);
+            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
+            if !dst_blocks.is_empty() {
+                block_core.core.fill_blocks(dst_blocks);
+            }
+            block_core.reset_and_skip(0); // mark the buffer contents as used
+            for tail_u64 in tail {
+                *tail_u64 = block_core.next_word();
+            }
+        }
+        if !suffix.is_empty() {
+            block_core.fill_bytes(suffix);
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct CrossPlatform;
+
+impl FillBytesReproducibility for CrossPlatform {
+    fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
+        if cfg!(target_endian = "big") {
+            block_core.fill_bytes(bytes);
+            return;
+        }
+        SameEndianness::fill_bytes(block_core, bytes);
+    }
+}
+
+impl <Reproducibility: FillBytesReproducibility> TryRng for TripleMixPrng<Reproducibility> {
     type Error = Infallible;
 
     #[inline(always)]
@@ -472,42 +563,12 @@ impl TryRng for TripleMixPrng {
 
     #[inline(always)]
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.0.next_word())
+        Ok(self.block_core.next_word())
     }
 
     #[inline(always)]
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        let (prefix, u64s, suffix) = unsafe { dst.align_to_mut::<u64>() };
-        if u64s.is_empty() || !prefix.is_empty() {
-            // A non-empty prefix implies a non-word-aligned start. Using a mixed
-            // byte/word path there can discard intra-word bytes and break
-            // reproducibility, so keep canonical fill behavior.
-
-            // There's also no benefit to bypassing the buffer or consolidating
-            // writes if we can't write at least one aligned u64.
-            self.0.fill_bytes(dst);
-            return Ok(());
-        }
-
-        let remaining = self.0.remaining_results();
-        if u64s.len() <= remaining.len() {
-            for word in u64s.iter_mut() {
-                *word = self.0.next_word();
-            }
-        } else {
-            u64s[0..remaining.len()].copy_from_slice(remaining);
-            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
-            if !dst_blocks.is_empty() {
-                self.0.core.fill_blocks(dst_blocks);
-            }
-            self.0.reset_and_skip(0); // mark the buffer contents as used
-            for tail_u64 in tail {
-                *tail_u64 = self.0.next_word();
-            }
-        }
-        if !suffix.is_empty() {
-            self.0.fill_bytes(suffix);
-        }
+        Reproducibility::fill_bytes(&mut self.block_core, dst);
         Ok(())
     }
 }
@@ -536,15 +597,15 @@ impl Generator for TripleMixSimdCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hypors::chi_square::goodness_of_fit;
-    use rand::{RngExt, rng};
-    use rand_core::{Rng, SeedableRng, UnwrapErr};
-    use statrs::distribution::{Binomial, DiscreteCDF};
-    use std::collections::HashSet;
-
     use bytemuck::cast_slice_mut;
     use gf2::{BitMatrix, BitStore};
+    use hypors::chi_square::goodness_of_fit;
     use rand::rngs::SysRng;
+    use rand::{rng, RngExt};
+    use rand_core::{Rng, SeedableRng};
+    use statrs::distribution::{Binomial, DiscreteCDF};
+    use std::any::TypeId;
+    use std::collections::HashSet;
 
     #[test]
     pub fn test_mix_matrix() {
@@ -749,7 +810,7 @@ mod tests {
         }
     }
 
-    pub fn create_rngs() -> [TripleMixPrng; 5] {
+    pub fn create_rngs<Reproducibility: FillBytesReproducibility>() -> [TripleMixPrng<Reproducibility>; 5] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
         const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
         const LARGEST_DISTINCT_ODD: Simd64 =
@@ -777,14 +838,16 @@ mod tests {
             inc_lo: LARGEST_DISTINCT_ODD,
             inc_hi: Simd::splat(u64::MAX),
         });
-        let rng4 = TripleMixPrng::from_seed(GenericArray::default());
-        let rng5 = TripleMixPrng::from_rng(&mut UnwrapErr(SysRng));
+        let mut seed = [0u8; SEED_SIZE];
+        let rng4 = TripleMixPrng::from_any_size_seed(&seed);
+        SysRng.try_fill_bytes(&mut seed).unwrap();
+        let rng5 = TripleMixPrng::from_any_size_seed(&seed);
         [rng1, rng2, rng3, rng4, rng5]
     }
 
     #[test]
     fn test_byte_frequencies() {
-        for mut prng in create_rngs() {
+        for mut prng in create_rngs::<NotReproducible>() {
             let mut frequencies = [0u32; u8::MAX as usize + 1];
             for _ in 0..(1 << 28) {
                 let byte: u8 = prng.random();
@@ -803,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_u16_frequencies() {
-        for mut prng in create_rngs() {
+        for mut prng in create_rngs::<NotReproducible>() {
             let mut frequencies = vec![0u32; u16::MAX as usize + 1];
             for _ in 0..(1 << 28) {
                 let word: u16 = prng.random();
@@ -825,7 +888,7 @@ mod tests {
         const SAMPLE_COUNT: usize = 1 << 24;
         const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
         let mut samples = vec![0u64; SAMPLE_COUNT];
-        for mut prng in create_rngs() {
+        for mut prng in create_rngs::<NotReproducible>() {
             prng.fill(samples.as_mut());
             for i in 0..=62 {
                 for j in (i + 1)..=63 {
@@ -870,11 +933,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_equivalence() {
-        let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let mut prng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
-        let mut prng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
+    fn test_equivalence_generic<Reproducibility: FillBytesReproducibility + 'static>() {
+        let seed = [0u8; SEED_SIZE];
+        let mut prng1 = TripleMixPrng::<Reproducibility>::from_any_size_seed(&seed);
+        let mut prng2 = TripleMixPrng::<Reproducibility>::from_any_size_seed(&seed);
         for length in [1, 2, 4, 8, 16, 32, 64, 1024] {
             for misalignment in 0..size_of::<u64>() {
                 // Force buffer edges to be aligned on 64 bits, so that written portion will be misaligned
@@ -887,7 +949,12 @@ mod tests {
                 let buf2 = &mut buf2[0..length];
                 if length.is_multiple_of(size_of::<u64>()) {
                     for chunk in buf2.chunks_exact_mut(size_of::<u64>()) {
-                        chunk.copy_from_slice(&prng2.next_u64().to_le_bytes());
+                        let next_word = prng2.next_u64();
+                        chunk.copy_from_slice(&if TypeId::of::<Reproducibility>() == TypeId::of::<CrossPlatform>() {
+                            next_word.to_le_bytes()
+                        } else {
+                            next_word.to_ne_bytes()
+                        });
                     }
                 } else {
                     prng2.fill_bytes(buf2);
@@ -898,11 +965,17 @@ mod tests {
     }
 
     #[test]
+    fn test_equivalence() {
+        test_equivalence_generic::<SameEndianness>();
+        test_equivalence_generic::<CrossPlatform>();
+    }
+
+    #[test]
     fn test_fork_independence_descendants() {
         const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        for mut prng in create_rngs() {
+        for mut prng in create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 for _ in 0..SAMPLES_PER_FORK {
                     let next = prng.next_u64();
@@ -920,7 +993,7 @@ mod tests {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-        for mut parent_prng in create_rngs() {
+        for mut parent_prng in create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 let mut prng = parent_prng.fork();
                 for _ in 0..SAMPLES_PER_FORK {
@@ -935,8 +1008,8 @@ mod tests {
 
     #[test]
     fn test_avalanche() {
-        for rng in create_rngs() {
-            let core = rng.0.core.clone();
+        for rng in create_rngs::<NotReproducible>() {
+            let core = rng.block_core.core.clone();
 
             const ITERATIONS: usize = 20;
             const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
@@ -1108,15 +1181,15 @@ mod tests {
 
     #[test]
     fn test_seed_diffusion() {
-        let seed = [0u8; TripleMixPrng::SEED_SIZE];
-        let mut rng1 = TripleMixPrng::from_seed(GenericArray::from(seed));
+        let seed = [0u8; SEED_SIZE];
+        let mut rng1 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
         let start_val1 = rng1.try_next_u64().unwrap();
 
-        for byte_index in 0..TripleMixPrng::SEED_SIZE {
+        for byte_index in 0..SEED_SIZE {
             for bit_index in 0..=7 {
-                let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
+                let mut seed = [0u8; SEED_SIZE];
                 seed[byte_index] = 1 << bit_index;
-                let mut rng2 = TripleMixPrng::from_seed(GenericArray::from(seed));
+                let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
                 let start_val2 = rng2.try_next_u64().unwrap();
                 let flipped_bits = (start_val1 ^ start_val2).count_ones();
                 assert!(
@@ -1193,7 +1266,7 @@ mod tests {
 
     #[test]
     fn test_bitplane_projection() {
-        for mut rng in create_rngs() {
+        for mut rng in create_rngs::<NotReproducible>() {
             let mut buf = vec![0u64; SAMPLES];
             rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
 
@@ -1214,7 +1287,7 @@ mod tests {
 
     #[test]
     fn test_lane_cross_correlation_bitplane() {
-        for mut rng in create_rngs() {
+        for mut rng in create_rngs::<NotReproducible>() {
             const N: usize = 1 << 28;
             let mut lanes = [0u64; SIMD_WIDTH];
             for target_lane in 1..SIMD_WIDTH {
@@ -1269,7 +1342,7 @@ mod tests {
     /// False positive rate for this test is about 1.2% per PRNG.
     #[test]
     fn test_lowbit_rank() {
-        for mut rng in create_rngs() {
+        for mut rng in create_rngs::<NotReproducible>() {
             let mut rank60_count = 0;
 
             for _ in 0..10000 {
@@ -1290,7 +1363,7 @@ mod tests {
 
     #[test]
     fn test_double_differential() {
-        for mut rng in create_rngs() {
+        for mut rng in create_rngs::<NotReproducible>() {
             const N: usize = 1 << 21;
 
             let mut x = vec![0u64; N];
@@ -1317,7 +1390,7 @@ mod tests {
 
     #[test]
     fn test_fractional_spectral() {
-        for mut rng in create_rngs() {
+        for mut rng in create_rngs::<NotReproducible>() {
             const N: usize = 1 << 21;
 
             let mut prev = rng.next_u64();

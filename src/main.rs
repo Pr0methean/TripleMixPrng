@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
-use triple_mix_prng::TripleMixPrng;
+use triple_mix_prng::{TripleMixPrng, SEED_SIZE};
 
 const OS_ENTROPY_BYTES: usize = 32;
 
@@ -18,14 +18,14 @@ fn main() {
     if let Some(seed_arg) = args.get(1)
         && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
     {
-        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
-        seed[0..(TripleMixPrng::SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
+        let mut seed = [0u8; SEED_SIZE];
+        seed[0..(SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
         eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
         prng = TripleMixPrng::from_seed(seed.into());
     } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
         prng = TripleMixPrng::almost_all_zeroes_state();
     } else {
-        let mut seed = [0u8; TripleMixPrng::SEED_SIZE];
+        let mut seed = [0u8; SEED_SIZE];
         for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
             #[cfg_attr(not(any(feature = "tss-esapi", feature = "rdrand")), allow(unused_mut))]
             let mut seeded = false;
