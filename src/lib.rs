@@ -699,6 +699,7 @@ mod tests {
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::any::TypeId;
     use std::collections::HashSet;
+    use statrs::statistics::Distribution;
 
     #[test]
     pub fn test_mix_matrix() {
@@ -1257,7 +1258,15 @@ mod tests {
                 bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
             let low_avalanche_distribution =
                 Binomial::new(low_avalanche_probability, count).unwrap();
-            let low_avalanche_p_value = 1.0 - low_avalanche_distribution.cdf(low_avalanches as u64);
+            let mean = low_avalanche_distribution.mean().unwrap();
+            let mirror = 2.0 * mean - low_avalanches as f64;
+            let low_avalanche_p_value = if low_avalanches as f64 <= mean {
+                1.0 - low_avalanche_distribution.cdf(mirror as u64 - 1)
+                    + low_avalanche_distribution.cdf(low_avalanches as u64)
+            } else {
+                1.0 - low_avalanche_distribution.cdf(low_avalanches as u64 - 1)
+                    + low_avalanche_distribution.cdf(mirror as u64)
+            };
             println!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
                 low_avalanche_probability * count as f64,
