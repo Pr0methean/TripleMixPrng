@@ -23,6 +23,7 @@ use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
 use std::marker::PhantomData;
+use serde::de::Error;
 use tiny_keccak::{CShake, Hasher, Xof};
 use typenum::U;
 // ============================================================================
@@ -146,7 +147,6 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de> for
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'de> {
         let state = CoreState::deserialize(deserializer)?;
-
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(state.xr0),
             xr1: Simd64::from_array(state.xr1),
@@ -157,6 +157,11 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de> for
             inc_lo: Simd64::from_array(state.inc_lo),
             inc_hi: Simd64::from_array(state.inc_hi),
         };
+        for i in 0..SIMD_WIDTH {
+            if Self::is_lane_invalid(core.xr0, core.xr1, core.tm0, core.tm1, core.weyl_lo, core.weyl_hi, core.inc_lo, core.inc_hi, i) {
+                return Err(D::Error::custom(format!("invalid core state in lane {i}")));
+            }
+        }
         if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
             Ok(TripleMixPrng {
                 block_core,
@@ -211,7 +216,6 @@ impl TripleMixSimdCore {
             0x7082_efa9_8ec4_e6c8,
         ]);
 
-        // Zero-cost transmute from Simd64 to portable Simd<u64, 4>
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
@@ -265,7 +269,6 @@ impl TripleMixSimdCore {
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
 
-        // Zero-cost transmute back from portable Simd<u64, 4> to Simd64
         self.xr0 = xr0;
         self.xr1 = xr1;
         self.tm0 = tm0;
@@ -407,7 +410,7 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for Trip
             let mut lane_hasher = CShake::v256(TRIPLE_MIX_PRNG_OID.as_bytes(), &[i as u8 + 1]);
             lane_hasher.update(value.as_ref());
             let mut out_bytes = [0u8; LANE_CHUNK_SIZE];
-            'generate: loop {
+            loop {
                 lane_hasher.squeeze(&mut out_bytes);
                 [
                     xr0[i], xr1[i], tm0[i], tm1[i], weyl_lo[i], weyl_hi[i], inc_lo[i], inc_hi[i],
@@ -415,31 +418,10 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for Trip
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                if unlikely(
-                    unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
-                        || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0)),
-                ) {
+                if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
                     lane_hasher.update(&count.to_ne_bytes());
-                    count += 1;
+                    count = count.wrapping_add(1);
                     continue;
-                }
-                for j in 0..i {
-                    if unlikely(
-                        unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
-                            || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
-                            || unlikely(
-                                unlikely(weyl_lo[j] == weyl_lo[i])
-                                    && unlikely(weyl_hi[j] == weyl_hi[i]),
-                            )
-                            || unlikely(
-                                unlikely(inc_lo[j] == inc_lo[i])
-                                    && unlikely(inc_hi[j] == inc_hi[i]),
-                            ),
-                    ) {
-                        lane_hasher.update(&count.to_ne_bytes());
-                        count += 1;
-                        continue 'generate;
-                    }
                 }
                 break;
             }
@@ -459,6 +441,34 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for Trip
             block_core: BlockRng::new(core),
             reproducibility: PhantomData,
     }
+    }
+}
+
+impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
+    fn is_lane_invalid(xr0: Simd64, xr1: Simd64, tm0: Simd64, tm1: Simd64, weyl_lo: Simd64, weyl_hi: Simd64, inc_lo: Simd64, inc_hi: Simd64, i: usize) -> bool {
+        if unlikely(
+            unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
+                || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0)),
+        ) {
+            return true;
+        }
+        for j in 0..i {
+            if unlikely(
+                unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
+                    || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
+                    || unlikely(
+                    unlikely(weyl_lo[j] == weyl_lo[i])
+                        && unlikely(weyl_hi[j] == weyl_hi[i]),
+                )
+                    || unlikely(
+                    unlikely(inc_lo[j] == inc_lo[i])
+                        && unlikely(inc_hi[j] == inc_hi[i]),
+                ),
+            ) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -694,14 +704,6 @@ impl<Reproducibility: FillBytesReproducibility> TryRng for TripleMixPrng<Reprodu
         Ok(())
     }
 }
-
-// ============================================================================
-// Generator impl — SINGLE unified implementation
-//
-// All operations use portable Simd<u64, 4> operators, which compile to the
-// same AVX2 instructions on AVX2 targets. The ONLY dispatch is for multiply,
-// which portable SIMD scalarizes but AVX2 keeps in-register via mullo.
-// ============================================================================
 
 impl Generator for TripleMixSimdCore {
     type Output = [u64; OUTPUT_LEN];
