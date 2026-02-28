@@ -19,7 +19,6 @@ use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
 use generic_array::GenericArray;
-use rand::RngExt;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
@@ -66,7 +65,7 @@ pub type Simd64 = Simd<u64, SIMD_WIDTH>;
 // Core struct
 // ============================================================================
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct TripleMixSimdCore {
     xr0: Simd64,
     xr1: Simd64,
@@ -76,6 +75,97 @@ pub struct TripleMixSimdCore {
     weyl_hi: Simd64,
     inc_lo: Simd64,
     inc_hi: Simd64,
+}
+
+#[cfg(feature = "zeroize")]
+impl zeroize::Zeroize for TripleMixSimdCore {
+    fn zeroize(&mut self) {
+        self.xr0 = Simd::splat(0);
+        self.xr1 = Simd::splat(0);
+        self.tm0 = Simd::splat(0);
+        self.tm1 = Simd::splat(0);
+        self.weyl_lo = Simd::splat(0);
+        self.weyl_hi = Simd::splat(0);
+        self.inc_lo = Simd::splat(0);
+        self.inc_hi = Simd::splat(0);
+
+        // Prevent dead-write elimination
+        std::hint::black_box(&*self);
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CoreState {
+    xr0: [u64; 4],
+    xr1: [u64; 4],
+    tm0: [u64; 4],
+    tm1: [u64; 4],
+    weyl_lo: [u64; 4],
+    weyl_hi: [u64; 4],
+    inc_lo: [u64; 4],
+    inc_hi: [u64; 4],
+    remaining_results: Box<[u64]>,
+}
+
+#[cfg(feature = "zeroize")]
+impl <Reproducibility: FillBytesReproducibility> zeroize::Zeroize for TripleMixPrng<Reproducibility> {
+    fn zeroize(&mut self) {
+        self.block_core.core.zeroize();
+
+        // Force next generation to overwrite the buffer using output derived from the zeroized core
+        // (this won't be zero, but it won't reflect the previous core state either)
+        self.block_core.reset_and_skip(0);
+
+        // Prevent dead-write elimination
+        std::hint::black_box(self.block_core.remaining_results());
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<Reproducibility: FillBytesReproducibility> serde::Serialize for TripleMixPrng<Reproducibility> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let core = &self.block_core.core;
+        CoreState {
+            xr0: core.xr0.to_array(),
+            xr1: core.xr1.to_array(),
+            tm0: core.tm0.to_array(),
+            tm1: core.tm1.to_array(),
+            weyl_lo: core.weyl_lo.to_array(),
+            weyl_hi: core.weyl_hi.to_array(),
+            inc_lo: core.inc_lo.to_array(),
+            inc_hi: core.inc_hi.to_array(),
+            remaining_results: self.block_core.remaining_results().to_vec().into_boxed_slice(),
+        }.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de> for TripleMixPrng<Reproducibility> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let state = CoreState::deserialize(deserializer)?;
+
+        let core = TripleMixSimdCore {
+            xr0: Simd64::from_array(state.xr0),
+            xr1: Simd64::from_array(state.xr1),
+            tm0: Simd64::from_array(state.tm0),
+            tm1: Simd64::from_array(state.tm1),
+            weyl_lo: Simd64::from_array(state.weyl_lo),
+            weyl_hi: Simd64::from_array(state.weyl_hi),
+            inc_lo: Simd64::from_array(state.inc_lo),
+            inc_hi: Simd64::from_array(state.inc_hi),
+        };
+        if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
+            Ok(TripleMixPrng {
+                block_core,
+                reproducibility: PhantomData,
+            })
+        } else {
+            Ok(TripleMixPrng::from_core(core))
+        }
+    }
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {
@@ -291,7 +381,8 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     (out0, out1)
 }
 
-#[derive(Clone)]
+/// Instances must not be used again after being zeroized.
+#[derive(Clone, Debug)]
 pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
     block_core: BlockRng<TripleMixSimdCore>,
     reproducibility: PhantomData<Reproducibility>,
@@ -300,31 +391,8 @@ pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
 pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
-impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
-    pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
-        Self {
-            block_core: BlockRng::new(core),
-            reproducibility: PhantomData,
-        }
-    }
-
-    /// Creates an instance in a relatively predictable state. Intended only for testing.
-    pub fn almost_all_zeroes_state() -> Self {
-        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
-        const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
-        TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd::splat(0),
-            xr1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            tm0: Simd::splat(0),
-            tm1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            weyl_lo: Simd::splat(0),
-            weyl_hi: Simd::splat(0),
-            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0),
-        })
-    }
-
-    pub fn from_any_size_seed(seed: &[u8]) -> Self {
+impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<Reproducibility> {
+    fn from(value: T) -> Self {
         const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
         let mut xr0 = Simd::splat(0);
         let mut xr1 = Simd::splat(0);
@@ -337,7 +405,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
             let mut lane_hasher = CShake::v256(TRIPLE_MIX_PRNG_OID.as_bytes(), &[i as u8 + 1]);
-            lane_hasher.update(seed);
+            lane_hasher.update(value.as_ref());
             let mut out_bytes = [0u8; LANE_CHUNK_SIZE];
             'generate: loop {
                 lane_hasher.squeeze(&mut out_bytes);
@@ -390,7 +458,32 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         TripleMixPrng {
             block_core: BlockRng::new(core),
             reproducibility: PhantomData,
+    }
+    }
+}
+
+impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
+    pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
+        Self {
+            block_core: BlockRng::new(core),
+            reproducibility: PhantomData,
         }
+    }
+
+    /// Creates an instance in a relatively predictable state. Intended only for testing.
+    pub fn almost_all_zeroes_state() -> Self {
+        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
+        const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
+        TripleMixPrng::from_core(TripleMixSimdCore {
+            xr0: Simd::splat(0),
+            xr1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
+            tm0: Simd::splat(0),
+            tm1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
+            weyl_lo: Simd::splat(0),
+            weyl_hi: Simd::splat(0),
+            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
+            inc_hi: Simd::splat(0),
+        })
     }
 }
 
@@ -398,12 +491,13 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
     type Seed = GenericArray<u8, U<{ SEED_SIZE }>>;
 
     fn from_seed(seed: Self::Seed) -> Self {
-        Self::from_any_size_seed(&seed)
+        Self::from(&seed)
     }
 
     fn fork(&mut self) -> Self {
         let mut entropy = [Simd::splat(0); 8];
         for cell in entropy.iter_mut() {
+            use rand::RngExt;
             self.fill(cell.as_mut_array());
         }
 
@@ -868,9 +962,9 @@ mod tests {
             inc_hi: Simd::splat(u64::MAX),
         });
         let mut seed = [0u8; SEED_SIZE];
-        let rng4 = TripleMixPrng::from_any_size_seed(&seed);
+        let rng4 = TripleMixPrng::from(&seed);
         SysRng.try_fill_bytes(&mut seed).unwrap();
-        let rng5 = TripleMixPrng::from_any_size_seed(&seed);
+        let rng5 = TripleMixPrng::from(&seed);
         [rng1, rng2, rng3, rng4, rng5]
     }
 
@@ -964,8 +1058,8 @@ mod tests {
 
     fn test_equivalence_generic<Reproducibility: FillBytesReproducibility + 'static>() {
         let seed = [0u8; SEED_SIZE];
-        let mut prng1 = TripleMixPrng::<Reproducibility>::from_any_size_seed(&seed);
-        let mut prng2 = TripleMixPrng::<Reproducibility>::from_any_size_seed(&seed);
+        let mut prng1 = TripleMixPrng::<Reproducibility>::from(&seed);
+        let mut prng2 = TripleMixPrng::<Reproducibility>::from(&seed);
         for length in [1, 2, 4, 8, 16, 32, 64, 1024] {
             for misalignment in 0..size_of::<u64>() {
                 // Force buffer edges to be aligned on 64 bits, so that written portion will be misaligned
