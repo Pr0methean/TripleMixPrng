@@ -11,9 +11,9 @@ use super::Simd64;
 #[inline(always)]
 pub fn mullo(a: Simd64, b: Simd64) -> Simd64 {
     unsafe {
-        let a = std::mem::transmute(a);
-        let b = std::mem::transmute(b);
-        std::mem::transmute(mullo_u64x4_avx2(a, b))
+        let a = std::mem::transmute::<Simd64, __m256i>(a);
+        let b = std::mem::transmute::<Simd64, __m256i>(b);
+        std::mem::transmute::<__m256i, Simd64>(mullo_u64x4_avx2(a, b))
     }
 }
 

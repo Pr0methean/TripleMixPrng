@@ -440,8 +440,8 @@ impl SeedableRng for TripleMixPrng {
         }
         child_core.inc_lo = entropy[0] | Simd::splat(1);
         child_core.inc_hi = entropy[1];
-        child_core.weyl_lo = child_core.weyl_lo ^ entropy[6];
-        child_core.weyl_hi = child_core.weyl_hi ^ entropy[7];
+        child_core.weyl_lo ^= entropy[6];
+        child_core.weyl_hi ^= entropy[7];
 
         TripleMixPrng(BlockRng::new(child_core))
     }
@@ -481,7 +481,7 @@ impl TryRng for TripleMixPrng {
                 *word = self.0.next_word();
             }
         } else {
-            u64s[0..remaining.len()].copy_from_slice(&remaining);
+            u64s[0..remaining.len()].copy_from_slice(remaining);
             let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
             if !dst_blocks.is_empty() {
                 self.0.core.fill_blocks(dst_blocks);
@@ -527,7 +527,7 @@ mod tests {
     use rand_core::{Rng, SeedableRng, UnwrapErr};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use std::collections::HashSet;
-    use std::iter::repeat;
+    
     use bytemuck::{cast_slice_mut};
     use gf2::{BitMatrix, BitStore};
     use rand::rngs::SysRng;
@@ -551,7 +551,7 @@ mod tests {
             for variable_idx in 0..5 {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0..64 {
-                        let mut modified_input = base_input.clone();
+                        let mut modified_input = base_input;
                         modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
                         let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
                         let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
@@ -622,7 +622,7 @@ mod tests {
                             if lane_idx_1 == lane_idx_2 && var_idx_1 == var_idx_2 {
                                 for bit_idx_1 in 0..63 {
                                     for bit_idx_2 in bit_idx_1..64 {
-                                        let mut modified_input = base_input.clone();
+                                        let mut modified_input = base_input;
                                         modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx_1 | 1 << bit_idx_2;
                                         let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
                                         let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
@@ -632,7 +632,7 @@ mod tests {
                                 }
                             } else {
                                 for bit_idx in 0..64 {
-                                    let mut modified_input = base_input.clone();
+                                    let mut modified_input = base_input;
                                     modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
                                     modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
                                     let (mod_out0, mod_out1) = mix(modified_input[0], modified_input[1], modified_input[2], modified_input[3], modified_input[4]);
@@ -702,7 +702,7 @@ mod tests {
             }
             let chi_square = goodness_of_fit(
                 frequencies.map(f64::from),
-                repeat((1 << 20) as f64).take(u8::MAX as usize + 1),
+                std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
                 0.01,
             )
                 .unwrap();
@@ -721,7 +721,7 @@ mod tests {
             }
             let chi_square = goodness_of_fit(
                 frequencies.into_iter().map(f64::from),
-                repeat((1 << 12) as f64).take(u16::MAX as usize + 1),
+                std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1),
                 0.01,
             )
                 .unwrap();
@@ -855,9 +855,9 @@ mod tests {
             let mut min_bit = 0;
             let mut min_iter = 0;
             let mut low_avalanches = 0;
-            for field_idx in 0..8 {
-                for lane_idx in 0..SIMD_WIDTH {
-                    for bit_idx in 0usize..64 {
+            for (field_idx, flips_per_bit_for_field) in flips_per_bit.iter_mut().enumerate() {
+                for (lane_idx, flips_per_bit_for_lane) in flips_per_bit_for_field.iter_mut().enumerate() {
+                    for (bit_idx, flips_for_bit) in flips_per_bit_for_lane.iter_mut().enumerate() {
                         if field_idx == 2 && bit_idx == 63 {
                             continue;
                         }
@@ -951,16 +951,16 @@ mod tests {
                             }
                             max_flips = max_flips.max(flips);
                             count += 1;
-                            flips_per_bit[field_idx][lane_idx][bit_idx] += flips;
+                            *flips_for_bit += flips;
                         }
                     }
                 }
             }
-            for field_idx in 0..8 {
-                for lane_idx in 0..SIMD_WIDTH {
+            for (field_idx, flips_per_bit_for_field) in flips_per_bit.iter().enumerate() {
+                for (lane_idx, flips_per_bit_for_lane) in flips_per_bit_for_field.iter().enumerate() {
                     println!(
                         "Field {} lane {}: Flips: {:?}",
-                        field_idx, lane_idx, flips_per_bit[field_idx][lane_idx]
+                        field_idx, lane_idx, flips_per_bit_for_lane
                     );
                 }
             }
@@ -1046,12 +1046,12 @@ mod tests {
         // Fixed deterministic ±1 kernel
         let mut k = [[0i8; BLOCK]; BLOCK];
         let mut x: u64 = 0x12345678abcdef01;
-        for i in 0..BLOCK {
-            for j in 0..BLOCK {
+        for row in k.iter_mut() {
+            for cell in row.iter_mut() {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
-                k[i][j] = if x & 1 == 0 { 1 } else { -1 };
+                *cell = if x & 1 == 0 { 1 } else { -1 };
             }
         }
         k
@@ -1067,10 +1067,10 @@ mod tests {
         for y in 0..side - BLOCK {
             for x in 0..side - BLOCK {
                 let mut acc = 0i32;
-                for ky in 0..BLOCK {
-                    for kx in 0..BLOCK {
+                for (ky, kernel_row) in kernel.iter().enumerate() {
+                    for (kx, kernel_entry) in kernel_row.iter().copied().enumerate() {
                         let idx = (y + ky) * side + (x + kx);
-                        acc += data[idx] as i32 * kernel[ky][kx] as i32;
+                        acc += data[idx] as i32 * kernel_entry as i32;
                     }
                 }
                 let val = acc as f64;
@@ -1115,7 +1115,7 @@ mod tests {
                 let mut sums = [0i64; 64];
                 for _ in 0..N {
                     rng.fill(&mut lanes);
-                    for bit in 0..64 {
+                    for (bit, sum) in sums.iter_mut().enumerate() {
                         let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
                         let b = if (lanes[target_lane] >> bit) & 1 == 1 {
                             1
@@ -1123,7 +1123,7 @@ mod tests {
                             -1
                         };
 
-                        sums[bit] += (a * b) as i64;
+                        *sum += (a * b) as i64;
                     }
                 }
                 for (bit, sum) in sums.into_iter().enumerate() {
@@ -1168,9 +1168,7 @@ mod tests {
 
             for _ in 0..10000 {
                 let mut matrix = [0u64; 64];
-                for r in 0..64 {
-                    matrix[r] = rng.next_u64();
-                }
+                rng.fill(&mut matrix);
                 let rank = gf2_rank(matrix);
                 assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
                 if rank == 60 {
@@ -1187,9 +1185,7 @@ mod tests {
             const N: usize = 1 << 21;
 
             let mut x = vec![0u64; N];
-            for i in 0..N {
-                x[i] = rng.next_u64();
-            }
+            rng.fill(x.as_mut_slice());
 
             // first difference
             for i in 0..N - 1 {
