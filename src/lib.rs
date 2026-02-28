@@ -22,8 +22,8 @@ use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{SeedableRng, TryRng};
-use std::marker::PhantomData;
 use serde::de::Error;
+use std::marker::PhantomData;
 use tiny_keccak::{CShake, Hasher, Xof};
 use typenum::U;
 // ============================================================================
@@ -110,7 +110,9 @@ struct CoreState {
 }
 
 #[cfg(feature = "zeroize")]
-impl <Reproducibility: FillBytesReproducibility> zeroize::Zeroize for TripleMixPrng<Reproducibility> {
+impl<Reproducibility: FillBytesReproducibility> zeroize::Zeroize
+    for TripleMixPrng<Reproducibility>
+{
     fn zeroize(&mut self) {
         self.block_core.core.zeroize();
 
@@ -124,9 +126,13 @@ impl <Reproducibility: FillBytesReproducibility> zeroize::Zeroize for TripleMixP
 }
 
 #[cfg(feature = "serde")]
-impl<Reproducibility: FillBytesReproducibility> serde::Serialize for TripleMixPrng<Reproducibility> {
+impl<Reproducibility: FillBytesReproducibility> serde::Serialize
+    for TripleMixPrng<Reproducibility>
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         let core = &self.block_core.core;
         CoreState {
             xr0: core.xr0.to_array(),
@@ -137,15 +143,24 @@ impl<Reproducibility: FillBytesReproducibility> serde::Serialize for TripleMixPr
             weyl_hi: core.weyl_hi.to_array(),
             inc_lo: core.inc_lo.to_array(),
             inc_hi: core.inc_hi.to_array(),
-            remaining_results: self.block_core.remaining_results().to_vec().into_boxed_slice(),
-        }.serialize(serializer)
+            remaining_results: self
+                .block_core
+                .remaining_results()
+                .to_vec()
+                .into_boxed_slice(),
+        }
+        .serialize(serializer)
     }
 }
 
 #[cfg(feature = "serde")]
-impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de> for TripleMixPrng<Reproducibility> {
+impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de>
+    for TripleMixPrng<Reproducibility>
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         let state = CoreState::deserialize(deserializer)?;
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(state.xr0),
@@ -158,7 +173,17 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de> for
             inc_hi: Simd64::from_array(state.inc_hi),
         };
         for i in 0..SIMD_WIDTH {
-            if Self::is_lane_invalid(core.xr0, core.xr1, core.tm0, core.tm1, core.weyl_lo, core.weyl_hi, core.inc_lo, core.inc_hi, i) {
+            if Self::is_lane_invalid(
+                core.xr0,
+                core.xr1,
+                core.tm0,
+                core.tm1,
+                core.weyl_lo,
+                core.weyl_hi,
+                core.inc_lo,
+                core.inc_hi,
+                i,
+            ) {
                 return Err(D::Error::custom(format!("invalid core state in lane {i}")));
             }
         }
@@ -394,7 +419,9 @@ pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
 pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
-impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<Reproducibility> {
+impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
+    for TripleMixPrng<Reproducibility>
+{
     fn from(value: T) -> Self {
         const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
         let mut xr0 = Simd::splat(0);
@@ -440,12 +467,22 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T> for Trip
         TripleMixPrng {
             block_core: BlockRng::new(core),
             reproducibility: PhantomData,
-    }
+        }
     }
 }
 
 impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
-    fn is_lane_invalid(xr0: Simd64, xr1: Simd64, tm0: Simd64, tm1: Simd64, weyl_lo: Simd64, weyl_hi: Simd64, inc_lo: Simd64, inc_hi: Simd64, i: usize) -> bool {
+    fn is_lane_invalid(
+        xr0: Simd64,
+        xr1: Simd64,
+        tm0: Simd64,
+        tm1: Simd64,
+        weyl_lo: Simd64,
+        weyl_hi: Simd64,
+        inc_lo: Simd64,
+        inc_hi: Simd64,
+        i: usize,
+    ) -> bool {
         if unlikely(
             unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
                 || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0)),
@@ -457,13 +494,11 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
                 unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
                     || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
                     || unlikely(
-                    unlikely(weyl_lo[j] == weyl_lo[i])
-                        && unlikely(weyl_hi[j] == weyl_hi[i]),
-                )
+                        unlikely(weyl_lo[j] == weyl_lo[i]) && unlikely(weyl_hi[j] == weyl_hi[i]),
+                    )
                     || unlikely(
-                    unlikely(inc_lo[j] == inc_lo[i])
-                        && unlikely(inc_hi[j] == inc_hi[i]),
-                ),
+                        unlikely(inc_lo[j] == inc_lo[i]) && unlikely(inc_hi[j] == inc_hi[i]),
+                    ),
             ) {
                 return true;
             }
