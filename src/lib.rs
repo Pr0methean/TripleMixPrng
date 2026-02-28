@@ -445,7 +445,7 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
+                if unlikely(Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i)) {
                     let mut retry_hasher = Sha3_512::default();
                     Update::update(&mut retry_hasher, seed.as_ref());
                     Update::update(&mut retry_hasher, &[i as u8 + 4]);
