@@ -472,6 +472,7 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
 }
 
 impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
+    #[allow(clippy::too_many_arguments)]
     fn is_lane_invalid(
         xr0: Simd64,
         xr1: Simd64,
@@ -505,9 +506,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         }
         false
     }
-}
 
-impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
     pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
         Self {
             block_core: BlockRng::new(core),
@@ -546,7 +545,7 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
             self.fill(cell.as_mut_array());
         }
 
-        let mut child_core = self.block_core.core.clone();
+        let mut child_core = self.block_core.core;
 
         let a = child_core.xr0;
         let b = entropy[2];
@@ -1171,7 +1170,7 @@ mod tests {
     #[test]
     fn test_avalanche() {
         for rng in create_rngs::<NotReproducible>() {
-            let core = rng.block_core.core.clone();
+            let core = rng.block_core.core;
 
             const ITERATIONS: usize = 20;
             const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
@@ -1181,7 +1180,7 @@ mod tests {
             let mut total_flips: u64 = 0;
             let mut count: u64 = 0;
             let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
-            let mut core1 = core.clone();
+            let mut core1 = core;
             let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
             for output_block in output1.iter_mut() {
                 core1.generate(output_block);
@@ -1203,7 +1202,7 @@ mod tests {
                             continue;
                         }
                         //if field_idx == 7 && bit_idx >= 59 { continue; }
-                        let mut core2 = core.clone();
+                        let mut core2 = core;
                         match field_idx {
                             0 => {
                                 let x = core2.xr0;

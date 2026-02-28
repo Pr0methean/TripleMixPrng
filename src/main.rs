@@ -8,13 +8,13 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
-use triple_mix_prng::{SEED_SIZE, TripleMixPrng};
+use triple_mix_prng::{SEED_SIZE, TripleMixPrng, NotReproducible};
 
 const OS_ENTROPY_BYTES: usize = 32;
 
 fn main() {
     let args: Vec<_> = env::args_os().collect();
-    let mut prng: TripleMixPrng;
+    let mut prng: TripleMixPrng<NotReproducible>;
     if let Some(seed_arg) = args.get(1)
         && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
     {
