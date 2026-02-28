@@ -14,17 +14,17 @@ mod avx2;
 
 use core::convert::Infallible;
 use core::hint::unlikely;
-use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+use core::simd::cmp::{SimdPartialOrd};
 use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
-use rand_core::{SeedableRng, TryRng};
-use serde::de::Error;
+use rand_core::{Rng, SeedableRng, TryRng};
 use std::marker::PhantomData;
-use tiny_keccak::{CShake, Hasher, Xof};
+use sha3::digest::{FixedOutput, Update};
+use sha3::{Sha3_512};
 use typenum::U;
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
@@ -161,6 +161,7 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de>
     where
         D: serde::Deserializer<'de>,
     {
+        use serde::de::Error;
         let state = CoreState::deserialize(deserializer)?;
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(state.xr0),
@@ -422,8 +423,7 @@ pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
     for TripleMixPrng<Reproducibility>
 {
-    fn from(value: T) -> Self {
-        const LANE_CHUNK_SIZE: usize = SIMD_WIDTH * 16;
+    fn from(seed: T) -> Self {
         let mut xr0 = Simd::splat(0);
         let mut xr1 = Simd::splat(0);
         let mut tm0 = Simd::splat(0);
@@ -434,11 +434,11 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
         let mut inc_hi = Simd::splat(0);
         for i in 0..SIMD_WIDTH {
             let mut count: u128 = 0;
-            let mut lane_hasher = CShake::v256(TRIPLE_MIX_PRNG_OID.as_bytes(), &[i as u8 + 1]);
-            lane_hasher.update(value.as_ref());
-            let mut out_bytes = [0u8; LANE_CHUNK_SIZE];
+            let mut lane_hasher = Sha3_512::default();
+            Update::update(&mut lane_hasher, seed.as_ref());
+            Update::update(&mut lane_hasher, &[i as u8]);
+            let mut out_bytes = lane_hasher.finalize_fixed();
             loop {
-                lane_hasher.squeeze(&mut out_bytes);
                 [
                     xr0[i], xr1[i], tm0[i], tm1[i], weyl_lo[i], weyl_hi[i], inc_lo[i], inc_hi[i],
                 ] = read_words(&out_bytes);
@@ -446,8 +446,12 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 inc_lo[i] |= 1;
 
                 if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
-                    lane_hasher.update(&count.to_ne_bytes());
+                    let mut retry_hasher = Sha3_512::default();
+                    Update::update(&mut retry_hasher, seed.as_ref());
+                    Update::update(&mut retry_hasher, &[i as u8 + 4]);
+                    Update::update(&mut retry_hasher, count.to_le_bytes().as_ref());
                     count = count.wrapping_add(1);
+                    out_bytes = retry_hasher.finalize_fixed();
                     continue;
                 }
                 break;
@@ -539,84 +543,11 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
     }
 
     fn fork(&mut self) -> Self {
-        let mut entropy = [Simd::splat(0); 8];
-        for cell in entropy.iter_mut() {
-            use rand::RngExt;
-            self.fill(cell.as_mut_array());
-        }
-
-        let mut child_core = self.block_core.core;
-
-        let a = child_core.xr0;
-        let b = entropy[2];
-        child_core.xr0 = a ^ b;
-        let a = child_core.xr1;
-        let b = entropy[3];
-        child_core.xr1 = a ^ b;
-        let a = child_core.tm0;
-        let b = entropy[4];
-        child_core.tm0 = a ^ b;
-        let a = child_core.tm1;
-        let b = entropy[5];
-        child_core.tm1 = a ^ b;
-        let a1 = child_core.tm0;
-        child_core.tm0 = a1 & Simd::splat(TINYMT64_LANE_MASK);
-
-        let a2 = child_core.xr0;
-        let b1 = child_core.xr1;
-        let xr_combined = a2 | b1;
-        let a2 = child_core.tm0;
-        let b1 = child_core.tm1;
-        let tm_combined = a2 | b1;
-
-        let mut rejected = false;
-        if unlikely(
-            xr_combined.simd_eq(Simd::splat(0)).any() || tm_combined.simd_eq(Simd::splat(0)).any(),
-        ) {
-            rejected = true;
-        } else {
-            for i in 1..SIMD_WIDTH {
-                for j in 0..i {
-                    let x = child_core.inc_lo;
-                    let x1 = child_core.inc_lo;
-                    let x2 = child_core.weyl_lo;
-                    let x3 = child_core.weyl_lo;
-                    let x4 = child_core.tm1;
-                    let x5 = child_core.tm1;
-                    let x6 = child_core.tm0;
-                    let x7 = child_core.tm0;
-                    let x8 = child_core.xr1;
-                    let x9 = child_core.xr1;
-                    let x10 = child_core.xr0;
-                    let x11 = child_core.xr0;
-                    if unlikely(
-                        (x11.to_array()[j] == x10.to_array()[i]
-                            && x9.to_array()[j] == x8.to_array()[i])
-                            || (x7.to_array()[j] == x6.to_array()[i]
-                                && x5.to_array()[j] == x4.to_array()[i])
-                            || x3.to_array()[j] == x2.to_array()[i]
-                            || x1.to_array()[j] == x.to_array()[i],
-                    ) {
-                        rejected = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if unlikely(rejected) {
-            let mut seed = [0u8; SEED_SIZE];
-            self.block_core.fill_bytes(&mut seed);
-            return Self::from_seed(seed.into());
-        }
-        child_core.inc_lo = entropy[0] | Simd::splat(1);
-        child_core.inc_hi = entropy[1];
-        child_core.weyl_lo ^= entropy[6];
-        child_core.weyl_hi ^= entropy[7];
-
-        Self {
-            block_core: BlockRng::new(child_core),
-            reproducibility: PhantomData,
-        }
+        // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
+        // not derive state for instances of themselves
+        let mut seed = [0u8; SEED_SIZE];
+        self.fill_bytes(&mut seed);
+        Self::from(&seed)
     }
 }
 
