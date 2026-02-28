@@ -14,7 +14,7 @@ mod avx2;
 
 use core::convert::Infallible;
 use core::hint::unlikely;
-use core::simd::cmp::{SimdPartialOrd};
+use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
@@ -22,9 +22,9 @@ use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
 use rand_core::{Rng, SeedableRng, TryRng};
-use std::marker::PhantomData;
+use sha3::Sha3_512;
 use sha3::digest::{FixedOutput, Update};
-use sha3::{Sha3_512};
+use std::marker::PhantomData;
 use typenum::U;
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
@@ -445,7 +445,9 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                if unlikely(Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i)) {
+                if unlikely(Self::is_lane_invalid(
+                    xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i,
+                )) {
                     let mut retry_hasher = Sha3_512::default();
                     Update::update(&mut retry_hasher, seed.as_ref());
                     Update::update(&mut retry_hasher, &[i as u8 + 4]);
