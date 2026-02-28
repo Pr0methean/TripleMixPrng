@@ -346,17 +346,19 @@ impl <Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> 
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                if unlikely((xr0[i] == 0 && xr1[i] == 0) || (tm0[i] == 0 && tm1[i] == 0)) {
+                if unlikely(
+                        unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
+                        || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0))) {
                     lane_hasher.update(&count.to_ne_bytes());
                     count += 1;
                     continue;
                 }
                 for j in 0..i {
                     if unlikely(
-                        (xr0[j] == xr0[i] && xr1[j] == xr1[i])
-                            || (tm0[j] == tm0[i] && tm1[j] == tm1[i])
-                            || (weyl_lo[j] == weyl_lo[i] && weyl_hi[j] == weyl_hi[i])
-                            || (inc_lo[j] == inc_lo[i] && inc_hi[j] == inc_hi[i]),
+                        unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
+                            || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
+                            || unlikely(unlikely(weyl_lo[j] == weyl_lo[i]) && unlikely(weyl_hi[j] == weyl_hi[i]))
+                            || unlikely(unlikely(inc_lo[j] == inc_lo[i]) && unlikely(inc_hi[j] == inc_hi[i])),
                     ) {
                         lane_hasher.update(&count.to_ne_bytes());
                         count += 1;
