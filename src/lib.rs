@@ -1,10 +1,4 @@
-#![feature(
-    likely_unlikely,
-    portable_simd,
-    generic_const_exprs,
-    target_feature_inline_always
-)]
-#![allow(incomplete_features)]
+#![feature(portable_simd)]
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx2",
@@ -13,7 +7,7 @@
 mod avx2;
 
 use core::convert::Infallible;
-use core::hint::unlikely;
+use core::hint::cold_path;
 use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::SimdUint;
 use core::simd::*;
@@ -185,6 +179,7 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de>
                 core.inc_hi,
                 i,
             ) {
+                cold_path();
                 return Err(D::Error::custom(format!("invalid core state in lane {i}")));
             }
         }
@@ -446,9 +441,10 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                if unlikely(Self::is_lane_invalid(
+                let x = Self::is_lane_invalid(
                     xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i,
-                )) {
+                );
+                if x {
                     let mut retry_hasher = Sha3_512::default();
                     Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
                     Update::update(&mut retry_hasher, seed.as_ref());
@@ -478,7 +474,6 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
         }
     }
 }
-
 impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
     #[allow(clippy::too_many_arguments)]
     fn is_lane_invalid(
@@ -492,23 +487,15 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         inc_hi: Simd64,
         i: usize,
     ) -> bool {
-        if unlikely(
-            unlikely(unlikely(xr0[i] == 0) && unlikely(xr1[i] == 0))
-                || unlikely(unlikely(tm0[i] == 0) && unlikely(tm1[i] == 0)),
-        ) {
+        if ((xr0[i] == 0) && (xr1[i] == 0))
+            || ((tm0[i] == 0) && (tm1[i] == 0)) {
             return true;
         }
         for j in 0..i {
-            if unlikely(
-                unlikely(unlikely(xr0[j] == xr0[i]) && unlikely(xr1[j] == xr1[i]))
-                    || unlikely(unlikely(tm0[j] == tm0[i]) && unlikely(tm1[j] == tm1[i]))
-                    || unlikely(
-                        unlikely(weyl_lo[j] == weyl_lo[i]) && unlikely(weyl_hi[j] == weyl_hi[i]),
-                    )
-                    || unlikely(
-                        unlikely(inc_lo[j] == inc_lo[i]) && unlikely(inc_hi[j] == inc_hi[i]),
-                    ),
-            ) {
+            if (xr0[j] == xr0[i] && xr1[j] == xr1[i])
+                || (tm0[j] == tm0[i] && tm1[j] == tm1[i])
+                || (weyl_lo[j] == weyl_lo[i] && weyl_hi[j] == weyl_hi[i])
+                || (inc_lo[j] == inc_lo[i] && inc_hi[j] == inc_hi[i]) {
                 return true;
             }
         }
@@ -532,25 +519,22 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             let result = Self::from(&seed);
             for i in 0..SIMD_WIDTH {
                 for j in 0..SIMD_WIDTH {
-                    if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
-                        && unlikely(
-                            result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j],
-                        )
+                    let x = result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j];
+                    let x1 = result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j];
+                    if x1
+                        && x
                     {
                         continue 'generate;
                     }
-                    if unlikely(
-                        unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
-                            && unlikely(
-                                result.block_core.core.xr1[i] == self.block_core.core.xr1[j],
-                            )
-                            && unlikely(
-                                result.block_core.core.tm0[i] == self.block_core.core.tm0[j],
-                            )
-                            && unlikely(
-                                result.block_core.core.tm1[i] == self.block_core.core.tm1[j],
-                            ),
-                    ) {
+                    let x = result.block_core.core.tm1[i] == self.block_core.core.tm1[j];
+                    let x1 = result.block_core.core.tm0[i] == self.block_core.core.tm0[j];
+                    let x2 = result.block_core.core.xr1[i] == self.block_core.core.xr1[j];
+                    let x3 = result.block_core.core.xr0[i] == self.block_core.core.xr0[j];
+                    let x4 = x3
+                        && x2
+                        && x1
+                        && x;
+                    if x4 {
                         continue 'generate;
                     }
                 }
