@@ -426,7 +426,8 @@ fn create_preinitialized_hashers() -> [Sha3_512; SIMD_WIDTH] {
 }
 
 #[cfg(not(feature = "no_std"))]
-const LANE_HASHERS: std::sync::LazyLock<[Sha3_512; SIMD_WIDTH]> = std::sync::LazyLock::new(create_preinitialized_hashers);
+const LANE_HASHERS: std::sync::LazyLock<[Sha3_512; SIMD_WIDTH]> =
+    std::sync::LazyLock::new(create_preinitialized_hashers);
 
 #[cfg(not(feature = "no_std"))]
 fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
@@ -438,7 +439,9 @@ const LANE_HASHERS: spin::Once<[Sha3_512; SIMD_WIDTH]> = spin::Once::new();
 
 #[cfg(feature = "no_std")]
 fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
-    LANE_HASHERS.call_once(create_preinitialized_hashers).clone()
+    LANE_HASHERS
+        .call_once(create_preinitialized_hashers)
+        .clone()
 }
 
 impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
@@ -527,32 +530,36 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
     /// The returned instance has less than a 1 in 2<sup>500</sup> chance of sharing a state with
-    /// any other instance obtained by fork_with_domain, unless they're called on clones of the same
-    /// instance *and* the domain bytes are identical across both calls.
+    /// any other instance obtained by fork_with_domain_separation, unless they're called on clones
+    /// of the same instance *and* the domain bytes are identical across both calls.
     /// Also permutes the parent PRNG's state so that repeated calls, even with the same
     /// domain-separation bytes, will return statistically independent instances.
     pub fn fork_with_domain_separation(&mut self, domain_separation: impl AsRef<[u8]>) -> Self {
         // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
         // not derive state for instances of themselves
         let domain_len = domain_separation.as_ref().len();
-        let mut seed = vec![0u8; SEED_SIZE + domain_len];
-        seed[..domain_len].copy_from_slice(domain_separation.as_ref());
+        let xor_len = domain_len.min(SEED_SIZE);
+        let mut seed = vec![0u8; SEED_SIZE.max(domain_len)];
+        if domain_len > SEED_SIZE {
+            seed[SEED_SIZE..].copy_from_slice(&domain_separation.as_ref()[SEED_SIZE..]);
+        }
         'generate: loop {
-            self.fill_bytes(&mut seed[domain_len..]);
+            self.fill_bytes(&mut seed[0..SEED_SIZE]);
+            seed[..xor_len]
+                .iter_mut()
+                .zip(domain_separation.as_ref().iter().copied())
+                .for_each(|(a, b)| *a ^= b);
             let result = Self::from(&seed);
             for i in 0..SIMD_WIDTH {
                 for j in 0..SIMD_WIDTH {
-                    let x = result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j];
-                    let x1 = result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j];
-                    if x1 && x {
-                        continue 'generate;
-                    }
-                    let x = result.block_core.core.tm1[i] == self.block_core.core.tm1[j];
-                    let x1 = result.block_core.core.tm0[i] == self.block_core.core.tm0[j];
-                    let x2 = result.block_core.core.xr1[i] == self.block_core.core.xr1[j];
-                    let x3 = result.block_core.core.xr0[i] == self.block_core.core.xr0[j];
-                    let x4 = x3 && x2 && x1 && x;
-                    if x4 {
+                    if ((result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
+                        && (result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j]))
+                        || (result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
+                            && (result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
+                            && (result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
+                            && (result.block_core.core.tm1[i] == self.block_core.core.tm1[j])
+                    {
+                        cold_path();
                         continue 'generate;
                     }
                 }
@@ -1091,7 +1098,8 @@ mod tests {
         const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
         const FORKS: usize = 64;
         #[cfg(not(feature = "no_std"))]
-        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        let mut previous_outputs =
+            std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         #[cfg(feature = "no_std")]
         let mut previous_outputs = core::collections::BTreeSet::new();
         for mut prng in create_rngs::<NotReproducible>() {
@@ -1112,7 +1120,8 @@ mod tests {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
         #[cfg(not(feature = "no_std"))]
-        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        let mut previous_outputs =
+            std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         #[cfg(feature = "no_std")]
         let mut previous_outputs = core::collections::BTreeSet::new();
         for mut parent_prng in create_rngs::<NotReproducible>() {
@@ -1284,8 +1293,7 @@ mod tests {
                 "Average diffusion too high?"
             );
             let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
-            let low_avalanche_probability =
-                bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD);
+            let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD);
             let low_avalanche_distribution =
                 Binomial::new(low_avalanche_probability, count).unwrap();
             let mean = low_avalanche_distribution.mean().unwrap();
