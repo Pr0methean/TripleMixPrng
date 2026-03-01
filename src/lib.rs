@@ -8,6 +8,7 @@ mod avx2;
 
 use core::convert::Infallible;
 use core::hint::cold_path;
+use core::marker::PhantomData;
 use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::SimdUint;
 use core::simd::simd_swizzle;
@@ -19,7 +20,6 @@ use rand_core::utils::read_words;
 use rand_core::{Rng, SeedableRng, TryRng};
 use sha3::Sha3_512;
 use sha3::digest::{FixedOutput, Update};
-use std::marker::PhantomData;
 use typenum::U;
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
@@ -702,6 +702,7 @@ impl Generator for TripleMixSimdCore {
 mod tests {
     use super::*;
     use bytemuck::cast_slice_mut;
+    use core::any::TypeId;
     use core::simd::cmp::SimdPartialEq;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
@@ -710,7 +711,6 @@ mod tests {
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use statrs::statistics::Distribution;
-    use std::any::TypeId;
     use std::collections::HashSet;
 
     #[test]
