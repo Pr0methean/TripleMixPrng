@@ -2,8 +2,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, TryRng};
-use std::hint::black_box;
 use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
+use std::hint::black_box;
 
 fn fill_bytes(c: &mut Criterion) {
     let mut seed = [0u8; SEED_SIZE];
