@@ -18,6 +18,7 @@ use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::SimdUint;
 use core::simd::*;
 use core::slice::from_mut;
+use std::hint::cold_path;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -454,8 +455,12 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                     Update::update(&mut retry_hasher, seed.as_ref());
                     Update::update(&mut retry_hasher, &[i as u8 + 4]);
                     Update::update(&mut retry_hasher, count.to_le_bytes().as_ref());
-                    count = count.wrapping_add(1);
                     out_bytes = retry_hasher.finalize_fixed();
+                    let Some(new_count) = count.checked_add(1) else {
+                        cold_path();
+                        return Self::almost_all_zeroes_state();
+                    };
+                    count = new_count;
                     continue;
                 }
                 break;
@@ -560,7 +565,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
     }
 
     /// Creates an instance in a relatively predictable state. Idempotent. Intended only for
-    /// testing.
+    /// testing or to theoretically handle extremely unlikely failures to generate a random state.
     pub fn almost_all_zeroes_state() -> Self {
         const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
