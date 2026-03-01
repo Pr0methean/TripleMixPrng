@@ -1085,7 +1085,7 @@ mod tests {
             for _ in 0..FORKS {
                 for _ in 0..SAMPLES_PER_FORK {
                     let next = prng.next_u64();
-                    print!("{next:016X}");
+                    print!("{next:016X} ");
                     assert!(random.insert(next));
                 }
                 println!();
@@ -1104,7 +1104,7 @@ mod tests {
                 let mut prng = parent_prng.fork();
                 for _ in 0..SAMPLES_PER_FORK {
                     let next = prng.next_u64();
-                    print!("{next:016X}");
+                    print!("{next:016X} ");
                     assert!(random.insert(next));
                 }
                 println!();
