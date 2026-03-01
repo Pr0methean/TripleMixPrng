@@ -515,11 +515,12 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         false
     }
 
-    /// Create a new instance that's derived from both this one and the provided domain-separation
-    /// bytes.
-    /// The returned instance won't share a state with any other instance obtained by
-    /// fork_with_domain unless both the receiving instance's state and the domain bytes are
-    /// identical across both calls.
+    /// Returns a new instance derived from both this one and the provided domain-separation bytes.
+    /// The returned instance has less than a 1 in 2<sup>500</sup> chance of sharing a state with
+    /// any other instance obtained by fork_with_domain, unless they're called on clones of the same
+    /// instance *and* the domain bytes are identical across both calls.
+    /// Also permutes the parent PRNG's state so that repeated calls, even with the same
+    /// domain-separation bytes, will return statistically independent instances.
     pub fn fork_with_domain_separation(&mut self, domain_separation: impl AsRef<[u8]>) -> Self {
         // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
         // not derive state for instances of themselves
@@ -558,7 +559,8 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         }
     }
 
-    /// Creates an instance in a relatively predictable state. Intended only for testing.
+    /// Creates an instance in a relatively predictable state. Idempotent. Intended only for
+    /// testing.
     pub fn almost_all_zeroes_state() -> Self {
         const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
