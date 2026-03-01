@@ -604,7 +604,11 @@ impl FillBytesReproducibility for NotReproducible {
 }
 
 #[inline(always)]
-fn fill_bytes_inner(block_core: &mut BlockRng<TripleMixSimdCore>, u64s: &mut [u64], suffix: &mut [u8]) {
+fn fill_bytes_inner(
+    block_core: &mut BlockRng<TripleMixSimdCore>,
+    u64s: &mut [u64],
+    suffix: &mut [u8],
+) {
     let remaining = block_core.remaining_results();
     if u64s.len() <= remaining.len() {
         for word in u64s.iter_mut() {
@@ -625,7 +629,6 @@ fn fill_bytes_inner(block_core: &mut BlockRng<TripleMixSimdCore>, u64s: &mut [u6
         block_core.fill_bytes(suffix);
     }
 }
-
 
 /// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
 /// machine's endianness, but not on any attribute of the byte slice itself except its length.
@@ -1190,17 +1193,22 @@ mod tests {
                             let first_output2 = Simd::splat(output2[i][0][0]);
                             for vec_idx in 0..OUTPUTS_PER_STEP {
                                 let xor = output1[i][vec_idx] ^ output2[i][vec_idx];
-                                let sub_same = (output1[i][vec_idx] - output2[i][vec_idx]).simd_eq(first_output1 - first_output2);
+                                let sub_same = (output1[i][vec_idx] - output2[i][vec_idx])
+                                    .simd_eq(first_output1 - first_output2);
                                 let xor_same = xor.simd_eq(first_output1 ^ first_output2);
                                 for cell in 0..SIMD_WIDTH {
                                     if vec_idx == 0 && cell == 0 {
                                         continue;
                                     }
-                                    assert_eq!(sub_same.test(cell), false,
-                                               "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
+                                    assert_eq!(
+                                        sub_same.test(cell),
+                                        false,
+                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
                                     );
-                                    assert_eq!(xor_same.test(cell), false,
-                                               "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
+                                    assert_eq!(
+                                        xor_same.test(cell),
+                                        false,
+                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
                                     );
                                 }
                                 flips += xor.count_ones().reduce_sum();
