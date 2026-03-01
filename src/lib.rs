@@ -539,11 +539,18 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
                     {
                         continue 'generate;
                     }
-                    if unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
-                        && unlikely(result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
-                        && unlikely(result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
-                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j])
-                    {
+                    if unlikely(
+                        unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
+                            && unlikely(
+                                result.block_core.core.xr1[i] == self.block_core.core.xr1[j],
+                            )
+                            && unlikely(
+                                result.block_core.core.tm0[i] == self.block_core.core.tm0[j],
+                            )
+                            && unlikely(
+                                result.block_core.core.tm1[i] == self.block_core.core.tm1[j],
+                            ),
+                    ) {
                         continue 'generate;
                     }
                 }
