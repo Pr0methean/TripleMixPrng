@@ -1,25 +1,23 @@
 TripleMixPrng
 =============
 
-This is a vectorized pseudorandom number generator that combines xoroshiro128, TinyMT64 and a 
-128-bit Weyl sequence. It has the following properties:
+This is a vectorized pseudorandom number generator that combines an instance of xoroshiro128, TinyMT64 and a 
+128-bit linear congruential generator (LCG) in each of 4 SIMD lanes. It has the following properties:
 
-* The output block size is 1024 bits (16 u64's).
-* The state size is 2048 bits: 508 bits of identity, 1532 bits of mutable state, 8 bits of overhead.
-* The period is `(u128::MAX.into() * i128::MAX.into()) << 128` blocks, because it combines the following sequences and
-  their periods are coprime:
-  * A Weyl sequence with period 1<<128.
-  * TinyMT64 with period 2^127-1.
-  * Xoroshiro128 with period 2^128-1.
-* 64-bit outputs are exactly uniformly distributed: each possible output will occur `(u128::MAX.into() * i128::MAX.into()) << 64`
-  times in each SIMD lane during the period.
+* The output block size is 64 bytes (8 u64's).
+* The state size is 256 bytes: 508 bits of identity, 1532 bits of mutable state, 8 bits of overhead.
+* The period is 2<sup>128</sup>(2<sup>128</sup> - 1)(2<sup>127</sup> - 1) blocks, because the period of the LCG is
+  2<sup>128</sup>, the period of the TinyMT64 is 2<sup>127</sup> - 1, and the period of the xoroshiro is 
+  2<sup>128</sup> - 1, and those three periods are coprime.
+* 64-bit outputs are exactly uniformly distributed: each possible output will occur 
+  2<sup>64</sup>(2<sup>128</sup> - 1)(2<sup>127</sup> - 1) times in each SIMD lane during a full cycle.
 * Within each lane, the mutable-state bits form a single cycle.
 * The mixing function uses SIMD-lane-specific constants, so it will not generate closely related output in different 
-  lanes even when those lanes have the same internal state.
-* Created using a 2048-bit seed; seeding uses SHAKE256 with multiple absorbs/squeezes to maximize the chance that
-  every valid state corresponds to at least one seed.
-* Runs faster than ChaCha12Rng for both `fill_bytes` (measured on a 1MiB output) and `next_u64`.
-* next_u64 takes about 2 ns.
+  lanes even when those lanes have a similar internal state.
+* Seeding uses SHA3-512 with TripleMixPrng-specific and lane-specific constant inputs and a seed that is ideally 256
+  bytes but can be any length.
+* The seeding function ensures no sub-generator will have the same state in two different SIMD lanes.
+* Runs faster on AVX2 than ChaCha12Rng for both `fill_bytes` (measured on a 1MiB output) and `next_u64`.
 * Byte-sequence entropy measurements (based on 16 GiB from the instance produced by 
   `TripleMixPrng::<CrossPlatform>::almost_all_zeroes_state()`) are:
   | Metric                           | Value                           |
