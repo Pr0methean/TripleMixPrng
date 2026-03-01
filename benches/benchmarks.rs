@@ -3,7 +3,7 @@ use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, TryRng};
 use std::hint::black_box;
-use triple_mix_prng::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
+use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
 
 fn fill_bytes(c: &mut Criterion) {
     let mut seed = [0u8; SEED_SIZE];

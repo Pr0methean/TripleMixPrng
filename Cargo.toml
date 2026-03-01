@@ -22,7 +22,7 @@ zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
 
 [[bin]]
-name = "triple_mix_prng"
+name = "rand_triplemix"
 required-features = ["hex","aws-lc-rs"]
 
 [[bench]]
