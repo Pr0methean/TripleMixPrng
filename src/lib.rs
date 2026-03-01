@@ -587,6 +587,7 @@ pub trait FillBytesReproducibility: Clone + Copy {
 pub struct NotReproducible;
 
 impl FillBytesReproducibility for NotReproducible {
+    #[inline(always)]
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         let (prefix, u64s, suffix) = unsafe { bytes.align_to_mut::<u64>() };
         if u64s.is_empty() {
@@ -598,27 +599,33 @@ impl FillBytesReproducibility for NotReproducible {
         if !prefix.is_empty() {
             block_core.fill_bytes(prefix);
         }
-        let remaining = block_core.remaining_results();
-        if u64s.len() <= remaining.len() {
-            for word in u64s.iter_mut() {
-                *word = block_core.next_word();
-            }
-        } else {
-            u64s[0..remaining.len()].copy_from_slice(remaining);
-            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
-            if !dst_blocks.is_empty() {
-                block_core.core.fill_blocks(dst_blocks);
-            }
-            block_core.reset_and_skip(0); // mark the buffer contents as used
-            for tail_u64 in tail {
-                *tail_u64 = block_core.next_word();
-            }
-        }
-        if !suffix.is_empty() {
-            block_core.fill_bytes(suffix);
-        }
+        fill_bytes_inner(block_core, u64s, suffix);
     }
 }
+
+#[inline(always)]
+fn fill_bytes_inner(block_core: &mut BlockRng<TripleMixSimdCore>, u64s: &mut [u64], suffix: &mut [u8]) {
+    let remaining = block_core.remaining_results();
+    if u64s.len() <= remaining.len() {
+        for word in u64s.iter_mut() {
+            *word = block_core.next_word();
+        }
+    } else {
+        u64s[0..remaining.len()].copy_from_slice(remaining);
+        let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
+        if !dst_blocks.is_empty() {
+            block_core.core.fill_blocks(dst_blocks);
+        }
+        block_core.reset_and_skip(0); // mark the buffer contents as used
+        for tail_u64 in tail {
+            *tail_u64 = block_core.next_word();
+        }
+    }
+    if !suffix.is_empty() {
+        block_core.fill_bytes(suffix);
+    }
+}
+
 
 /// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
 /// machine's endianness, but not on any attribute of the byte slice itself except its length.
@@ -629,31 +636,14 @@ pub struct SameEndianness;
 /// the same calls (counting two `fill_bytes` as the same when they write to slices of the same
 /// length), as long as both instances are created on machines with the same endianness.
 impl FillBytesReproducibility for SameEndianness {
+    #[inline(always)]
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         let (prefix, u64s, suffix) = unsafe { bytes.align_to_mut::<u64>() };
-        if u64s.is_empty() || !prefix.is_empty() {
+        if !prefix.is_empty() {
             block_core.fill_bytes(bytes);
             return;
         }
-        let remaining = block_core.remaining_results();
-        if u64s.len() <= remaining.len() {
-            for word in u64s.iter_mut() {
-                *word = block_core.next_word();
-            }
-        } else {
-            u64s[0..remaining.len()].copy_from_slice(remaining);
-            let (dst_blocks, tail) = u64s[remaining.len()..].as_chunks_mut();
-            if !dst_blocks.is_empty() {
-                block_core.core.fill_blocks(dst_blocks);
-            }
-            block_core.reset_and_skip(0); // mark the buffer contents as used
-            for tail_u64 in tail {
-                *tail_u64 = block_core.next_word();
-            }
-        }
-        if !suffix.is_empty() {
-            block_core.fill_bytes(suffix);
-        }
+        fill_bytes_inner(block_core, u64s, suffix);
     }
 }
 
@@ -664,6 +654,7 @@ impl FillBytesReproducibility for SameEndianness {
 pub struct CrossPlatform;
 
 impl FillBytesReproducibility for CrossPlatform {
+    #[inline(always)]
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         if cfg!(target_endian = "big") {
             block_core.fill_bytes(bytes);
@@ -766,8 +757,6 @@ mod tests {
                                 );
                                 j += 1;
                             }
-                        }
-                        for out_lane_idx in 0..SIMD_WIDTH {
                             for out_bit_idx in 0..64 {
                                 xor_matrix.set(
                                     j,
@@ -854,16 +843,8 @@ mod tests {
                                         let (out_xor_0, out_xor_1) =
                                             (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
                                         weights.push(
-                                            out_xor_0
-                                                .to_array()
-                                                .into_iter()
-                                                .map(u64::count_ones)
-                                                .sum::<u32>()
-                                                + out_xor_1
-                                                    .to_array()
-                                                    .into_iter()
-                                                    .map(u64::count_ones)
-                                                    .sum::<u32>(),
+                                            out_xor_0.count_ones().reduce_sum()
+                                                + out_xor_1.count_ones().reduce_sum(),
                                         );
                                     }
                                 }
@@ -882,16 +863,8 @@ mod tests {
                                     let (out_xor_0, out_xor_1) =
                                         (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
                                     weights.push(
-                                        out_xor_0
-                                            .to_array()
-                                            .into_iter()
-                                            .map(u64::count_ones)
-                                            .sum::<u32>()
-                                            + out_xor_1
-                                                .to_array()
-                                                .into_iter()
-                                                .map(u64::count_ones)
-                                                .sum::<u32>(),
+                                        out_xor_0.count_ones().reduce_sum()
+                                            + out_xor_1.count_ones().reduce_sum(),
                                     );
                                 }
                             }
@@ -1394,7 +1367,7 @@ mod tests {
     fn test_bitplane_projection() {
         for mut rng in create_rngs::<NotReproducible>() {
             let mut buf = vec![0u64; SAMPLES];
-            rng.fill_bytes(bytemuck::cast_slice_mut(&mut buf));
+            rng.fill_bytes(cast_slice_mut(&mut buf));
 
             xor_successive(&mut buf);
 
