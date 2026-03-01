@@ -532,13 +532,17 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             for i in 0..SIMD_WIDTH {
                 for j in 0..SIMD_WIDTH {
                     if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
-                        && unlikely(result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j]) {
+                        && unlikely(
+                            result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j],
+                        )
+                    {
                         continue 'generate;
                     }
                     if unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
                         && unlikely(result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
                         && unlikely(result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
-                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j]) {
+                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j])
+                    {
                         continue 'generate;
                     }
                 }
@@ -725,9 +729,9 @@ mod tests {
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, DiscreteCDF};
+    use statrs::statistics::Distribution;
     use std::any::TypeId;
     use std::collections::HashSet;
-    use statrs::statistics::Distribution;
 
     #[test]
     pub fn test_mix_matrix() {
