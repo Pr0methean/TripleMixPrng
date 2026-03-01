@@ -16,10 +16,12 @@ aws-lc-rs = { version = "1.16", optional = true }
 typenum = { version = "1.19", features = ["const-generics"] }
 serde = { version = "1.0", optional = true }
 zeroize = { version = "1.8", optional = true }
+spin = { version = "0.10.0", optional = true }
 
 [features]
 zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
+no_std = ["spin/once"]
 
 [[bin]]
 name = "rand_triplemix"

@@ -416,6 +416,31 @@ pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
 pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
+fn create_preinitialized_hashers() -> [Sha3_512; SIMD_WIDTH] {
+    core::array::from_fn(|lane| {
+        let mut hasher = Sha3_512::default();
+        hasher.update(TRIPLE_MIX_PRNG_OID.as_bytes());
+        hasher.update(&[lane as u8]);
+        hasher
+    })
+}
+
+#[cfg(not(feature = "no_std"))]
+const LANE_HASHERS: std::sync::LazyLock<[Sha3_512; SIMD_WIDTH]> = std::sync::LazyLock::new(create_preinitialized_hashers);
+
+#[cfg(not(feature = "no_std"))]
+fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
+    LANE_HASHERS.to_owned()
+}
+
+#[cfg(feature = "no_std")]
+const LANE_HASHERS: spin::Once<[Sha3_512; SIMD_WIDTH]> = spin::Once::new();
+
+#[cfg(feature = "no_std")]
+fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
+    LANE_HASHERS.call_once(create_preinitialized_hashers).clone()
+}
+
 impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
     for TripleMixPrng<Reproducibility>
 {
@@ -428,12 +453,9 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
         let mut weyl_hi = Simd::splat(0);
         let mut inc_lo = Simd::splat(0);
         let mut inc_hi = Simd::splat(0);
-        for i in 0..SIMD_WIDTH {
+        for (i, mut lane_hasher) in get_lane_hashers().into_iter().enumerate() {
             let mut count: u128 = 0;
-            let mut lane_hasher = Sha3_512::default();
-            Update::update(&mut lane_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
             Update::update(&mut lane_hasher, seed.as_ref());
-            Update::update(&mut lane_hasher, &[i as u8]);
             let mut out_bytes = lane_hasher.finalize_fixed();
             loop {
                 [
@@ -445,10 +467,12 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
                     cold_path();
                     let mut retry_hasher = Sha3_512::default();
-                    Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
-                    Update::update(&mut retry_hasher, seed.as_ref());
-                    Update::update(&mut retry_hasher, &[i as u8 + 4]);
+                    // Try putting the counter and seed first, so that if the first input trapped
+                    // the hash in a bad state early on, it's less likely to happen again.
                     Update::update(&mut retry_hasher, count.to_le_bytes().as_ref());
+                    Update::update(&mut retry_hasher, seed.as_ref());
+                    Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
+                    Update::update(&mut retry_hasher, &[i as u8 + 4]);
                     count = count.wrapping_add(1);
                     out_bytes = retry_hasher.finalize_fixed();
                     continue;
@@ -713,7 +737,6 @@ mod tests {
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, DiscreteCDF};
     use statrs::statistics::Distribution;
-    use std::collections::HashSet;
 
     #[test]
     pub fn test_mix_matrix() {
@@ -1067,13 +1090,16 @@ mod tests {
     fn test_fork_independence_descendants() {
         const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
         const FORKS: usize = 64;
-        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(not(feature = "no_std"))]
+        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(feature = "no_std")]
+        let mut previous_outputs = core::collections::BTreeSet::new();
         for mut prng in create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 for _ in 0..SAMPLES_PER_FORK {
                     let next = prng.next_u64();
                     print!("{next:016X} ");
-                    assert!(random.insert(next));
+                    assert!(previous_outputs.insert(next));
                 }
                 println!();
                 prng = prng.fork();
@@ -1085,14 +1111,17 @@ mod tests {
     fn test_fork_independence_siblings() {
         const SAMPLES_PER_FORK: usize = 32;
         const FORKS: usize = 64;
-        let mut random = HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(not(feature = "no_std"))]
+        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(feature = "no_std")]
+        let mut previous_outputs = core::collections::BTreeSet::new();
         for mut parent_prng in create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 let mut prng = parent_prng.fork();
                 for _ in 0..SAMPLES_PER_FORK {
                     let next = prng.next_u64();
                     print!("{next:016X} ");
-                    assert!(random.insert(next));
+                    assert!(previous_outputs.insert(next));
                 }
                 println!();
             }
@@ -1256,7 +1285,7 @@ mod tests {
             );
             let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
             let low_avalanche_probability =
-                bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD as u64);
+                bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD);
             let low_avalanche_distribution =
                 Binomial::new(low_avalanche_probability, count).unwrap();
             let mean = low_avalanche_distribution.mean().unwrap();
