@@ -702,6 +702,7 @@ impl Generator for TripleMixSimdCore {
 mod tests {
     use super::*;
     use bytemuck::cast_slice_mut;
+    use core::simd::cmp::SimdPartialEq;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use rand::rngs::SysRng;
@@ -1102,18 +1103,16 @@ mod tests {
             let core = rng.block_core.core;
 
             const ITERATIONS: usize = 20;
-            const LOW_AVALANCHE_THRESHOLD: u32 = 28 * OUTPUT_LEN as u32;
+            const LOW_AVALANCHE_THRESHOLD: u64 = 28 * OUTPUT_LEN as u64;
 
-            let mut min_flips = u32::MAX;
+            let mut min_flips = u64::MAX;
             let mut max_flips = 0;
             let mut total_flips: u64 = 0;
             let mut count: u64 = 0;
             let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
             let mut core1 = core;
-            let mut output1 = [[0u64; OUTPUT_LEN]; ITERATIONS];
-            for output_block in output1.iter_mut() {
-                core1.generate(output_block);
-            }
+            let mut output1 = [[Simd64::splat(0); OUTPUTS_PER_STEP]; ITERATIONS];
+            core1.fill_blocks(cast_slice_mut(&mut output1));
             let mut min_field = 0;
             let mut min_lane = 0;
             let mut min_bit = 0;
@@ -1183,28 +1182,30 @@ mod tests {
                             }
                             _ => unreachable!(),
                         }
-                        let mut output2 = [[0u64; OUTPUT_LEN]; ITERATIONS];
-                        for output_block in output2.iter_mut() {
-                            core2.generate(output_block);
-                        }
+                        let mut output2 = [[Simd64::splat(0); OUTPUTS_PER_STEP]; ITERATIONS];
+                        core2.fill_blocks(cast_slice_mut(&mut output2));
                         for i in 0..ITERATIONS {
                             let mut flips = 0;
-                            for cell in 0..OUTPUT_LEN {
-                                if cell != 0 {
-                                    assert_ne!(
-                                        output2[i][cell].wrapping_sub(output2[i][0]),
-                                        output1[i][cell].wrapping_sub(output1[i][0]),
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
+                            let first_output1 = Simd::splat(output1[i][0][0]);
+                            let first_output2 = Simd::splat(output2[i][0][0]);
+                            for vec_idx in 0..OUTPUTS_PER_STEP {
+                                let xor = output1[i][vec_idx] ^ output2[i][vec_idx];
+                                let sub_same = (output1[i][vec_idx] - output2[i][vec_idx]).simd_eq(first_output1 - first_output2);
+                                let xor_same = xor.simd_eq(first_output1 ^ first_output2);
+                                for cell in 0..SIMD_WIDTH {
+                                    if vec_idx == 0 && cell == 0 {
+                                        continue;
+                                    }
+                                    assert_eq!(sub_same.test(cell), false,
+                                               "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
                                     );
-                                    assert_ne!(
-                                        output2[i][cell] ^ output2[i][0],
-                                        output1[i][cell] ^ output1[i][0],
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
+                                    assert_eq!(xor_same.test(cell), false,
+                                               "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
                                     );
                                 }
-                                flips += (output1[i][cell] ^ output2[i][cell]).count_ones();
+                                flips += xor.count_ones().reduce_sum();
                             }
-                            total_flips += flips as u64;
+                            total_flips += flips;
                             if flips <= LOW_AVALANCHE_THRESHOLD {
                                 low_avalanches += 1;
                             }

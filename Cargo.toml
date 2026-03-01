@@ -38,7 +38,7 @@ opt-level = 3
 
 [dev-dependencies]
 hypors = "0.3.0"
-bytemuck = "1.25.0"
+bytemuck = { version = "1.25.0", features = ["nightly_portable_simd"] }
 statrs = "0.18.0"
 criterion = "0.8.2"
 gf2 = "2.1.0"
