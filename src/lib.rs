@@ -515,6 +515,38 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         false
     }
 
+    /// Create a new instance that's derived from both this one and the provided domain-separation
+    /// bytes.
+    /// The returned instance won't share a state with any other instance obtained by
+    /// fork_with_domain unless both the receiving instance's state and the domain bytes are
+    /// identical across both calls.
+    pub fn fork_with_domain_separation(&mut self, domain_separation: impl AsRef<[u8]>) -> Self {
+        // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
+        // not derive state for instances of themselves
+        let domain_len = domain_separation.as_ref().len();
+        let mut seed = vec![0u8; SEED_SIZE + domain_len];
+        seed[..domain_len].copy_from_slice(domain_separation.as_ref());
+        'generate: loop {
+            self.fill_bytes(&mut seed[domain_len..]);
+            let result = Self::from(&seed);
+            for i in 0..SIMD_WIDTH {
+                for j in 0..SIMD_WIDTH {
+                    if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
+                        && unlikely(result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j]) {
+                        continue 'generate;
+                    }
+                    if unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
+                        && unlikely(result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
+                        && unlikely(result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
+                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j]) {
+                        continue 'generate;
+                    }
+                }
+            }
+            return result;
+        }
+    }
+
     pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
         Self {
             block_core: BlockRng::new(core),
@@ -547,28 +579,7 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
     }
 
     fn fork(&mut self) -> Self {
-        // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
-        // not derive state for instances of themselves
-        let mut seed = [0u8; SEED_SIZE];
-        'generate: loop {
-        self.fill_bytes(&mut seed);
-            let result = Self::from(&seed);
-            for i in 0..SIMD_WIDTH {
-                for j in 0..SIMD_WIDTH {
-                    if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
-                        && unlikely(result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j]) {
-                        continue 'generate;
-                    }
-                    if unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
-                        && unlikely(result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
-                        && unlikely(result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
-                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j]) {
-                        continue 'generate;
-                    }
-                }
-            }
-            return result;
-        }
+        self.fork_with_domain_separation(&[])
     }
 }
 
