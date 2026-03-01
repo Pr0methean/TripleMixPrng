@@ -10,7 +10,8 @@ use core::convert::Infallible;
 use core::hint::cold_path;
 use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::SimdUint;
-use core::simd::*;
+use core::simd::simd_swizzle;
+use core::simd::{Select, Simd};
 use core::slice::from_mut;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
@@ -441,10 +442,8 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 tm0[i] &= TINYMT64_LANE_MASK;
                 inc_lo[i] |= 1;
 
-                let x = Self::is_lane_invalid(
-                    xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i,
-                );
-                if x {
+                if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
+                    cold_path();
                     let mut retry_hasher = Sha3_512::default();
                     Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
                     Update::update(&mut retry_hasher, seed.as_ref());
@@ -487,18 +486,20 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         inc_hi: Simd64,
         i: usize,
     ) -> bool {
-        (((xr0[i] == 0) & (xr1[i] == 0))
-            | ((tm0[i] == 0) & (tm1[i] == 0))).then(|| {
-            for j in 0..i {
-                if ((xr0[j] == xr0[i]) & (xr1[j] == xr1[i]))
-                    | ((tm0[j] == tm0[i]) & (tm1[j] == tm1[i]))
-                    | ((weyl_lo[j] == weyl_lo[i]) & (weyl_hi[j] == weyl_hi[i]))
-                    | ((inc_lo[j] == inc_lo[i]) & (inc_hi[j] == inc_hi[i])) {
-                    return true;
+        (((xr0[i] == 0) & (xr1[i] == 0)) | ((tm0[i] == 0) & (tm1[i] == 0)))
+            .then(|| {
+                for j in 0..i {
+                    if ((xr0[j] == xr0[i]) & (xr1[j] == xr1[i]))
+                        | ((tm0[j] == tm0[i]) & (tm1[j] == tm1[i]))
+                        | ((weyl_lo[j] == weyl_lo[i]) & (weyl_hi[j] == weyl_hi[i]))
+                        | ((inc_lo[j] == inc_lo[i]) & (inc_hi[j] == inc_hi[i]))
+                    {
+                        return true;
+                    }
                 }
-            }
-            false
-        }).unwrap_or(false)
+                false
+            })
+            .unwrap_or(false)
     }
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
@@ -520,19 +521,14 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
                 for j in 0..SIMD_WIDTH {
                     let x = result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j];
                     let x1 = result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j];
-                    if x1
-                        && x
-                    {
+                    if x1 && x {
                         continue 'generate;
                     }
                     let x = result.block_core.core.tm1[i] == self.block_core.core.tm1[j];
                     let x1 = result.block_core.core.tm0[i] == self.block_core.core.tm0[j];
                     let x2 = result.block_core.core.xr1[i] == self.block_core.core.xr1[j];
                     let x3 = result.block_core.core.xr0[i] == self.block_core.core.xr0[j];
-                    let x4 = x3
-                        && x2
-                        && x1
-                        && x;
+                    let x4 = x3 && x2 && x1 && x;
                     if x4 {
                         continue 'generate;
                     }
