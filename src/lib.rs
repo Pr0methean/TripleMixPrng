@@ -14,6 +14,7 @@ use core::simd::num::SimdUint;
 use core::simd::simd_swizzle;
 use core::simd::{Select, Simd};
 use core::slice::from_mut;
+use std::borrow::Cow;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::utils::read_words;
@@ -416,7 +417,7 @@ pub struct TripleMixPrng<Reproducibility: FillBytesReproducibility> {
 pub const SEED_SIZE: usize = 64 * SIMD_WIDTH;
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 
-fn create_preinitialized_hashers() -> [Sha3_512; SIMD_WIDTH] {
+fn create_preinitialized_hashers() -> [Sha3_512; SIMD_WIDTH + 1] {
     core::array::from_fn(|lane| {
         let mut hasher = Sha3_512::default();
         hasher.update(TRIPLE_MIX_PRNG_OID.as_bytes());
@@ -425,20 +426,23 @@ fn create_preinitialized_hashers() -> [Sha3_512; SIMD_WIDTH] {
     })
 }
 
+// Combined with TRIPLE_MIX_PRNG_OID and a lane-identifying byte, this is 4 SHA3-512 blocks.
+const MAX_RAW_SEED_SIZE: usize = 288 - TRIPLE_MIX_PRNG_OID.len() - 1;
+
 #[cfg(not(feature = "no_std"))]
-const LANE_HASHERS: std::sync::LazyLock<[Sha3_512; SIMD_WIDTH]> =
+const LANE_HASHERS: std::sync::LazyLock<[Sha3_512; SIMD_WIDTH + 1]> =
     std::sync::LazyLock::new(create_preinitialized_hashers);
 
 #[cfg(not(feature = "no_std"))]
-fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
+fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH + 1] {
     LANE_HASHERS.to_owned()
 }
 
 #[cfg(feature = "no_std")]
-const LANE_HASHERS: spin::Once<[Sha3_512; SIMD_WIDTH]> = spin::Once::new();
+const LANE_HASHERS: spin::Once<[Sha3_512; SIMD_WIDTH + 1]> = spin::Once::new();
 
 #[cfg(feature = "no_std")]
-fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
+fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH + 1] {
     LANE_HASHERS
         .call_once(create_preinitialized_hashers)
         .clone()
@@ -447,7 +451,7 @@ fn get_lane_hashers() -> [Sha3_512; SIMD_WIDTH] {
 impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
     for TripleMixPrng<Reproducibility>
 {
-    fn from(seed: T) -> Self {
+    fn from(raw_seed: T) -> Self {
         let mut xr0 = Simd::splat(0);
         let mut xr1 = Simd::splat(0);
         let mut tm0 = Simd::splat(0);
@@ -456,7 +460,19 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
         let mut weyl_hi = Simd::splat(0);
         let mut inc_lo = Simd::splat(0);
         let mut inc_hi = Simd::splat(0);
-        for (i, mut lane_hasher) in get_lane_hashers().into_iter().enumerate() {
+        let mut hashers = get_lane_hashers().into_iter();
+        let mut seed_compressor = hashers.next().unwrap();
+        let mut seed = Cow::Borrowed(raw_seed.as_ref());
+        if seed.as_ref().len() > MAX_RAW_SEED_SIZE {
+            // We don't want to hash a huge seed 4 times, so hash it once and xor the hash into a
+            // prefix of it.
+            Update::update(&mut seed_compressor, seed.as_ref());
+            let compressed_seed = seed_compressor.finalize_fixed();
+            let mut new_seed = Vec::from(&compressed_seed[..MAX_RAW_SEED_SIZE]);
+            new_seed.iter_mut().zip(compressed_seed.into_iter()).for_each(|(a, b)| *a ^= b);
+            seed = Cow::Owned(new_seed);
+        }
+        for (i, mut lane_hasher) in hashers.enumerate() {
             let mut count: u128 = 0;
             Update::update(&mut lane_hasher, seed.as_ref());
             let mut out_bytes = lane_hasher.finalize_fixed();
@@ -470,12 +486,12 @@ impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
                 if Self::is_lane_invalid(xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi, i) {
                     cold_path();
                     let mut retry_hasher = Sha3_512::default();
-                    // Try putting the counter and seed first, so that if the first input trapped
-                    // the hash in a bad state early on, it's less likely to happen again.
+                    // Ingest the inputs in a different order to break up any bad structure it may
+                    // have had the first time.
                     Update::update(&mut retry_hasher, count.to_le_bytes().as_ref());
-                    Update::update(&mut retry_hasher, seed.as_ref());
+                    Update::update(&mut retry_hasher, raw_seed.as_ref());
                     Update::update(&mut retry_hasher, TRIPLE_MIX_PRNG_OID.as_bytes());
-                    Update::update(&mut retry_hasher, &[i as u8 + 4]);
+                    Update::update(&mut retry_hasher, &[u8::MAX - i as u8]);
                     count = count.wrapping_add(1);
                     out_bytes = retry_hasher.finalize_fixed();
                     continue;
