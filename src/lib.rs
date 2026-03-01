@@ -579,7 +579,7 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
     }
 
     fn fork(&mut self) -> Self {
-        self.fork_with_domain_separation(&[])
+        self.fork_with_domain_separation([])
     }
 }
 
