@@ -486,20 +486,19 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         inc_hi: Simd64,
         i: usize,
     ) -> bool {
-        (((xr0[i] == 0) & (xr1[i] == 0)) | ((tm0[i] == 0) & (tm1[i] == 0)))
-            .then(|| {
-                for j in 0..i {
-                    if ((xr0[j] == xr0[i]) & (xr1[j] == xr1[i]))
-                        | ((tm0[j] == tm0[i]) & (tm1[j] == tm1[i]))
-                        | ((weyl_lo[j] == weyl_lo[i]) & (weyl_hi[j] == weyl_hi[i]))
-                        | ((inc_lo[j] == inc_lo[i]) & (inc_hi[j] == inc_hi[i]))
-                    {
-                        return true;
-                    }
-                }
-                false
-            })
-            .unwrap_or(false)
+        if ((xr0[i] == 0) & (xr1[i] == 0)) | (tm0[i] == 0) & (tm1[i] == 0) {
+            return true;
+        }
+        for j in 0..i {
+            if ((xr0[j] == xr0[i]) & (xr1[j] == xr1[i]))
+                | ((tm0[j] == tm0[i]) & (tm1[j] == tm1[i]))
+                | ((weyl_lo[j] == weyl_lo[i]) & (weyl_hi[j] == weyl_hi[i]))
+                | ((inc_lo[j] == inc_lo[i]) & (inc_hi[j] == inc_hi[i]))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
