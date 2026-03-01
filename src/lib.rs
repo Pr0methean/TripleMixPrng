@@ -550,13 +550,21 @@ impl<Reproducibility: FillBytesReproducibility> SeedableRng for TripleMixPrng<Re
         // Use the SHA3-based method to derive the seed, since PRNGs other than CSPRNGs should
         // not derive state for instances of themselves
         let mut seed = [0u8; SEED_SIZE];
-        loop {
+        'generate: loop {
         self.fill_bytes(&mut seed);
             let result = Self::from(&seed);
             for i in 0..SIMD_WIDTH {
-                if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[i])
-                    && unlikely(result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[i]) {
-                    continue;
+                for j in 0..SIMD_WIDTH {
+                    if unlikely(result.block_core.core.inc_hi[i] == self.block_core.core.inc_hi[j])
+                        && unlikely(result.block_core.core.inc_lo[i] == self.block_core.core.inc_lo[j]) {
+                        continue 'generate;
+                    }
+                    if unlikely(result.block_core.core.xr0[i] == self.block_core.core.xr0[j])
+                        && unlikely(result.block_core.core.xr1[i] == self.block_core.core.xr1[j])
+                        && unlikely(result.block_core.core.tm0[i] == self.block_core.core.tm0[j])
+                        && unlikely(result.block_core.core.tm1[i] == self.block_core.core.tm1[j]) {
+                        continue 'generate;
+                    }
                 }
             }
             return result;
