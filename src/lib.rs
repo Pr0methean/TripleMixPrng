@@ -6,6 +6,8 @@
 ))]
 mod avx2;
 
+use bytemuck::cast_slice;
+use const_format::formatcp;
 use core::convert::Infallible;
 use core::hint::cold_path;
 use core::marker::PhantomData;
@@ -14,8 +16,6 @@ use core::simd::num::SimdUint;
 use core::simd::simd_swizzle;
 use core::simd::{Select, Simd};
 use core::slice::from_mut;
-use bytemuck::cast_slice;
-use const_format::formatcp;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::{SeedableRng, TryRng};
@@ -405,7 +405,8 @@ pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
 const MAJOR_VERSION: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const MINOR_VERSION: &str = env!("CARGO_PKG_VERSION_MINOR");
 const PATCH_VERSION: &str = env!("CARGO_PKG_VERSION_PATCH");
-pub const VERSION_OID: &str = formatcp!("{TRIPLE_MIX_PRNG_OID}.{MAJOR_VERSION}.{MINOR_VERSION}.{PATCH_VERSION}");
+pub const VERSION_OID: &str =
+    formatcp!("{TRIPLE_MIX_PRNG_OID}.{MAJOR_VERSION}.{MINOR_VERSION}.{PATCH_VERSION}");
 
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
 const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
@@ -425,7 +426,9 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         let mut attempt = 0u128;
         loop {
             let core = Self::permute(&base, attempt);
-            if Self::is_valid(&core) { return core; }
+            if Self::is_valid(&core) {
+                return core;
+            }
             cold_path();
             attempt += 1;
         }
@@ -433,8 +436,10 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
 
     #[inline(always)]
     fn permute(base: &Kmac, tweak: u128) -> TripleMixSimdCore {
-        let mut xr0 = Simd64::splat(0); let mut xr1 = Simd64::splat(0);
-        let mut tm0 = Simd64::splat(0); let mut tm1 = Simd64::splat(0);
+        let mut xr0 = Simd64::splat(0);
+        let mut xr1 = Simd64::splat(0);
+        let mut tm0 = Simd64::splat(0);
+        let mut tm1 = Simd64::splat(0);
         let mut weyl_lo = Simd64::splat(0);
         let mut weyl_hi = Simd64::splat(0);
         let mut inc_lo = Simd64::splat(0);
@@ -444,13 +449,31 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             round_kmac.update(&tweak.to_le_bytes());
             round_kmac.update(&[round as u8]);
 
-            Self::update_from_half(&mut round_kmac, &xr0, &xr1, &tm0, &tm1, &weyl_lo, &inc_lo, true);
+            Self::update_from_half(
+                &mut round_kmac,
+                &xr0,
+                &xr1,
+                &tm0,
+                &tm1,
+                &weyl_lo,
+                &inc_lo,
+                true,
+            );
 
             let mut reader = round_kmac.into_xof();
             let mut f_out = [0u8; 96]; // Squeeze out only what's needed for 2 lanes
             reader.squeeze(&mut f_out);
 
-            Self::xor_into_half(&mut xr0, &mut xr1, &mut tm0, &mut tm1, &mut weyl_lo, &mut inc_lo, &f_out, false);
+            Self::xor_into_half(
+                &mut xr0,
+                &mut xr1,
+                &mut tm0,
+                &mut tm1,
+                &mut weyl_lo,
+                &mut inc_lo,
+                &f_out,
+                false,
+            );
 
             // Swap: Lanes 0,1 <-> Lanes 2,3
             xr0 = xr0.rotate_elements_left::<2>();
@@ -465,7 +488,16 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
 
         inc_lo |= Simd::splat(1);
         tm0 &= Simd::splat(TINYMT64_LANE_MASK);
-        TripleMixSimdCore { xr0, xr1, tm0, tm1, weyl_lo, weyl_hi, inc_lo, inc_hi }
+        TripleMixSimdCore {
+            xr0,
+            xr1,
+            tm0,
+            tm1,
+            weyl_lo,
+            weyl_hi,
+            inc_lo,
+            inc_hi,
+        }
     }
 
     #[inline(always)]
@@ -474,33 +506,66 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         !((a.xr0.simd_eq(b.xr0) & a.xr1.simd_eq(b.xr1))
             | (a.tm0.simd_eq(b.tm0) & a.tm1.simd_eq(b.tm1))
             | (a.weyl_lo.simd_eq(b.weyl_lo) & a.weyl_hi.simd_eq(b.weyl_hi))
-            | (a.inc_lo.simd_eq(b.inc_lo) & a.inc_hi.simd_eq(b.inc_hi))).any()
+            | (a.inc_lo.simd_eq(b.inc_lo) & a.inc_hi.simd_eq(b.inc_hi)))
+        .any()
     }
 
     #[inline(always)]
-    fn update_from_half(kmac: &mut Kmac, xr0: &Simd64, xr1: &Simd64, tm0: &Simd64, tm1: &Simd64, lcg_s: &Simd64, lcg_i: &Simd64, right: bool) {
+    fn update_from_half(
+        kmac: &mut Kmac,
+        xr0: &Simd64,
+        xr1: &Simd64,
+        tm0: &Simd64,
+        tm1: &Simd64,
+        lcg_s: &Simd64,
+        lcg_i: &Simd64,
+        right: bool,
+    ) {
         let range = if right { 2..4 } else { 0..2 };
-        let x0 = xr0.as_array(); let x1 = xr1.as_array();
-        let t0 = tm0.as_array(); let t1 = tm1.as_array();
-        let ls = lcg_s.as_array(); let li = lcg_i.as_array();
+        let x0 = xr0.as_array();
+        let x1 = xr1.as_array();
+        let t0 = tm0.as_array();
+        let t1 = tm1.as_array();
+        let ls = lcg_s.as_array();
+        let li = lcg_i.as_array();
         for i in range {
-            kmac.update(&x0[i].to_le_bytes()); kmac.update(&x1[i].to_le_bytes());
-            kmac.update(&t0[i].to_le_bytes()); kmac.update(&t1[i].to_le_bytes());
-            kmac.update(&ls[i].to_le_bytes()); kmac.update(&li[i].to_le_bytes());
+            kmac.update(&x0[i].to_le_bytes());
+            kmac.update(&x1[i].to_le_bytes());
+            kmac.update(&t0[i].to_le_bytes());
+            kmac.update(&t1[i].to_le_bytes());
+            kmac.update(&ls[i].to_le_bytes());
+            kmac.update(&li[i].to_le_bytes());
         }
     }
 
     #[inline(always)]
-    fn xor_into_half(xr0: &mut Simd64, xr1: &mut Simd64, tm0: &mut Simd64, tm1: &mut Simd64, lcg_s: &mut Simd64, lcg_i: &mut Simd64, data: &[u8], right: bool) {
+    fn xor_into_half(
+        xr0: &mut Simd64,
+        xr1: &mut Simd64,
+        tm0: &mut Simd64,
+        tm1: &mut Simd64,
+        lcg_s: &mut Simd64,
+        lcg_i: &mut Simd64,
+        data: &[u8],
+        right: bool,
+    ) {
         let range = if right { 2..4 } else { 0..2 };
-        let mut chunks = data.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap()));
-        let x0 = xr0.as_mut_array(); let x1 = xr1.as_mut_array();
-        let t0 = tm0.as_mut_array(); let t1 = tm1.as_mut_array();
-        let ls = lcg_s.as_mut_array(); let li = lcg_i.as_mut_array();
+        let mut chunks = data
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()));
+        let x0 = xr0.as_mut_array();
+        let x1 = xr1.as_mut_array();
+        let t0 = tm0.as_mut_array();
+        let t1 = tm1.as_mut_array();
+        let ls = lcg_s.as_mut_array();
+        let li = lcg_i.as_mut_array();
         for i in range {
-            x0[i] ^= chunks.next().unwrap(); x1[i] ^= chunks.next().unwrap();
-            t0[i] ^= chunks.next().unwrap(); t1[i] ^= chunks.next().unwrap();
-            ls[i] ^= chunks.next().unwrap(); li[i] ^= chunks.next().unwrap();
+            x0[i] ^= chunks.next().unwrap();
+            x1[i] ^= chunks.next().unwrap();
+            t0[i] ^= chunks.next().unwrap();
+            t1[i] ^= chunks.next().unwrap();
+            ls[i] ^= chunks.next().unwrap();
+            li[i] ^= chunks.next().unwrap();
         }
     }
 
@@ -531,8 +596,8 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
     #[inline(always)]
     fn is_valid(c: &TripleMixSimdCore) -> bool {
         // Dead-state check
-        if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0)) |
-            (c.tm0 | c.tm1).simd_eq(Simd::splat(0))).any() {
+        if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0)) | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))).any()
+        {
             return false;
         }
 
@@ -541,19 +606,21 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         // We check all 3 possible shift-offsets (1, 2, 3).
         macro_rules! find_dupe {
             ($shift:expr) => {
-                let diff_xr = (c.xr0 ^ c.xr0.rotate_elements_left::<$shift>()) |
-                              (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
-                let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>()) |
-                              (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
-                let diff_lcg = (c.weyl_hi ^ c.weyl_hi.rotate_elements_left::<$shift>()) |
-                            (c.weyl_lo ^ c.weyl_lo.rotate_elements_left::<$shift>()) |
-                            (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>()) |
-                            (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
+                let diff_xr = (c.xr0 ^ c.xr0.rotate_elements_left::<$shift>())
+                    | (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
+                let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>())
+                    | (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
+                let diff_lcg = (c.weyl_hi ^ c.weyl_hi.rotate_elements_left::<$shift>())
+                    | (c.weyl_lo ^ c.weyl_lo.rotate_elements_left::<$shift>())
+                    | (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
+                    | (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
 
                 // A lane is a duplicate if ALL sub-generators match the rotated version
-                if (diff_xr.simd_eq(Simd::splat(0)) &
-                    diff_tm.simd_eq(Simd::splat(0)) &
-                    diff_lcg.simd_eq(Simd::splat(0))).any() {
+                if (diff_xr.simd_eq(Simd::splat(0))
+                    & diff_tm.simd_eq(Simd::splat(0))
+                    & diff_lcg.simd_eq(Simd::splat(0)))
+                .any()
+                {
                     return false;
                 }
             };
