@@ -9,7 +9,7 @@ mod avx2;
 use bytemuck::cast_slice;
 use const_format::formatcp;
 use core::convert::Infallible;
-use core::hint::{black_box, cold_path};
+use core::hint::cold_path;
 use core::marker::PhantomData;
 use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use core::simd::num::SimdUint;
@@ -86,7 +86,7 @@ impl zeroize::Zeroize for TripleMixSimdCore {
         self.inc_hi = Simd::splat(0);
 
         // Prevent dead-write elimination
-        black_box(&*self);
+        core::hint::black_box(&*self);
     }
 }
 
@@ -116,7 +116,7 @@ impl<Reproducibility: FillBytesReproducibility> zeroize::Zeroize
         self.block_core.reset_and_skip(0);
 
         // Prevent dead-write elimination
-        black_box(self.block_core.remaining_results());
+        core::hint::black_box(self.block_core.remaining_results());
     }
 }
 
