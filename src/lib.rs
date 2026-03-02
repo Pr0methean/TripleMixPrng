@@ -247,8 +247,8 @@ impl TripleMixSimdCore {
             w_lo = next_w_lo;
             let w_lo_out = w_lo + LANE_CONSTANTS;
 
-            // Xoroshiro+ update
-            let x_out = xr0 + xr1;
+            // Xoroshiro++ update
+            let x_out = rotl(xr0 + xr1, 17) + xr0;
             let t = xr0 ^ xr1;
             xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
             xr1 = rotl(t, 37);
