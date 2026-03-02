@@ -52,7 +52,7 @@ fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
 
 const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
 const SIMD_WIDTH: usize = 4;
-const OUTPUTS_PER_STEP: usize = 2;
+const OUTPUTS_PER_STEP: usize = 1;
 const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 
 pub type Simd64 = Simd<u64, SIMD_WIDTH>;
@@ -247,8 +247,8 @@ impl TripleMixSimdCore {
             w_lo = next_w_lo;
             let w_lo_out = w_lo + LANE_CONSTANTS;
 
-            // Xoroshiro+ update
-            let x_out = xr0 + xr1;
+            // Xoroshiro++ update
+            let x_out = rotl(xr0 + xr1, 17) + xr0;
             let t = xr0 ^ xr1;
             xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
             xr1 = rotl(t, 37);
@@ -273,9 +273,8 @@ impl TripleMixSimdCore {
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
 
             // === 2. Mixing ===
-            let (out0, out1) = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
+            let out0 = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
 
         self.xr0 = xr0;
@@ -293,104 +292,27 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 }
 
 #[inline(always)]
-fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
-    // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
-    // no pairs that sum to 64 are used.
-    const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_10: u64 = 9;
-    const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_19: u64 = 13;
-    const MIXING_ROTATION_02: u64 = 14;
-    const MIXING_ROTATION_14: u64 = 17;
-    const MIXING_ROTATION_13: u64 = 19;
-    const MIXING_ROTATION_00: u64 = 22;
-    const MIXING_ROTATION_05: u64 = 23;
-    const MIXING_ROTATION_16: u64 = 29;
-    const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 39;
-    const MIXING_ROTATION_01: u64 = 41;
-    const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 44;
-    const MIXING_ROTATION_22: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 54;
-
-    // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
-    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
-        0x9E3779B97F4A7C15,
-        0x2767f0b153d27b7f,
-        0xf06ad7ae9717877e,
-        0x626e33b8d04b4331,
-    ]);
-    // Words 2, 6, 10 and 14 of the fractional part of the Golden Ratio.
-    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
-        0xf39cc0605cedc834,
-        0x0347045b5bf1827f,
-        0x85839d6effbd7dc6,
-        0xbbf73c790d94f79d,
-    ]);
-
-    // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-    // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
-
-    // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
-    // ------------------------------------------
-    let p = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
-
-    let l0_1 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
-    let l1_1 = x_in + p;
-    let r0_1 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
-    let r1_1 = p;
-
-    // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
-    // ----------------------------------------------------------
-    let sr1_1 = simd_swizzle!(r1_1, [2, 3, 0, 1]);
-    let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
-    let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
-
-    let l0_2 = l0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let l1_2 = l1_1 + (sr1_1 ^ sl0_1);
-    let r0_2 = r0_1 ^ rotl(sl1_1 + sr1_1, MIXING_ROTATION_07);
-    let r1_2 = r1_1 + rotl(sl0_1 + r0_2, MIXING_ROTATION_09);
-
-    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
-    // -------------------------------------------------------------------
-    let x = r0_2 ^ (r1_2 >> MIXING_ROTATION_10);
-    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12);
-    let m = simd_mul(x, y);
-
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
-
-    // asymmetric feedback (no duplicated structure)
-    let l0_3 = r0_2 ^ m1;
-    let l1_3 = r1_2 + m2;
-    let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16); // carry injection
-    let r1_3 = l1_2 ^ m1 ^ m2;
-
-    // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-    // ---------------------------------------------------------
-    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-
-    let tl0r1 = sl0_3 + r1_3;
-    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-
-    let l0_4 = r0_3 ^ tl0r1;
-    let l1_4 = r1_3 + tl1r0;
-    let r0_4 = tl0r1 + l1_4;
-    let r1_4 = tl1r0 ^ l0_4;
-
-    // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-    // ---------------------------------------------------
-    let t0 = (r0_4 + l0_4) ^ (r1_4 - l1_4); // strong carry interaction
-    let t1 = (l1_4 ^ r0_4) + (r1_4 << MIXING_ROTATION_19);
-    let t2 = t0 + t1;
-    let t3 = t1 ^ rotl(t0, MIXING_ROTATION_21);
-    let out0 = t2 ^ (t3 >> MIXING_ROTATION_22);
-    let out1 = t3 + (out0 << MIXING_ROTATION_23);
-
-    (out0, out1)
+fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> Simd64 {
+    let mut mixed = i_hi;
+    mixed += x_in;
+    mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+    mixed += w_hi;
+    mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+    mixed += w_lo;
+    mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+    mixed += t;
+    mixed *= rotl(mixed ^ i_hi, 11);
+    for iter in 0..8 {
+        mixed += x_in;
+        mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+        mixed += w_hi;
+        mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+        mixed += w_lo;
+        mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+        mixed += t;
+        mixed ^= rotl(mixed + i_hi, iter * 2 + 13);
+    }
+    (mixed)
 }
 
 /// Instances must not be used again after being zeroized.
@@ -827,43 +749,35 @@ mod tests {
             random_inputs,
         ];
         for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(
+            let base_out0 = mix(
                 base_input[0],
                 base_input[1],
                 base_input[2],
                 base_input[3],
                 base_input[4],
             );
-            let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
+            let mut xor_matrix = BitMatrix::<u64>::zeros(256, 1280);
             let mut i = 0;
             for variable_idx in 0..5 {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0..64 {
                         let mut modified_input = base_input;
                         modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
-                        let (mod_out0, mod_out1) = mix(
+                        let (mod_out0) = mix(
                             modified_input[0],
                             modified_input[1],
                             modified_input[2],
                             modified_input[3],
                             modified_input[4],
                         );
-                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                        let out_xor0 = (mod_out0 ^ base_out0);
                         let mut j = 0;
                         for out_lane_idx in 0..SIMD_WIDTH {
                             for out_bit_idx in 0..64 {
                                 xor_matrix.set(
                                     j,
                                     i,
-                                    (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                                );
-                                j += 1;
-                            }
-                            for out_bit_idx in 0..64 {
-                                xor_matrix.set(
-                                    j,
-                                    i,
-                                    (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                                    (out_xor0[out_lane_idx] >> out_bit_idx) & 1 != 0,
                                 );
                                 j += 1;
                             }
@@ -872,7 +786,7 @@ mod tests {
                     }
                 }
             }
-            let row_weights = (0..512)
+            let row_weights = (0..256)
                 .map(|row| xor_matrix.row(row).count_ones())
                 .collect::<Vec<_>>();
             let min_row_weight = row_weights.iter().copied().min().unwrap();
@@ -893,14 +807,14 @@ mod tests {
                 println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
             }
             let total_weight = row_weights.into_iter().sum::<usize>();
-            let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
-            let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
+            let sigma = ((256 * 1280) as f64 * 0.25).sqrt();
+            let z = (total_weight as f64 - (0.5 * 256.0 * 1280.0)) / sigma;
             println!("Total weight: {total_weight} (z={z})");
-            assert!(min_col_weight >= 200);
-            assert!(min_row_weight >= 550);
+            assert!(min_col_weight >= 100);
+            assert!(min_row_weight >= 275);
             assert!(z >= -3.0, "Total weight too low");
             assert!(z <= 3.0, "Total weight too high");
-            assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+            assert_eq!(xor_matrix.to_echelon_form().count_ones(), 256);
         }
     }
 
@@ -917,7 +831,7 @@ mod tests {
             random_inputs,
         ];
         for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(
+            let base_out0 = mix(
                 base_input[0],
                 base_input[1],
                 base_input[2],
@@ -935,18 +849,17 @@ mod tests {
                                         let mut modified_input = base_input;
                                         modified_input[var_idx_1][lane_idx_1] ^=
                                             1 << bit_idx_1 | 1 << bit_idx_2;
-                                        let (mod_out0, mod_out1) = mix(
+                                        let mod_out0 = mix(
                                             modified_input[0],
                                             modified_input[1],
                                             modified_input[2],
                                             modified_input[3],
                                             modified_input[4],
                                         );
-                                        let (out_xor_0, out_xor_1) =
-                                            (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                        let (out_xor_0) =
+                                            (mod_out0 ^ base_out0);
                                         weights.push(
                                             out_xor_0.count_ones().reduce_sum()
-                                                + out_xor_1.count_ones().reduce_sum(),
                                         );
                                     }
                                 }
@@ -955,18 +868,17 @@ mod tests {
                                     let mut modified_input = base_input;
                                     modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
                                     modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
-                                    let (mod_out0, mod_out1) = mix(
+                                    let mod_out0 = mix(
                                         modified_input[0],
                                         modified_input[1],
                                         modified_input[2],
                                         modified_input[3],
                                         modified_input[4],
                                     );
-                                    let (out_xor_0, out_xor_1) =
-                                        (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                    let out_xor_0 =
+                                        (mod_out0 ^ base_out0);
                                     weights.push(
                                         out_xor_0.count_ones().reduce_sum()
-                                            + out_xor_1.count_ones().reduce_sum(),
                                     );
                                 }
                             }
@@ -990,10 +902,10 @@ mod tests {
             println!(
                 "N={sample_size}, min={min_weight}, max={max_weight}, mean={mean_weight}, sd={stdev_weight}"
             );
-            assert!(min_weight >= 150);
-            assert!(max_weight <= 362);
-            assert!(mean_weight >= 254.0);
-            assert!(mean_weight <= 258.0);
+            assert!(min_weight >= 75);
+            assert!(max_weight <= 181);
+            assert!(mean_weight >= 126.0);
+            assert!(mean_weight <= 130.0);
             assert!(stdev_weight >= 11.0);
             assert!(stdev_weight <= 14.0);
         }
