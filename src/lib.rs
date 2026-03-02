@@ -247,11 +247,11 @@ impl TripleMixSimdCore {
             w_lo = next_w_lo;
             let w_lo_out = w_lo + LANE_CONSTANTS;
 
-            // Xoroshiro update
+            // Xoroshiro+ update
             let x_out = xr0 + xr1;
             let t = xr0 ^ xr1;
-            xr0 = rotl(xr0, 9) ^ t ^ (t << Simd::splat(14));
-            xr1 = rotl(t, 36);
+            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
+            xr1 = rotl(t, 37);
 
             // TinyMT64 update
             tm0 &= Simd::splat(TINYMT64_LANE_MASK);
