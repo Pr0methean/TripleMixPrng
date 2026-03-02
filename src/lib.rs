@@ -170,7 +170,7 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de>
         };
         if !Self::is_valid(&core) {
             cold_path();
-            Err(D::Error::custom(format!("invalid core state in lane {i}")))
+            Err(D::Error::custom("invalid core state"))
         } else if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
             Ok(TripleMixPrng {
                 block_core,
