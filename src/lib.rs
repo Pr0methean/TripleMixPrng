@@ -416,11 +416,14 @@ fn get_base_kmac() -> Kmac {
     #[cfg(feature = "no_std")]
     {
         static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
-        INSTANCE.get_or_init(|| alloc::boxed::Box::new(Kmac::v256(SEED_DOMAIN_STRING, &[]))).clone()
+        INSTANCE
+            .get_or_init(|| alloc::boxed::Box::new(Kmac::v256(SEED_DOMAIN_STRING, &[])))
+            .clone()
     }
     #[cfg(not(feature = "no_std"))]
     {
-        static INSTANCE: std::sync::LazyLock<Kmac> = std::sync::LazyLock::new(|| Kmac::v256(SEED_DOMAIN_STRING, &[]));
+        static INSTANCE: std::sync::LazyLock<Kmac> =
+            std::sync::LazyLock::new(|| Kmac::v256(SEED_DOMAIN_STRING, &[]));
         INSTANCE.clone()
     }
 }
