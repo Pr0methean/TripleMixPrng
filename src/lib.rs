@@ -242,8 +242,9 @@ impl TripleMixSimdCore {
             let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
             let carry = next_w_lo
                 .simd_lt(w_lo)
-                .select(Simd::splat(1), Simd::splat(0));
-            w_hi = w_hi + high_product + i_hi + carry;
+                .select(Simd::splat(u64::MAX), Simd::splat(0));
+            // subtracting u64::MAX = adding 1
+            w_hi = w_hi + high_product + i_hi - carry;
             w_lo = next_w_lo;
             let w_lo_out = w_lo + LANE_CONSTANTS;
 
