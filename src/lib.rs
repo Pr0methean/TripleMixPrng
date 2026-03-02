@@ -412,11 +412,24 @@ pub const VERSION_OID: &str =
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
 const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 
+fn get_base_kmac() -> Kmac {
+    #[cfg(feature = "no_std")]
+    {
+        static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
+        INSTANCE.get_or_init(|| alloc::boxed::Box::new(Kmac::v256(SEED_DOMAIN_STRING, &[]))).clone()
+    }
+    #[cfg(not(feature = "no_std"))]
+    {
+        static INSTANCE: std::sync::LazyLock<Kmac> = std::sync::LazyLock::new(|| Kmac::v256(SEED_DOMAIN_STRING, &[]));
+        INSTANCE.clone()
+    }
+}
+
 impl<Reproducibility: FillBytesReproducibility, T: AsRef<[u8]>> From<T>
     for TripleMixPrng<Reproducibility>
 {
     fn from(raw_seed: T) -> Self {
-        let mut base_kmac = Kmac::v256(SEED_DOMAIN_STRING, &[]);
+        let mut base_kmac = get_base_kmac();
         base_kmac.update(raw_seed.as_ref());
         Self::from_core(Self::generate_valid(base_kmac))
     }
