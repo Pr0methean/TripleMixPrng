@@ -168,23 +168,10 @@ impl<'de, Reproducibility: FillBytesReproducibility> serde::Deserialize<'de>
             inc_lo: Simd64::from_array(state.inc_lo),
             inc_hi: Simd64::from_array(state.inc_hi),
         };
-        for i in 0..SIMD_WIDTH {
-            if Self::is_lane_invalid(
-                core.xr0,
-                core.xr1,
-                core.tm0,
-                core.tm1,
-                core.weyl_lo,
-                core.weyl_hi,
-                core.inc_lo,
-                core.inc_hi,
-                i,
-            ) {
-                cold_path();
-                return Err(D::Error::custom(format!("invalid core state in lane {i}")));
-            }
-        }
-        if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
+        if !Self::is_valid(&core) {
+            cold_path();
+            Err(D::Error::custom(format!("invalid core state in lane {i}")))
+        } else if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
             Ok(TripleMixPrng {
                 block_core,
                 reproducibility: PhantomData,
