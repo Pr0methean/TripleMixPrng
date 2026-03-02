@@ -216,13 +216,9 @@ impl TripleMixSimdCore {
             return;
         }
 
-        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
-        // first and last constant to increase low-bit rank and avalanche effect.
         const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-            0xd243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x7082_efa9_8ec4_e6c8,
+            0x5851f42d4c957f2d, 0x6c576fac43fd007d,
+            0x805ceb2b3b6481cb, 0x946266aa32cc031b
         ]);
 
         let mut xr0 = self.xr0;
@@ -487,7 +483,9 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
                 &mut tm0,
                 &mut tm1,
                 &mut weyl_lo,
+                &mut weyl_hi,
                 &mut inc_lo,
+                &mut inc_hi,
                 &f_out,
                 false,
             );
@@ -561,29 +559,24 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         xr1: &mut Simd64,
         tm0: &mut Simd64,
         tm1: &mut Simd64,
-        lcg_s: &mut Simd64,
-        lcg_i: &mut Simd64,
+        weyl_lo: &mut Simd64,
+        weyl_hi: &mut Simd64,
+        inc_lo: &mut Simd64,
+        inc_hi: &mut Simd64,
         data: &[u8],
         right: bool,
     ) {
-        let range = if right { 2..4 } else { 0..2 };
-        let mut chunks = data
-            .chunks_exact(8)
-            .map(|c| u64::from_le_bytes(c.try_into().unwrap()));
-        let x0 = xr0.as_mut_array();
-        let x1 = xr1.as_mut_array();
-        let t0 = tm0.as_mut_array();
-        let t1 = tm1.as_mut_array();
-        let ls = lcg_s.as_mut_array();
-        let li = lcg_i.as_mut_array();
-        for i in range {
-            x0[i] ^= chunks.next().unwrap();
-            x1[i] ^= chunks.next().unwrap();
-            t0[i] ^= chunks.next().unwrap();
-            t1[i] ^= chunks.next().unwrap();
-            ls[i] ^= chunks.next().unwrap();
-            li[i] ^= chunks.next().unwrap();
-        }
+        let mask = if right { Simd::from_array([0, 0, !0, !0]) } else { Simd::from_array([!0, !0, 0, 0]) };
+        let data: &[u64] = cast_slice(data);
+
+        *xr0 ^= Simd::from_slice(&data[0..4]) & mask;
+        *xr1 ^= Simd::from_slice(&data[4..8]) & mask;
+        *tm0 ^= Simd::from_slice(&data[8..12]) & mask;
+        *tm1 ^= Simd::from_slice(&data[12..16]) & mask;
+        *weyl_lo ^= Simd::from_slice(&data[16..20]) & mask;
+        *weyl_hi ^= Simd::from_slice(&data[20..24]) & mask;
+        *inc_lo ^= Simd::from_slice(&data[24..28]) & mask;
+        *inc_hi ^= Simd::from_slice(&data[28..32]) & mask;
     }
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
