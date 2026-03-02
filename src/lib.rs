@@ -13,7 +13,6 @@ use core::hint::cold_path;
 use core::marker::PhantomData;
 use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use core::simd::num::SimdUint;
-use core::simd::simd_swizzle;
 use core::simd::{Select, Simd};
 use core::slice::from_mut;
 use generic_array::GenericArray;
@@ -293,7 +292,14 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> Simd64 {
-    let mut mixed = i_hi;
+    // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
+    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
+        0x9E3779B97F4A7C15,
+        0x2767f0b153d27b7f,
+        0xf06ad7ae9717877e,
+        0x626e33b8d04b4331,
+    ]);
+    let mut mixed = i_hi ^ rotl(w_hi, 35);
     mixed += x_in;
     mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
     mixed += w_hi;
@@ -301,18 +307,18 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> Sim
     mixed += w_lo;
     mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
     mixed += t;
-    mixed *= rotl(mixed ^ i_hi, 11);
-    for iter in 0..8 {
-        mixed += x_in;
-        mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
-        mixed += w_hi;
+    mixed ^= rotl(mixed + w_hi + i_hi, 13) * FEISTEL_CONSTANT_1;
+    for iter in 1..5 {
+        mixed += x_in + rotl(w_hi, iter * 4 + 14);
         mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
         mixed += w_lo;
         mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
+        mixed += w_hi;
+        mixed = mixed.rotate_elements_left::<1>(); // Inter-lane diffusion (optional)
         mixed += t;
-        mixed ^= rotl(mixed + i_hi, iter * 2 + 13);
+        mixed += rotl(mixed + i_hi, iter * 4 + 13);
     }
-    (mixed)
+    mixed
 }
 
 /// Instances must not be used again after being zeroized.
