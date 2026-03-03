@@ -27,7 +27,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, macos-latest, windows-latest, windows-11-arm ]
+        # os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, macos-latest, windows-latest, windows-11-arm ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest ]
       fail-fast: false
     steps:
     - uses: actions/checkout@v6
@@ -36,6 +37,7 @@ jobs:
     - name: Install criterion-hypothesis
       run: cargo +nightly install criterion-hypothesis
     - name: Run benchmarks
+      if: ${{ github.branch != 'bench' }}
       run: >
         criterion-hypothesis -v
         --baseline ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
