@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
+use aws_lc_rs::test::from_hex;
 
 const OS_ENTROPY_BYTES: usize = 32;
 
@@ -16,7 +17,8 @@ fn main() {
     let args: Vec<_> = env::args_os().collect();
     let mut prng: TripleMixPrng<NotReproducible>;
     if let Some(seed_arg) = args.get(1)
-        && let Ok(decoded_seed) = hex::decode(seed_arg.as_encoded_bytes())
+        && let Some(seed_arg_utf8) = seed_arg.to_str()
+        && let Ok(decoded_seed) = from_hex(seed_arg_utf8)
     {
         let mut seed = [0u8; SEED_SIZE];
         seed[0..(SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
