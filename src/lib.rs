@@ -558,7 +558,9 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        fork_kmac.update(&R::u64_as_bytes(self.block_core.remaining_results().len() as u64));
+        fork_kmac.update(&R::u64_as_bytes(
+            self.block_core.remaining_results().len() as u64
+        ));
         fork_kmac.update(&R::u64_as_bytes(self.next_u64()));
         fork_kmac.update(self.block_core.core.as_bytes());
         self.block_core.reset_and_skip(0);

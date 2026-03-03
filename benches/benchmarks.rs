@@ -1,11 +1,11 @@
-use criterion::{Criterion, criterion_group, criterion_main, BenchmarkId, Throughput};
+use criterion::measurement::Measurement;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion_cycles_per_byte::CyclesPerByte;
 use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
 use std::hint::black_box;
-use criterion::measurement::Measurement;
-use criterion_cycles_per_byte::CyclesPerByte;
 
 fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
     let mut seed = [0u8; SEED_SIZE];
