@@ -39,6 +39,6 @@ jobs:
     - name: Run benchmarks
       if: ${{ github.branch != 'bench' }}
       run: >
-        criterion-hypothesis -v
+        criterion-hypothesis -v --harness-output
         --baseline ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         --candidate ${{ github.sha }}
