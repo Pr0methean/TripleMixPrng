@@ -581,39 +581,39 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         // Dead-state check
         if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0)) | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))).any()
         {
+            cold_path();
             return false;
         }
 
         // Duplicate Check via XOR Reduction
         // If Lane[i] == Lane[j], then (Lane[i] ^ Lane[j]) == 0.
         // We check all 3 possible shift-offsets (1, 2, 3).
-        macro_rules! find_dupe {
+        macro_rules! find_similar {
             ($shift:expr) => {
                 let diff_xr = (c.xr0 ^ c.xr0.rotate_elements_left::<$shift>())
                     | (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
                 let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>())
                     | (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
-                let diff_lcg = (c.weyl_hi ^ c.weyl_hi.rotate_elements_left::<$shift>())
-                    | (c.weyl_lo ^ c.weyl_lo.rotate_elements_left::<$shift>())
-                    | (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
+                let diff_lcg = (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
                     | (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
 
-                // A lane is a duplicate if ALL sub-generators match the rotated version
+                // A lane is similar if ANY sub-generator matches the rotated version
                 if (diff_xr.simd_eq(Simd::splat(0))
-                    & diff_tm.simd_eq(Simd::splat(0))
-                    & diff_lcg.simd_eq(Simd::splat(0)))
+                    | diff_tm.simd_eq(Simd::splat(0))
+                    | diff_lcg.simd_eq(Simd::splat(0)))
                 .any()
                 {
+                    cold_path();
                     return false;
                 }
             };
         }
 
-        find_dupe!(1);
-        find_dupe!(2);
+        find_similar!(1);
+        find_similar!(2);
         // (Note: shift 3 is covered by shift 1 in a 4-lane circular buffer,
         // but we keep it for strict completeness if not circular)
-        find_dupe!(3);
+        find_similar!(3);
 
         true
     }
@@ -1451,7 +1451,8 @@ mod tests {
                 "Average diffusion too high?"
             );
 
-            let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, count, low_avalanches);
+            let low_avalanche_p_value =
+                binomial_p_value(low_avalanche_probability, count, low_avalanches);
             println!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
                 count as f64 * low_avalanche_probability,
@@ -1469,7 +1470,11 @@ mod tests {
             total_checks += count;
             total_low_avalanche_checks += low_avalanches;
         }
-        let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, total_checks, total_low_avalanche_checks);
+        let low_avalanche_p_value = binomial_p_value(
+            low_avalanche_probability,
+            total_checks,
+            total_low_avalanche_checks,
+        );
         println!(
             "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
             total_low_avalanche_checks as f64 * low_avalanche_probability,
@@ -1483,8 +1488,7 @@ mod tests {
     }
 
     fn binomial_p_value(probability: f64, trials: u64, successes: u64) -> f64 {
-        let low_avalanche_distribution =
-            Binomial::new(probability, trials).unwrap();
+        let low_avalanche_distribution = Binomial::new(probability, trials).unwrap();
         let p_obs = low_avalanche_distribution.pmf(successes);
 
         // Sum all outcomes whose probability is <= the probability of our observation
