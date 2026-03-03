@@ -22,6 +22,7 @@ once_cell = { version = "1.21.3", optional = true, default-features = false }
 zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
 no_std = ["once_cell/race"]
+bench_include_threadrng = []
 
 [[bin]]
 name = "rand_triplemix"
