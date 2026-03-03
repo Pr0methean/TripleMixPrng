@@ -106,9 +106,7 @@ struct CoreState {
 }
 
 #[cfg(feature = "zeroize")]
-impl<R: Reproducibility> zeroize::Zeroize
-    for TripleMixPrng<R>
-{
+impl<R: Reproducibility> zeroize::Zeroize for TripleMixPrng<R> {
     fn zeroize(&mut self) {
         self.block_core.core.zeroize();
 
@@ -122,9 +120,7 @@ impl<R: Reproducibility> zeroize::Zeroize
 }
 
 #[cfg(feature = "serde")]
-impl<R: Reproducibility> serde::Serialize
-    for TripleMixPrng<R>
-{
+impl<R: Reproducibility> serde::Serialize for TripleMixPrng<R> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -150,9 +146,7 @@ impl<R: Reproducibility> serde::Serialize
 }
 
 #[cfg(feature = "serde")]
-impl<'de, R: Reproducibility> serde::Deserialize<'de>
-    for TripleMixPrng<R>
-{
+impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -213,12 +207,7 @@ impl TripleMixSimdCore {
 
     #[inline(always)]
     fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                (self as *const Self) as *const u8,
-                size_of::<Self>(),
-            )
-        }
+        unsafe { std::slice::from_raw_parts((self as *const Self) as *const u8, size_of::<Self>()) }
     }
 
     #[inline(always)]
@@ -455,9 +444,7 @@ fn get_base_fork_kmac() -> Kmac {
     }
 }
 
-impl<R: Reproducibility, T: AsRef<[u8]>> From<T>
-    for TripleMixPrng<R>
-{
+impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
     fn from(raw_seed: T) -> Self {
         let mut base_kmac = get_base_kmac();
         base_kmac.update(raw_seed.as_ref());
@@ -510,9 +497,9 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             // Xor into left half
             let mask = Simd::from_array([!0, !0, 0, 0]);
             let data = R::cast_u8_slice_as_u64(&f_out);
-            let d0 = Simd::from_slice(&data.as_ref()[0..4]);   // words 0,1,2,3
-            let d1 = Simd::from_slice(&data.as_ref()[4..8]);  // words 4,5,6,7
-            let d2 = Simd::from_slice(&data.as_ref()[8..12]);  // words 8,9,10,11
+            let d0 = Simd::from_slice(&data.as_ref()[0..4]); // words 0,1,2,3
+            let d1 = Simd::from_slice(&data.as_ref()[4..8]); // words 4,5,6,7
+            let d2 = Simd::from_slice(&data.as_ref()[8..12]); // words 8,9,10,11
             let d3 = Simd::from_slice(&data.as_ref()[12..16]); // words 12,13,14,15
             xr0 ^= d0 & mask;
             // Use a swizzle to get words 2,3 into lanes 0,1
@@ -806,7 +793,10 @@ impl Reproducibility for CrossPlatform {
 
     #[inline(always)]
     fn cast_u8_slice_as_u64(slice: &[u8]) -> Vec<u64> {
-        slice.chunks_exact(8).map(|chunk| u64::from_le_bytes(*chunk.as_array().unwrap())).collect()
+        slice
+            .chunks_exact(8)
+            .map(|chunk| u64::from_le_bytes(*chunk.as_array().unwrap()))
+            .collect()
     }
 
     #[inline(always)]
@@ -1049,8 +1039,7 @@ mod tests {
         }
     }
 
-    pub fn create_rngs<R: Reproducibility>()
-    -> [TripleMixPrng<R>; 5] {
+    pub fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
         const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
         const LARGEST_DISTINCT_ODD: Simd64 =
@@ -1190,13 +1179,13 @@ mod tests {
                 if length.is_multiple_of(size_of::<u64>()) {
                     for chunk in buf2.chunks_exact_mut(size_of::<u64>()) {
                         let next_word = prng2.next_u64();
-                        chunk.copy_from_slice(&if TypeId::of::<R>()
-                            == TypeId::of::<CrossPlatform>()
-                        {
-                            next_word.to_le_bytes()
-                        } else {
-                            next_word.to_ne_bytes()
-                        });
+                        chunk.copy_from_slice(
+                            &if TypeId::of::<R>() == TypeId::of::<CrossPlatform>() {
+                                next_word.to_le_bytes()
+                            } else {
+                                next_word.to_ne_bytes()
+                            },
+                        );
                     }
                 } else {
                     prng2.fill_bytes(buf2);
@@ -1249,7 +1238,10 @@ mod tests {
             F7DDC1AE9EFCF09BE057E74993D87E9243D1DF1D05A6DDB8DC3E390598512785";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
-        assert_eq!(&actual.iter().map(|byte| format!("{byte:02X}")).join(""), expected);
+        assert_eq!(
+            &actual.iter().map(|byte| format!("{byte:02X}")).join(""),
+            expected
+        );
     }
 
     #[test]
@@ -1726,7 +1718,11 @@ mod tests {
                 p.tm0.as_array().clone(),
                 p.tm1.as_array().clone(),
             );
-            assert!(results.insert(state_snapshot), "Collision detected in Feistel permutation at tweak {}", i);
+            assert!(
+                results.insert(state_snapshot),
+                "Collision detected in Feistel permutation at tweak {}",
+                i
+            );
         }
     }
 
@@ -1747,7 +1743,11 @@ mod tests {
 
         // Avalanche effect: ~50% of bits should flip.
         // For 256 bits of xr0, we expect ~128. Threshold at 80 for safety.
-        assert!(diff_bits > 80, "Poor diffusion: only {} bits flipped", diff_bits);
+        assert!(
+            diff_bits > 80,
+            "Poor diffusion: only {} bits flipped",
+            diff_bits
+        );
     }
 
     #[test]

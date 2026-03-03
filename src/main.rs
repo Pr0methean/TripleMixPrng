@@ -2,6 +2,7 @@
 
 use aws_lc_rs::rand::SecureRandom;
 use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::test::from_hex;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::{NotReproducible, SEED_SIZE, TripleMixPrng};
@@ -9,7 +10,6 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::str::FromStr;
 use std::{env, thread};
-use aws_lc_rs::test::from_hex;
 
 const OS_ENTROPY_BYTES: usize = 32;
 
