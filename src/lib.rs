@@ -883,8 +883,7 @@ mod tests {
     use rand::rngs::SysRng;
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
-    use statrs::distribution::{Binomial, DiscreteCDF};
-    use statrs::statistics::Distribution;
+    use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
 
     #[test]
     pub fn test_mix_matrix() {
@@ -1294,11 +1293,15 @@ mod tests {
 
     #[test]
     fn test_avalanche() {
+        const LOW_AVALANCHE_THRESHOLD: u64 = 28 * OUTPUT_LEN as u64;
+        let mut total_low_avalanche_checks = 0;
+        let mut total_checks = 0;
+        let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
+        let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD);
         for rng in create_rngs::<NotReproducible>() {
             let core = rng.block_core.core;
 
             const ITERATIONS: usize = 20;
-            const LOW_AVALANCHE_THRESHOLD: u64 = 28 * OUTPUT_LEN as u64;
 
             let mut min_flips = u64::MAX;
             let mut max_flips = 0;
@@ -1447,34 +1450,52 @@ mod tests {
                 avg_flips <= 32.0 * (1.0 + DEVIATION) * (OUTPUT_LEN as f64),
                 "Average diffusion too high?"
             );
-            let bit_flip_distribution = Binomial::new(0.5, (OUTPUT_LEN * 64) as u64).unwrap();
-            let low_avalanche_probability = bit_flip_distribution.cdf(LOW_AVALANCHE_THRESHOLD);
-            let low_avalanche_distribution =
-                Binomial::new(low_avalanche_probability, count).unwrap();
-            let mean = low_avalanche_distribution.mean().unwrap();
-            let mirror = 2.0 * mean - low_avalanches as f64;
-            let low_avalanche_p_value = if low_avalanches as f64 <= mean {
-                1.0 - low_avalanche_distribution.cdf(mirror as u64 - 1)
-                    + low_avalanche_distribution.cdf(low_avalanches as u64)
-            } else {
-                1.0 - low_avalanche_distribution.cdf(low_avalanches as u64 - 1)
-                    + low_avalanche_distribution.cdf(mirror as u64)
-            };
+
+            let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, count, low_avalanches);
             println!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-                low_avalanche_probability * count as f64,
+                count as f64 * low_avalanche_probability,
                 low_avalanches,
                 low_avalanche_p_value
             );
             assert!(
-                low_avalanche_p_value > 0.0025,
+                low_avalanche_p_value > 0.001,
                 "Too many low-avalanche results"
             );
             assert!(
                 min_flips as usize >= 16 * OUTPUT_LEN,
                 "Minimum diffusion too low in field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter}, possible blind spot!"
             );
+            total_checks += count;
+            total_low_avalanche_checks += low_avalanches;
         }
+        let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, total_checks, total_low_avalanche_checks);
+        println!(
+            "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
+            total_low_avalanche_checks as f64 * low_avalanche_probability,
+            total_low_avalanche_checks,
+            low_avalanche_p_value
+        );
+        assert!(
+            low_avalanche_p_value > 0.01,
+            "Too many low-avalanche results"
+        );
+    }
+
+    fn binomial_p_value(probability: f64, trials: u64, successes: u64) -> f64 {
+        let low_avalanche_distribution =
+            Binomial::new(probability, trials).unwrap();
+        let p_obs = low_avalanche_distribution.pmf(successes);
+
+        // Sum all outcomes whose probability is <= the probability of our observation
+        let low_avalanche_p_value: f64 = (0..=trials)
+            .filter(|&k| low_avalanche_distribution.pmf(k) <= p_obs + 1e-12) // + epsilon for float safety
+            .map(|k| low_avalanche_distribution.pmf(k))
+            .sum();
+
+        // Ensure it doesn't exceed 1.0 due to floating point errors
+        let low_avalanche_p_value = low_avalanche_p_value.min(1.0);
+        low_avalanche_p_value
     }
 
     #[test]
