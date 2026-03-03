@@ -5,13 +5,11 @@ edition = "2024"
 
 [dependencies]
 rand_core = "0.10"
-rand = "0.10"
 generic-array = "1.3"
 tiny-keccak = { version = "2.0", features = ["kmac", "sha3"] }
 const_format = "0.2"
 bytemuck = { version = "1.25.0", features = ["nightly_portable_simd"] }
 typenum = { version = "1.19", features = ["const-generics"] }
-hex = { version = "0.4", optional = true }
 rdrand = { version = "0.8", optional = true }
 tss-esapi = { version = "7.6", optional = true }
 aws-lc-rs = { version = "1.16", optional = true }
@@ -26,7 +24,7 @@ no_std = ["once_cell/race"]
 
 [[bin]]
 name = "rand_triplemix"
-required-features = ["hex","aws-lc-rs"]
+required-features = ["aws-lc-rs"]
 
 [[bench]]
 name = "benchmarks"
@@ -44,3 +42,4 @@ hypors = "0.3.0"
 statrs = "0.18.0"
 criterion = "0.8.2"
 gf2 = "2.1.0"
+itertools = "0.14.0"
