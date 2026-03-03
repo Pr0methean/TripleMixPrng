@@ -412,36 +412,32 @@ pub const VERSION_OID: &str =
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
 const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 
-fn get_base_kmac() -> Kmac {
-    #[cfg(feature = "no_std")]
-    {
+#[cfg(feature = "no_std")]
+macro_rules! once_kmac {
+    ($domain:expr) => {
         static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
-        INSTANCE
-            .get_or_init(|| alloc::boxed::Box::new(Kmac::v256(SEED_DOMAIN_STRING, &[])))
-            .clone()
-    }
-    #[cfg(not(feature = "no_std"))]
-    {
+        return INSTANCE
+            .get_or_init(|| alloc::boxed::Box::new(Kmac::v256($domain, &[])))
+            .clone();
+    };
+}
+
+#[cfg(not(feature = "no_std"))]
+macro_rules! once_kmac {
+    ($domain:expr) => {
+        use std::ops::Deref;
         static INSTANCE: std::sync::LazyLock<Kmac> =
-            std::sync::LazyLock::new(|| Kmac::v256(SEED_DOMAIN_STRING, &[]));
-        INSTANCE.clone()
-    }
+            std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
+        return INSTANCE.deref().clone();
+    };
+}
+
+fn get_base_kmac() -> Kmac {
+    once_kmac!(SEED_DOMAIN_STRING);
 }
 
 fn get_base_fork_kmac() -> Kmac {
-    #[cfg(feature = "no_std")]
-    {
-        static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
-        INSTANCE
-            .get_or_init(|| alloc::boxed::Box::new(Kmac::v256(FORK_DOMAIN_STRING, &[])))
-            .clone()
-    }
-    #[cfg(not(feature = "no_std"))]
-    {
-        static INSTANCE: std::sync::LazyLock<Kmac> =
-            std::sync::LazyLock::new(|| Kmac::v256(FORK_DOMAIN_STRING, &[]));
-        INSTANCE.clone()
-    }
+    once_kmac!(FORK_DOMAIN_STRING);
 }
 
 impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
@@ -472,7 +468,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut inc_hi = Simd64::splat(0);
         for round in 0..4 {
             let mut round_kmac = base.clone();
-            round_kmac.update(&tweak.to_le_bytes());
+            round_kmac.update(&R::u128_as_bytes(tweak));
             round_kmac.update(&[round as u8]);
 
             // Update KMAC from right half
@@ -562,8 +558,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        fork_kmac.update(&(self.block_core.remaining_results().len() as u64).to_le_bytes());
-        fork_kmac.update(&self.next_u64().to_le_bytes());
+        fork_kmac.update(&R::u64_as_bytes(self.block_core.remaining_results().len() as u64));
+        fork_kmac.update(&R::u64_as_bytes(self.next_u64()));
         fork_kmac.update(self.block_core.core.as_bytes());
         self.block_core.reset_and_skip(0);
         let mut attempt = 0u128;
@@ -667,6 +663,8 @@ pub trait Reproducibility: Clone + Copy {
     fn fill_bytes(core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]);
     fn cast_u8_slice_as_u64(slice: &[u8]) -> Self::U64Slice<'_>;
     fn cast_u64_slice_as_u8(slice: &[u64]) -> Self::U8Slice<'_>;
+    fn u64_as_bytes(input: u64) -> [u8; 8];
+    fn u128_as_bytes(input: u128) -> [u8; 16];
 }
 
 /// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
@@ -698,6 +696,14 @@ impl Reproducibility for NotReproducible {
 
     fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
         cast_slice(slice)
+    }
+
+    fn u64_as_bytes(input: u64) -> [u8; 8] {
+        input.to_ne_bytes()
+    }
+
+    fn u128_as_bytes(input: u128) -> [u8; 16] {
+        input.to_ne_bytes()
     }
 }
 
@@ -756,6 +762,14 @@ impl Reproducibility for SameEndianness {
     fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
         cast_slice(slice)
     }
+
+    fn u64_as_bytes(input: u64) -> [u8; 8] {
+        input.to_ne_bytes()
+    }
+
+    fn u128_as_bytes(input: u128) -> [u8; 16] {
+        input.to_ne_bytes()
+    }
 }
 
 /// Output of the PRNG will be the same as for an instance created with the same seed and receiving
@@ -764,33 +778,33 @@ impl Reproducibility for SameEndianness {
 #[derive(Copy, Clone, Default, Debug)]
 pub struct CrossPlatform;
 
-#[cfg(target_endian = "little")]
 impl Reproducibility for CrossPlatform {
+    #[cfg(target_endian = "little")]
     type U8Slice<'a> = &'a [u8];
+    #[cfg(target_endian = "big")]
+    type U8Slice<'a> = Vec<u8>;
+    #[cfg(target_endian = "little")]
     type U64Slice<'a> = &'a [u64];
+    #[cfg(target_endian = "big")]
+    type U64Slice<'a> = Vec<u64>;
+    #[cfg(target_endian = "little")]
     #[inline(always)]
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         SameEndianness::fill_bytes(block_core, bytes);
     }
-
-    fn cast_u8_slice_as_u64(slice: &[u8]) -> &[u64] {
-        cast_slice(slice)
-    }
-
-    fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
-        cast_slice(slice)
-    }
-}
-
-#[cfg(target_endian = "big")]
-impl Reproducibility for CrossPlatform {
-    type U8Slice<'a> = Vec<u8>;
-    type U64Slice<'a> = Vec<u64>;
+    #[cfg(target_endian = "big")]
     #[inline(always)]
     fn fill_bytes(block_core: &mut BlockRng<TripleMixSimdCore>, bytes: &mut [u8]) {
         block_core.fill_bytes(bytes);
     }
 
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn cast_u8_slice_as_u64(slice: &[u8]) -> &[u64] {
+        cast_slice(slice)
+    }
+
+    #[cfg(target_endian = "big")]
     #[inline(always)]
     fn cast_u8_slice_as_u64(slice: &[u8]) -> Vec<u64> {
         slice
@@ -799,9 +813,26 @@ impl Reproducibility for CrossPlatform {
             .collect()
     }
 
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
+        cast_slice(slice)
+    }
+
+    #[cfg(target_endian = "big")]
     #[inline(always)]
     fn cast_u64_slice_as_u8(slice: &[u64]) -> Vec<u8> {
         slice.iter().copied().flat_map(u64::to_le_bytes).collect()
+    }
+
+    #[inline(always)]
+    fn u64_as_bytes(input: u64) -> [u8; 8] {
+        input.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn u128_as_bytes(input: u128) -> [u8; 16] {
+        input.to_le_bytes()
     }
 }
 
@@ -843,7 +874,6 @@ impl Generator for TripleMixSimdCore {
 mod tests {
     use super::*;
     use bytemuck::cast_slice_mut;
-    use core::any::TypeId;
     use core::simd::cmp::SimdPartialEq;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
@@ -1179,13 +1209,7 @@ mod tests {
                 if length.is_multiple_of(size_of::<u64>()) {
                     for chunk in buf2.chunks_exact_mut(size_of::<u64>()) {
                         let next_word = prng2.next_u64();
-                        chunk.copy_from_slice(
-                            &if TypeId::of::<R>() == TypeId::of::<CrossPlatform>() {
-                                next_word.to_le_bytes()
-                            } else {
-                                next_word.to_ne_bytes()
-                            },
-                        );
+                        chunk.copy_from_slice(&R::u64_as_bytes(next_word));
                     }
                 } else {
                     prng2.fill_bytes(buf2);
