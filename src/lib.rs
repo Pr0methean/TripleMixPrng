@@ -645,7 +645,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         fork_kmac.update(&(self.block_core.remaining_results().len() as u64).to_le_bytes());
         fork_kmac.update(&self.next_u64().to_le_bytes());
         fork_kmac.update(self.block_core.core.as_bytes());
-        self.block_core.core = Self::generate_valid(fork_kmac.clone());
+        self.block_core.reset_and_skip(0);
         Self::from_core(Self::generate_valid_distinct(fork_kmac, &self.block_core.core))
     }
 
