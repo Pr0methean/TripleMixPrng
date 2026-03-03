@@ -441,6 +441,7 @@ fn get_base_fork_kmac() -> Kmac {
 }
 
 impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
+    #[inline(always)]
     fn from(raw_seed: T) -> Self {
         let mut base_kmac = get_base_kmac();
         base_kmac.update(raw_seed.as_ref());
@@ -551,6 +552,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     /// of the same instance *and* the domain bytes are identical across both calls.
     /// Also permutes the parent PRNG's state so that repeated calls, even with the same
     /// domain-separation bytes, will return statistically independent instances.
+    #[inline]
     pub fn fork_with_domain_separation(&mut self, domain_separation: impl AsRef<[u8]>) -> Self {
         // 2. Use this entropy as a seed for the new PRNG
         let mut fork_kmac = if domain_separation.as_ref().is_empty() {
@@ -648,10 +650,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
 impl<R: Reproducibility> SeedableRng for TripleMixPrng<R> {
     type Seed = GenericArray<u8, U<{ SEED_SIZE }>>;
 
+    #[inline(always)]
     fn from_seed(seed: Self::Seed) -> Self {
         Self::from(&seed)
     }
 
+    #[inline]
     fn fork(&mut self) -> Self {
         self.fork_with_domain_separation([])
     }
@@ -692,18 +696,22 @@ impl Reproducibility for NotReproducible {
         fill_bytes_inner(block_core, u64s, suffix);
     }
 
+    #[inline(always)]
     fn cast_u8_slice_as_u64(slice: &[u8]) -> &[u64] {
         cast_slice(slice)
     }
 
+    #[inline(always)]
     fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
         cast_slice(slice)
     }
 
+    #[inline(always)]
     fn u64_as_bytes(input: u64) -> [u8; 8] {
         input.to_ne_bytes()
     }
 
+    #[inline(always)]
     fn u128_as_bytes(input: u128) -> [u8; 16] {
         input.to_ne_bytes()
     }
@@ -757,18 +765,22 @@ impl Reproducibility for SameEndianness {
         fill_bytes_inner(block_core, u64s, suffix);
     }
 
+    #[inline(always)]
     fn cast_u8_slice_as_u64(slice: &[u8]) -> &[u64] {
         cast_slice(slice)
     }
 
+    #[inline(always)]
     fn cast_u64_slice_as_u8(slice: &[u64]) -> &[u8] {
         cast_slice(slice)
     }
 
+    #[inline(always)]
     fn u64_as_bytes(input: u64) -> [u8; 8] {
         input.to_ne_bytes()
     }
 
+    #[inline(always)]
     fn u128_as_bytes(input: u128) -> [u8; 16] {
         input.to_ne_bytes()
     }
