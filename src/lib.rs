@@ -518,7 +518,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             );
 
             let mut reader = round_kmac.into_xof();
-            let mut f_out = [0u8; 256];
+            let mut f_out = [0u8; 128];
             reader.squeeze(&mut f_out);
 
             Self::xor_into_half(
@@ -559,6 +559,39 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         }
     }
 
+
+    #[inline(always)]
+    fn xor_into_half(
+        xr0: &mut Simd64,
+        xr1: &mut Simd64,
+        tm0: &mut Simd64,
+        tm1: &mut Simd64,
+        weyl_lo: &mut Simd64,
+        weyl_hi: &mut Simd64,
+        inc_lo: &mut Simd64,
+        inc_hi: &mut Simd64,
+        data: &[u8],
+        right: bool,
+    ) {
+        let mask = if right { Simd::from_array([0, 0, !0, !0]) } else { Simd::from_array([!0, !0, 0, 0]) };
+        let data: &[u64] = cast_slice(data);
+        let mut wrapped = Simd::splat(0);
+        if right {
+            wrapped[2..4].copy_from_slice(&data[0..2]);
+        } else {
+            wrapped[0..2].copy_from_slice(&data[14..16]);
+        }
+
+        *xr0 ^= Simd::from_slice(&data[0..4]) & mask;
+        *xr1 ^= Simd::from_slice(&data[2..6]) & mask;
+        *tm0 ^= Simd::from_slice(&data[4..8]) & mask;
+        *tm1 ^= Simd::from_slice(&data[6..10]) & mask;
+        *weyl_lo ^= Simd::from_slice(&data[8..12]) & mask;
+        *weyl_hi ^= Simd::from_slice(&data[10..14]) & mask;
+        *inc_lo ^= Simd::from_slice(&data[12..16]) & mask;
+        *inc_hi ^= wrapped & mask;
+    }
+
     #[inline(always)]
     fn is_distinct(a: &TripleMixSimdCore, b: &TripleMixSimdCore) -> bool {
         // Simple distinctness check: Child state != Parent state in any lane combination
@@ -595,32 +628,6 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             kmac.update(&ls[i].to_le_bytes());
             kmac.update(&li[i].to_le_bytes());
         }
-    }
-
-    #[inline(always)]
-    fn xor_into_half(
-        xr0: &mut Simd64,
-        xr1: &mut Simd64,
-        tm0: &mut Simd64,
-        tm1: &mut Simd64,
-        weyl_lo: &mut Simd64,
-        weyl_hi: &mut Simd64,
-        inc_lo: &mut Simd64,
-        inc_hi: &mut Simd64,
-        data: &[u8],
-        right: bool,
-    ) {
-        let mask = if right { Simd::from_array([0, 0, !0, !0]) } else { Simd::from_array([!0, !0, 0, 0]) };
-        let data: &[u64] = cast_slice(data);
-
-        *xr0 ^= Simd::from_slice(&data[0..4]) & mask;
-        *xr1 ^= Simd::from_slice(&data[4..8]) & mask;
-        *tm0 ^= Simd::from_slice(&data[8..12]) & mask;
-        *tm1 ^= Simd::from_slice(&data[12..16]) & mask;
-        *weyl_lo ^= Simd::from_slice(&data[16..20]) & mask;
-        *weyl_hi ^= Simd::from_slice(&data[20..24]) & mask;
-        *inc_lo ^= Simd::from_slice(&data[24..28]) & mask;
-        *inc_hi ^= Simd::from_slice(&data[28..32]) & mask;
     }
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
