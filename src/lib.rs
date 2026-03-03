@@ -521,7 +521,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
             let mut f_out = [0u8; 128];
             reader.squeeze(&mut f_out);
 
-            Self::xor_into_half(
+            Self::xor_into_left_half(
                 &mut xr0,
                 &mut xr1,
                 &mut tm0,
@@ -531,7 +531,6 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
                 &mut inc_lo,
                 &mut inc_hi,
                 &f_out,
-                false,
             );
 
             // Swap: Lanes 0,1 <-> Lanes 2,3
@@ -561,7 +560,7 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
 
 
     #[inline(always)]
-    fn xor_into_half(
+    fn xor_into_left_half(
         xr0: &mut Simd64,
         xr1: &mut Simd64,
         tm0: &mut Simd64,
@@ -571,25 +570,25 @@ impl<Reproducibility: FillBytesReproducibility> TripleMixPrng<Reproducibility> {
         inc_lo: &mut Simd64,
         inc_hi: &mut Simd64,
         data: &[u8],
-        right: bool,
     ) {
-        let mask = if right { Simd::from_array([0, 0, !0, !0]) } else { Simd::from_array([!0, !0, 0, 0]) };
+        let mask = Simd::from_array([!0, !0, 0, 0]);
         let data: &[u64] = cast_slice(data);
-        let mut wrapped = Simd::splat(0);
-        if right {
-            wrapped[2..4].copy_from_slice(&data[0..2]);
-        } else {
-            wrapped[0..2].copy_from_slice(&data[14..16]);
-        }
+        let d0 = Simd::from_slice(&data[0..4]);   // words 0,1,2,3
+        let d1 = Simd::from_slice(&data[4..8]);  // words 4,5,6,7
+        let d2 = Simd::from_slice(&data[8..12]);  // words 8,9,10,11
+        let d3 = Simd::from_slice(&data[12..16]); // words 12,13,14,15
+        *xr0 ^= d0 & mask;
+        // Use a swizzle to get words 2,3 into lanes 0,1
+        *xr1 ^= d0.rotate_elements_left::<2>() & mask;
 
-        *xr0 ^= Simd::from_slice(&data[0..4]) & mask;
-        *xr1 ^= Simd::from_slice(&data[2..6]) & mask;
-        *tm0 ^= Simd::from_slice(&data[4..8]) & mask;
-        *tm1 ^= Simd::from_slice(&data[6..10]) & mask;
-        *weyl_lo ^= Simd::from_slice(&data[8..12]) & mask;
-        *weyl_hi ^= Simd::from_slice(&data[10..14]) & mask;
-        *inc_lo ^= Simd::from_slice(&data[12..16]) & mask;
-        *inc_hi ^= wrapped & mask;
+        *tm0 ^= d1 & mask;
+        *tm1 ^= d1.rotate_elements_left::<2>() & mask;
+
+        *weyl_lo ^= d2 & mask;
+        *weyl_hi ^= d2.rotate_elements_left::<2>() & mask;
+
+        *inc_lo ^= d3 & mask;
+        *inc_hi ^= d3.rotate_elements_left::<2>() & mask;
     }
 
     #[inline(always)]
