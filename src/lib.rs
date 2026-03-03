@@ -1489,8 +1489,9 @@ mod tests {
 
         // Sum all outcomes whose probability is <= the probability of our observation
         let low_avalanche_p_value: f64 = (0..=trials)
-            .filter(|&k| low_avalanche_distribution.pmf(k) <= p_obs + 1e-12) // + epsilon for float safety
             .map(|k| low_avalanche_distribution.pmf(k))
+            .sorted_by(f64::total_cmp)
+            .take_while(|&p| p <= p_obs + 1e-12) // + epsilon for float safety
             .sum();
 
         // Ensure it doesn't exceed 1.0 due to floating point errors
