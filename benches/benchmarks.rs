@@ -1,5 +1,6 @@
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+#[cfg(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
 #[cfg(feature = "bench_include_threadrng")]
 use rand::rng;
@@ -106,9 +107,12 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     group.finish();
 }
 
+#[cfg(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86"))]
 criterion_group!(
     name = benches;
     config = Criterion::default().with_measurement(CyclesPerByte);
     targets = fill_bytes, next_u64, init
 );
+#[cfg(not(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86")))]
+criterion_group!(name = benches; targets = fill_bytes, next_u64, init);
 criterion_main!(benches);
