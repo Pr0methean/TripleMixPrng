@@ -594,8 +594,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
                     | (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
                 let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>())
                     | (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
-                let diff_lcg =
-                    (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
+                let diff_lcg = (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
                     | (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
 
                 // A lane is similar if ANY sub-generator matches the rotated version
@@ -1452,7 +1451,8 @@ mod tests {
                 "Average diffusion too high?"
             );
 
-            let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, count, low_avalanches);
+            let low_avalanche_p_value =
+                binomial_p_value(low_avalanche_probability, count, low_avalanches);
             println!(
                 "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
                 count as f64 * low_avalanche_probability,
@@ -1470,7 +1470,11 @@ mod tests {
             total_checks += count;
             total_low_avalanche_checks += low_avalanches;
         }
-        let low_avalanche_p_value = binomial_p_value(low_avalanche_probability, total_checks, total_low_avalanche_checks);
+        let low_avalanche_p_value = binomial_p_value(
+            low_avalanche_probability,
+            total_checks,
+            total_low_avalanche_checks,
+        );
         println!(
             "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
             total_low_avalanche_checks as f64 * low_avalanche_probability,
@@ -1484,8 +1488,7 @@ mod tests {
     }
 
     fn binomial_p_value(probability: f64, trials: u64, successes: u64) -> f64 {
-        let low_avalanche_distribution =
-            Binomial::new(probability, trials).unwrap();
+        let low_avalanche_distribution = Binomial::new(probability, trials).unwrap();
         let p_obs = low_avalanche_distribution.pmf(successes);
 
         // Sum all outcomes whose probability is <= the probability of our observation
