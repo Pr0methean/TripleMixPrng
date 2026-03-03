@@ -13,4 +13,4 @@ cargo_flags = []             # Additional cargo flags
 
 [network]
 base_port = 59595            # Base port for harness communication
-harness_timeout_ms = 600000  # Timeout for harness startup
+harness_timeout_ms = 3600000 # Timeout for harness startup
