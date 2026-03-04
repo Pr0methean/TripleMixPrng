@@ -10,7 +10,11 @@ use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
+use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
+use const_format::formatcp;
+
+const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 
 fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
     let mut seed = [0u8; SEED_SIZE];
@@ -28,7 +32,7 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
     for alignment in 0..=MAX_ALIGNMENT {
         let (_, buffer, _) = unsafe { buffer.align_to_mut::<u8>() };
         let misaligned_buffer = &mut buffer[alignment..(BUFFER_LEN + alignment)];
-        let misaligned_name = format!("fill_bytes 1MB (misalignment: {})", alignment);
+        let misaligned_name = format!("{}: fill_bytes 1MB (misalignment: {})", PLATFORM, alignment);
         let mut group = c.benchmark_group(misaligned_name);
         group.throughput(Throughput::Bytes(BUFFER_LEN as u64));
         group.bench_function("TripleMixPrng", |b| {
@@ -68,7 +72,7 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
     let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
     #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
-    let mut group = c.benchmark_group("next_u64");
+    let mut group = c.benchmark_group(formatcp!("{PLATFORM}: next_u64"));
     group.throughput(Throughput::Bytes(size_of::<u64>() as u64));
     group.bench_function("TripleMixPrng", |b| b.iter(|| triple_mix.next_u64()));
     group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
@@ -83,7 +87,7 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
 }
 
 fn init<T: Measurement>(c: &mut Criterion<T>) {
-    let mut group = c.benchmark_group("Initialization");
+    let mut group = c.benchmark_group(formatcp!("{PLATFORM}: Initialization"));
 
     // Seed and instance setup
     let seed_4096 = [0u8; 512];
