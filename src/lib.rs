@@ -337,12 +337,10 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 
     // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
     // ------------------------------------------
-    let p = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
-
-    let l0_1 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
-    let l1_1 = x_in + p;
-    let r0_1 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
-    let r1_1 = p;
+    let l0_1 = (w_hi + rotl(w_lo + x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+    let l1_1 = (x_in ^ rotl(t + l0_1, MIXING_ROTATION_03)) + second_mix_with_i_hi;
+    let r0_1 = (t ^ rotl(w_hi ^ l1_1, MIXING_ROTATION_01)) + w_lo;
+    let r1_1 = l0_1 + (r0_1 ^ l1_1);
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
@@ -1489,7 +1487,7 @@ mod tests {
         );
         println!(
             "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-            total_low_avalanche_checks as f64 * low_avalanche_probability,
+            total_checks as f64 * low_avalanche_probability,
             total_low_avalanche_checks,
             low_avalanche_p_value
         );
