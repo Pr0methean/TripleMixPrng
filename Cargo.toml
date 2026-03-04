@@ -27,10 +27,14 @@ bench_include_threadrng = []
 [[bin]]
 name = "rand_triplemix"
 required-features = ["aws-lc-rs","rand"]
+bench = false
+
+[lib]
+bench = false  # Suppress use of libtest harness, since we're using criterion
 
 [[bench]]
 name = "benchmarks"
-harness = false
+harness = false  # Suppress use of libtest harness, since we're using criterion
 
 [profile.release]
 lto = "fat"
