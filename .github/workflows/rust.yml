@@ -33,7 +33,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Run benchmarks
-      run: cargo +nightly bench | tee bench-output.txt
+      run: cargo +nightly bench -- --output-format bencher | tee bench-output.txt
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
