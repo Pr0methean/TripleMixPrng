@@ -109,5 +109,5 @@ criterion_group!(
     targets = fill_bytes, next_u64, init
 );
 #[cfg(not(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86")))]
-criterion_group!(name = benches; targets = fill_bytes, next_u64, init);
+criterion_group!(name = benches; config = Criterion::default(); targets = fill_bytes, next_u64, init);
 criterion_main!(benches);
