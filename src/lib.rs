@@ -235,7 +235,12 @@ impl TripleMixSimdCore {
         let i_hi = self.inc_hi;
 
         for block in blocks {
-            // === 1. Source Generation ===
+            // TinyMT64 output tempering
+            let mut x = tm0 ^ tm1;
+            x ^= x << Simd::splat(12);
+            x ^= x >> Simd::splat(32);
+            x ^= x << Simd::splat(32);
+            x ^= x << Simd::splat(11);
 
             // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
             let next_w_lo = w_lo + i_lo;
@@ -245,36 +250,32 @@ impl TripleMixSimdCore {
                 .select(Simd::splat(u64::MAX), Simd::splat(0));
             // subtracting u64::MAX = adding 1
             w_hi = w_hi + high_product + i_hi - carry;
-            w_lo = next_w_lo;
-            let w_lo_out = w_lo + LANE_CONSTANTS;
+
+            // Output prep
+            let mut ty = tm0 + tm1;
+            ty ^= tm0 >> Simd::splat(8);
+            let t_out =
+                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+            let w_lo_out = next_w_lo.rotate_elements_right::<1>();
+            let x_out = rotl(xr0 + xr1, 17) + xr0;
+
+            // Mixing
+            let (out0, out1) = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
 
             // Xoroshiro++ update
-            let x_out = rotl(xr0 + xr1, 17) + xr0;
             let t = xr0 ^ xr1;
             xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
             xr1 = rotl(t, 37);
 
             // TinyMT64 update
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
-            let mut x = tm0 ^ tm1;
-            x ^= x << Simd::splat(12);
-            x ^= x >> Simd::splat(32);
-            x ^= x << Simd::splat(32);
-            x ^= x << Simd::splat(11);
-
             let mask = (x & Simd::splat(1)).wrapping_neg();
-            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
-            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
-            tm0 = next_tm0;
-            tm1 = next_tm1;
+            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1) & Simd::splat(TINYMT64_LANE_MASK));
+            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
 
-            let mut ty = tm0 + tm1;
-            ty ^= tm0 >> Simd::splat(8);
-            let t_out =
-                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+            // LCG update
+            w_lo = next_w_lo;
 
-            // === 2. Mixing ===
-            let (out0, out1) = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
+            // Final output
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
@@ -339,7 +340,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
+    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ w_lo, MIXING_ROTATION_01)) + l0_1;
     let r1_1 = l1_1 - l0_1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
