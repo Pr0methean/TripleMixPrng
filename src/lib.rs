@@ -14,8 +14,9 @@ use core::marker::PhantomData;
 use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
 use core::simd::num::SimdUint;
 use core::simd::simd_swizzle;
-use core::simd::{Select, Simd};
+use core::simd::{Simd};
 use core::slice::from_mut;
+use core::simd::num::SimdInt;
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::{Rng, SeedableRng, TryRng};
@@ -235,46 +236,48 @@ impl TripleMixSimdCore {
         let i_hi = self.inc_hi;
 
         for block in blocks {
-            // === 1. Source Generation ===
-
-            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            let next_w_lo = w_lo + i_lo;
-            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
-            let carry = next_w_lo
-                .simd_lt(w_lo)
-                .select(Simd::splat(u64::MAX), Simd::splat(0));
-            // subtracting u64::MAX = adding 1
-            w_hi = w_hi + high_product + i_hi - carry;
-            w_lo = next_w_lo;
-            let w_lo_out = w_lo + LANE_CONSTANTS;
-
-            // Xoroshiro++ update
-            let x_out = rotl(xr0 + xr1, 17) + xr0;
-            let t = xr0 ^ xr1;
-            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
-            xr1 = rotl(t, 37);
-
-            // TinyMT64 update
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
+            // TinyMT64 output tempering
             let mut x = tm0 ^ tm1;
             x ^= x << Simd::splat(12);
             x ^= x >> Simd::splat(32);
             x ^= x << Simd::splat(32);
             x ^= x << Simd::splat(11);
 
-            let mask = (x & Simd::splat(1)).wrapping_neg();
-            let next_tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
-            let next_tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
-            tm0 = next_tm0;
-            tm1 = next_tm1;
+            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
+            // NB: w_lo is updated in the output but w_hi isn't, so this isn't quite a pure LCG!
+            let next_w_lo = w_lo + i_lo;
 
+            // Output prep
             let mut ty = tm0 + tm1;
             ty ^= tm0 >> Simd::splat(8);
             let t_out =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+            let x_out = rotl(xr0 + xr1, 17) + xr0;
 
-            // === 2. Mixing ===
-            let (out0, out1) = mix(w_lo_out, x_out, t_out, w_hi, i_hi);
+            // Mixing
+            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_hi);
+
+            // Xoroshiro++ update
+            let t = xr0 ^ xr1;
+            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
+            xr1 = rotl(t, 37);
+
+            // TinyMT64 update
+            let mask = (x & Simd::splat(1)).wrapping_neg();
+            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1) & Simd::splat(TINYMT64_LANE_MASK));
+            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
+
+            // LCG update
+            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+            let carry: Simd64 = next_w_lo
+                .simd_lt(w_lo).to_simd().cast();
+            w_lo = next_w_lo;
+            w_hi += high_product + i_hi; // Port 1
+            w_lo += i_lo;                // Port 5
+            // subtracting u64::MAX = adding 1
+            w_hi -= carry;
+
+            // Final output
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
         }
@@ -339,7 +342,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
+    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ w_lo, MIXING_ROTATION_01)) + l0_1;
     let r1_1 = l1_1 - l0_1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
@@ -1263,14 +1266,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "63D45105DC5B6D50ADA5A4AEE1E27F33BF771052FF54D6B66C4D7F9B69355DD1\
-                CC4B18098A5B91913F97DBC823CB1AD7A77D812B8B4B0B45D6DCEE6FB4A746AC\
-                49ACC9EAC527F8FCAED14CEC2503CE0D5AED31C612C7420F69F4A15BB3556DB2\
-                81C64DEC3328D8ADE205C580D77F6A070C83C632A16FFFE0FDD842F8D38EDA9B\
-                58FAE60B0EE91A81613050CE723D2E5166BB291D86BC5276179E68356B76254D\
-                FD5A08B1ACA920FEC00617A273F247604832FC9A657AF417CAC08DB8BF1898C8\
-                AD5B7CA2005DFA7C61138CF74234E8A992C74F0CFFBDE29DB7A97F10249E6454\
-                E9774F0770B4DBC508ED8ACF7BB4CB85A3010A99218E761698A0E447A9770177";
+        let expected = "94CAAB5D8512CE4B1BE47F803C8AB077396CB929FC370CD70491CEBBBC295477FC2F2C108C1234F3E673C1375FC7F2CA78720944EAD7A178EC67957E9C3EAB6EA35DDB3EBCF8B4E9D4DA83124F69EBD11239D1A888852EB3EA2BD16DAA815F5A711723D23B1EAA6B0D744E2A243E4F9DD363375E0718594E89CD24343F3B20AC96C1BD292AB97AFA246611BB086967A448BBFF5112EF85494764A0A16D6AB58D8D69B9FE6F2CC24422ACF5DF5C3A32855C7847C069BFEAADA92DF57E85F994DE71334E5A7BF380EC7A1060C76722710DCF63BB7FD1FC1E89A8325017A04B4680543FF1A59167664B59B3F1ADB81CAF42E35E9BD51FA21869C422DE7BBA4886AE";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
