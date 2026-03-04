@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772607582381,
+  "lastUpdate": 1772607593758,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -2549,6 +2549,240 @@ window.BENCHMARK_DATA = {
             "name": "x86_64:windows: Initialization/fork",
             "value": 8545,
             "range": "± 47",
+            "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13f4b62844364796a88c0d5e97c14b976578b916",
+          "message": "Include OS and arch in benchmark group names, so that incomparable results won't be merged (#14)",
+          "timestamp": "2026-03-03T22:49:34-08:00",
+          "tree_id": "820254006d29386250568c09eefc58fc5420def8",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/13f4b62844364796a88c0d5e97c14b976578b916"
+        },
+        "date": 1772607592486,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 913513,
+            "range": "± 55381",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 863983,
+            "range": "± 717038",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 856876,
+            "range": "± 98619",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 868261,
+            "range": "± 78740",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 956653,
+            "range": "± 29437",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 954979,
+            "range": "± 15459",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 860701,
+            "range": "± 12431",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 953507,
+            "range": "± 8588",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 954209,
+            "range": "± 7035",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 856664,
+            "range": "± 41356",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 956453,
+            "range": "± 22554",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 952679,
+            "range": "± 53913",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 860892,
+            "range": "± 75786",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 953267,
+            "range": "± 11022",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 953816,
+            "range": "± 40706",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 858412,
+            "range": "± 110404",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 954860,
+            "range": "± 9088",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 954610,
+            "range": "± 10519",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 863277,
+            "range": "± 22706",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 957664,
+            "range": "± 20258",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 953473,
+            "range": "± 33970",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 856807,
+            "range": "± 12173",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 956067,
+            "range": "± 45162",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 954654,
+            "range": "± 17023",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: next_u64/TripleMixPrng",
+            "value": 7,
+            "range": "± 1",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: next_u64/TripleMixPrng with SameEndianness reproducibility",
+            "value": 7,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 7,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/8",
+            "value": 8821,
+            "range": "± 127",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/16",
+            "value": 8827,
+            "range": "± 200",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/32",
+            "value": 8829,
+            "range": "± 198",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/64",
+            "value": 8975,
+            "range": "± 223",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/128",
+            "value": 12839,
+            "range": "± 267",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/256",
+            "value": 9752,
+            "range": "± 113",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/from_seed/512",
+            "value": 11922,
+            "range": "± 124",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:macos: Initialization/fork",
+            "value": 10914,
+            "range": "± 1196",
             "unit": "cycles/iter"
           }
         ]
