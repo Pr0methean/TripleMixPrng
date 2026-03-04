@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772601344792,
+  "lastUpdate": 1772602107825,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -1380,6 +1380,240 @@ window.BENCHMARK_DATA = {
             "value": 28843,
             "range": "± 595",
             "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35d5bbf8ff049a498ae4ad2d46a03cfeff55f54e",
+          "message": "Enable benchmarks in CI (#9)\n\n* Set up benchmarks in CI, using `criterion-hypothesis`\n\n* Fix criterion-hypothesis invocation\n\n* Fix: add baseline fetch, and separate unit tests and benchmarks as different workflows\n\n* Fix: remove explicit build since criterion-hypothesis rebuilds it\n\n* Fix? Fewer warmup_iterations, smaller sample_size, longer harness_timeout_ms\n\n* Enable verbose output to diagnose failure\n\n* Enable benchmarking on all OSs\n\n* Fix? Try a different network port\n\n* Fix: criterion-cycles-per-byte doesn't work on MacOS aarch64\n\n* Enable aarch64 Linux and Windows benchmarking\n\n* Fix: drop `criterion-cycles-per-byte` dep on targets where we can't use it\n\n* Fix line continuation on Windows, disable fail-fast\n\n* Fix? Increase harness-start timeout to 10 minutes\n\n* Temporarily disable builds on MacOS/aarch64 & Win/aarch64\n\n* Enable harness-output to diagnose failure\n\n* Increase harness timeout to 1 hour\n\nMay be taking longer due to the large test matrix.\n\n* Fix? Restore ThreadRng benchmarks so we can't time out waiting for them\n\n* Make config explicit for non-cpb targets\n\n* Fix: revert a branch exclusion that won't help\n\n* Fix: \"git fetch origin HEAD~1\" doesn't work, so use fetch-depth instead\n\n* Fix? Use `github-action-benchmark` instead of `criterion-hypothesis`\n\n* Fix: checkout step was missing\n\n* Fix? May need output-format bencher\n\n* Enable all OSs, since we no longer fail without a working baseline\n\n* Fix: work around https://github.com/rust-lang/rust/issues/47241\n\n* Fix: can't use cpb on aarch64, even on Linux, without access to install a custom kernel module\n\n* Delete .criterion-hypothesis.toml\n\n* Revert \"Fix? Restore ThreadRng benchmarks so we can't time out waiting for them\"\n\nThis reverts commit 1bd770c779f870e0de84380f972a0df6c783a0c1.\n\n* Fix: benchmark job needs extra permissions to upload results",
+          "timestamp": "2026-03-03T21:20:50-08:00",
+          "tree_id": "a03d1fa46ce6a5cfde3a6ba9669c7125ecb29da5",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/35d5bbf8ff049a498ae4ad2d46a03cfeff55f54e"
+        },
+        "date": 1772602106251,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 405259,
+            "range": "± 67855",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 384501,
+            "range": "± 25328",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 391285,
+            "range": "± 49380",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 387043,
+            "range": "± 91671",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 418163,
+            "range": "± 111848",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 387155,
+            "range": "± 33442",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 404426,
+            "range": "± 61549",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 385542,
+            "range": "± 76826",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 386893,
+            "range": "± 30520",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 391687,
+            "range": "± 72375",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 407623,
+            "range": "± 68705",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 449650,
+            "range": "± 88348",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 383773,
+            "range": "± 33723",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 384853,
+            "range": "± 19942",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 401159,
+            "range": "± 37568",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 385420,
+            "range": "± 59382",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 388109,
+            "range": "± 29465",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 385339,
+            "range": "± 18452",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 430279,
+            "range": "± 62799",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 388859,
+            "range": "± 32271",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 384553,
+            "range": "± 5853",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 437600,
+            "range": "± 52846",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 384536,
+            "range": "± 8977",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 396288,
+            "range": "± 30003",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng",
+            "value": 3,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng with SameEndianness reproducibility",
+            "value": 3,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 3,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/8",
+            "value": 2013,
+            "range": "± 279",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/16",
+            "value": 2184,
+            "range": "± 332",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/32",
+            "value": 2010,
+            "range": "± 86",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/64",
+            "value": 2292,
+            "range": "± 377",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/128",
+            "value": 2941,
+            "range": "± 328",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/256",
+            "value": 2338,
+            "range": "± 639",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/from_seed/512",
+            "value": 2720,
+            "range": "± 330",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "Initialization/fork",
+            "value": 2628,
+            "range": "± 619",
+            "unit": "ns/iter"
           }
         ]
       }
