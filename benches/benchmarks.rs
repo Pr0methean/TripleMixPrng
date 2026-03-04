@@ -1,6 +1,9 @@
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-#[cfg(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86"))]
+
+// Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
+// option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
 use rand::rng;
 use rand::rngs::SysRng;
@@ -102,12 +105,12 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     group.finish();
 }
 
-#[cfg(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 criterion_group!(
     name = benches;
     config = Criterion::default().with_measurement(CyclesPerByte);
     targets = fill_bytes, next_u64, init
 );
-#[cfg(not(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86")))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 criterion_group!(name = benches; config = Criterion::default(); targets = fill_bytes, next_u64, init);
 criterion_main!(benches);

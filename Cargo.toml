@@ -51,5 +51,5 @@ rand = "0.10.0"
 gf2 = "2.1.0"
 itertools = "0.14.0"
 
-[target.'cfg(any(target_os = "linux", target_arch = "x86_64", target_arch = "x86"))'.dev-dependencies]
+[target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dev-dependencies]
 criterion-cycles-per-byte = "0.8"
