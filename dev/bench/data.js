@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772611365338,
+  "lastUpdate": 1772611375184,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -5333,6 +5333,240 @@ window.BENCHMARK_DATA = {
             "name": "x86_64:macos: Initialization/fork",
             "value": 11746,
             "range": "± 703",
+            "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3879be4b6e6c557b4c291dee9e57390756a8f1c5",
+          "message": "Disable results upload to Pages from PRs, and enable job summary (#15)",
+          "timestamp": "2026-03-03T23:53:03-08:00",
+          "tree_id": "d6527f5539d7a4963d0e8f651025cc12b8d381de",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/3879be4b6e6c557b4c291dee9e57390756a8f1c5"
+        },
+        "date": 1772611374597,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 613208,
+            "range": "± 2253",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 610435,
+            "range": "± 886",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 610339,
+            "range": "± 2337",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 613806,
+            "range": "± 9502",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639778,
+            "range": "± 7691",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642588,
+            "range": "± 3576",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 613724,
+            "range": "± 617",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639403,
+            "range": "± 5111",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642326,
+            "range": "± 1557",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 613519,
+            "range": "± 657",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639605,
+            "range": "± 2947",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642387,
+            "range": "± 1707",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 613852,
+            "range": "± 8669",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639344,
+            "range": "± 2805",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642203,
+            "range": "± 2915",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 613876,
+            "range": "± 1707",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639245,
+            "range": "± 8557",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642291,
+            "range": "± 2512",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 613569,
+            "range": "± 2532",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 640802,
+            "range": "± 7434",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642426,
+            "range": "± 2228",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 613540,
+            "range": "± 9323",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 639800,
+            "range": "± 812",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 642426,
+            "range": "± 1646",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: next_u64/TripleMixPrng",
+            "value": 5,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: next_u64/TripleMixPrng with SameEndianness reproducibility",
+            "value": 5,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 5,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/8",
+            "value": 22787,
+            "range": "± 22",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/16",
+            "value": 22783,
+            "range": "± 15",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/32",
+            "value": 22773,
+            "range": "± 55",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/64",
+            "value": 22797,
+            "range": "± 29",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/128",
+            "value": 33862,
+            "range": "± 1117",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/256",
+            "value": 25467,
+            "range": "± 22",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/from_seed/512",
+            "value": 31088,
+            "range": "± 33",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "x86_64:linux: Initialization/fork",
+            "value": 28437,
+            "range": "± 18",
             "unit": "cycles/iter"
           }
         ]
