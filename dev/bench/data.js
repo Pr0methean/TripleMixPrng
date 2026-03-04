@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772601271471,
+  "lastUpdate": 1772601295719,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -460,6 +460,236 @@ window.BENCHMARK_DATA = {
             "value": 2869,
             "range": "± 6",
             "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Pr0methean",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "name": "Pr0methean",
+            "username": "Pr0methean"
+          },
+          "id": "6363cfb776ec34314b9cee97b4538acdfbe03820",
+          "message": "Enable benchmarks in CI",
+          "timestamp": "2026-03-03T22:00:33Z",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/pull/9/commits/6363cfb776ec34314b9cee97b4538acdfbe03820"
+        },
+        "date": 1772601295449,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 827391,
+            "range": "± 2576",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 794788,
+            "range": "± 1227",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 794786,
+            "range": "± 8042",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 827960,
+            "range": "± 634",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851042,
+            "range": "± 1787",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 850908,
+            "range": "± 1356",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 828053,
+            "range": "± 1515",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851488,
+            "range": "± 1673",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 851262,
+            "range": "± 1699",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 827957,
+            "range": "± 589",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851421,
+            "range": "± 1081",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 851374,
+            "range": "± 1775",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 830258,
+            "range": "± 3300",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851425,
+            "range": "± 1014",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 851388,
+            "range": "± 3013",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 828061,
+            "range": "± 579",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851472,
+            "range": "± 1213",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 851686,
+            "range": "± 1642",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 828023,
+            "range": "± 1470",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851234,
+            "range": "± 1176",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 850865,
+            "range": "± 1072",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 827861,
+            "range": "± 653",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng with SameEndianness reproducibility",
+            "value": 851122,
+            "range": "± 1358",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 850977,
+            "range": "± 2945",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng",
+            "value": 6,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng with SameEndianness reproducibility",
+            "value": 6,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 6,
+            "range": "± 0",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/8",
+            "value": 6796,
+            "range": "± 17",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/16",
+            "value": 6799,
+            "range": "± 14",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/32",
+            "value": 6799,
+            "range": "± 72",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/64",
+            "value": 6798,
+            "range": "± 27",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/128",
+            "value": 9843,
+            "range": "± 23",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/256",
+            "value": 7548,
+            "range": "± 21",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/from_seed/512",
+            "value": 9168,
+            "range": "± 152",
+            "unit": "cycles/iter"
+          },
+          {
+            "name": "Initialization/fork",
+            "value": 8397,
+            "range": "± 17",
+            "unit": "cycles/iter"
           }
         ]
       }
