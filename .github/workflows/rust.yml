@@ -31,9 +31,19 @@ jobs:
         os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest ]
       fail-fast: false
     steps:
-    - uses: actions/checkout@v6
+    - name: Checkout candidate and baseline
+      uses: actions/checkout@v6
+      if: ${{ github.event_name != 'pull_request' }}
+      with:
+        fetch-depth: 2
+    - name: Checkout candidate
+      uses: actions/checkout@v6
+      if: ${{ github.event_name == 'pull_request' }}
+      with:
+        fetch-depth: 1
     - name: Fetch baseline
-      run: git fetch origin ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+      if: ${{ github.event_name == 'pull_request' }}
+      run: git fetch origin ${{ github.event.pull_request.base.sha }}
     - name: Install criterion-hypothesis
       run: cargo +nightly install criterion-hypothesis
     - name: Run benchmarks
