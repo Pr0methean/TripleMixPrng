@@ -37,7 +37,6 @@ jobs:
     - name: Install criterion-hypothesis
       run: cargo +nightly install criterion-hypothesis
     - name: Run benchmarks
-      if: ${{ github.branch != 'bench' }}
       run: >
         criterion-hypothesis -v --harness-output
         --baseline ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
