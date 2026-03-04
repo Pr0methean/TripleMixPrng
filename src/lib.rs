@@ -335,14 +335,12 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
     let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
     let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
 
-    // Round 1 (ARX, local): 5 xor, 5 add, 3 rotl
+    // Round 1 (ARX, local): 4 xor, 5 add/sub, 3 rotl
     // ------------------------------------------
-    let p = ((w_hi + rotl(t, MIXING_ROTATION_02)) ^ first_mix_with_i_hi) ^ w_lo;
-
-    let l0_1 = ((w_lo ^ rotl(x_in, MIXING_ROTATION_03)) + second_mix_with_i_hi) + t;
-    let l1_1 = x_in + p;
-    let r0_1 = (t ^ rotl(w_hi, MIXING_ROTATION_01)) + x_in;
-    let r1_1 = p;
+    let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+    let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
+    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
+    let r1_1 = l1_1 - l0_1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
@@ -1265,14 +1263,14 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "30C84FEB9764D48F81DE4F4045D198DD64DCB391963FC9FB4015DB0DE9D560B2\
-            528F5198EEE2E7E911744766BE9607AEBDEB880A6E0B1A6175BDB015B072CCF5\
-            78E03CFFB8C179165ACDB30FAE226714721E51AA8AFBDE4F3E083FEA1DCCF6FA\
-            B27CD72BE222516E66DEBEFB51026A6850232A8AF19A462F4EB2D1143D046D64\
-            0761BF57CB6D5D8A59070205597F8EE43439A7613176E16237C06A6CCBB44038\
-            5E0DC5A347EC13CCA0902506992864508D908773EC0D143F136DDBF54CD20141\
-            C6B49249682E09EF8F9B878D105BAEB5347602300A63F6EED55B65E680CAE9B7\
-            F7DDC1AE9EFCF09BE057E74993D87E9243D1DF1D05A6DDB8DC3E390598512785";
+        let expected = "63D45105DC5B6D50ADA5A4AEE1E27F33BF771052FF54D6B66C4D7F9B69355DD1\
+                CC4B18098A5B91913F97DBC823CB1AD7A77D812B8B4B0B45D6DCEE6FB4A746AC\
+                49ACC9EAC527F8FCAED14CEC2503CE0D5AED31C612C7420F69F4A15BB3556DB2\
+                81C64DEC3328D8ADE205C580D77F6A070C83C632A16FFFE0FDD842F8D38EDA9B\
+                58FAE60B0EE91A81613050CE723D2E5166BB291D86BC5276179E68356B76254D\
+                FD5A08B1ACA920FEC00617A273F247604832FC9A657AF417CAC08DB8BF1898C8\
+                AD5B7CA2005DFA7C61138CF74234E8A992C74F0CFFBDE29DB7A97F10249E6454\
+                E9774F0770B4DBC508ED8ACF7BB4CB85A3010A99218E761698A0E447A9770177";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
@@ -1489,7 +1487,7 @@ mod tests {
         );
         println!(
             "Expected {:.4} low-avalanche checks, got {}; p={:.4}",
-            total_low_avalanche_checks as f64 * low_avalanche_probability,
+            total_checks as f64 * low_avalanche_probability,
             total_low_avalanche_checks,
             low_avalanche_p_value
         );
