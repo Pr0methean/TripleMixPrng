@@ -1,6 +1,11 @@
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+
+// Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
+// option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
+#[cfg(feature = "bench_include_threadrng")]
 use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
@@ -13,6 +18,7 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
     let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
+    #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
 
     // Allocate buffer as u64's so that it's aligned
@@ -43,6 +49,7 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
                 black_box(&*misaligned_buffer);
             })
         });
+        #[cfg(feature = "bench_include_threadrng")]
         group.bench_function("ThreadRng", |b| {
             b.iter(|| {
                 thread_rng.fill_bytes(misaligned_buffer);
@@ -59,6 +66,7 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
     let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
+    #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
     let mut group = c.benchmark_group("next_u64");
     group.throughput(Throughput::Bytes(size_of::<u64>() as u64));
@@ -69,6 +77,7 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
     group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
         b.iter(|| triple_mix_x_reproducible.next_u64())
     });
+    #[cfg(feature = "bench_include_threadrng")]
     group.bench_function("ThreadRng", |b| b.iter(|| thread_rng.next_u64()));
     group.finish();
 }
@@ -101,9 +110,12 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     group.finish();
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 criterion_group!(
     name = benches;
     config = Criterion::default().with_measurement(CyclesPerByte);
     targets = fill_bytes, next_u64, init
 );
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+criterion_group!(name = benches; config = Criterion::default(); targets = fill_bytes, next_u64, init);
 criterion_main!(benches);
