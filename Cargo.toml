@@ -5,15 +5,12 @@ edition = "2024"
 
 [dependencies]
 rand_core = "0.10"
-rand = { version = "0.10", optional = true }
 generic-array = "1.3"
 tiny-keccak = { version = "2.0", features = ["kmac", "sha3"] }
 const_format = "0.2"
 bytemuck = { version = "1.25.0", features = ["nightly_portable_simd"] }
 typenum = { version = "1.19", features = ["const-generics"] }
 rdrand = { version = "0.8", optional = true }
-tss-esapi = { version = "7.6", optional = true }
-aws-lc-rs = { version = "1.16", optional = true }
 serde = { version = "1.0", optional = true }
 zeroize = { version = "1.8", optional = true }
 once_cell = { version = "1.21.3", optional = true, default-features = false }
@@ -23,11 +20,6 @@ zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
 no_std = ["once_cell/race"]
 bench_include_threadrng = []
-
-[[bin]]
-name = "rand_triplemix"
-required-features = ["aws-lc-rs","rand"]
-bench = false
 
 [lib]
 bench = false  # Suppress use of libtest harness, since we're using criterion
@@ -50,6 +42,10 @@ criterion = "0.8"
 rand = "0.10.0"
 gf2 = "2.1.0"
 itertools = "0.14.0"
+aws-lc-rs = "1.16"
+
+[target.'cfg(all(unix, target_arch = "x86_64"))'.dev-dependencies]
+tss-esapi = "7.6"
 
 [target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dev-dependencies]
 criterion-cycles-per-byte = "0.8"
