@@ -19,6 +19,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+    - name: Install libtss-sys1 (Ubuntu x86)
+      run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Build
       run: cargo +nightly build --verbose --tests
     - name: Run tests
@@ -35,6 +37,9 @@ jobs:
       pull-requests: write
     steps:
     - uses: actions/checkout@v6
+    - name: Install libtss2-dev (Ubuntu x86)
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Run benchmarks
       run: cargo +nightly bench -- --output-format bencher | tee bench-output.txt
     - name: Store benchmark result
