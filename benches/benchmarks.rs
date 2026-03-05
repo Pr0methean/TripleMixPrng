@@ -3,6 +3,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 
 // Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
 // option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
+use const_format::formatcp;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
 #[cfg(feature = "bench_include_threadrng")]
@@ -12,7 +13,6 @@ use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
-use const_format::formatcp;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 
