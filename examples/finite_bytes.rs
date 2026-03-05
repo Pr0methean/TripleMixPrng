@@ -5,10 +5,9 @@ use std::str::FromStr;
 use aws_lc_rs::test::from_hex;
 use rand_core::{Rng, SeedableRng};
 use rand_triplemix::{NotReproducible, TripleMixPrng, SEED_SIZE};
-use crate::seeding::get_random_seed;
+use crate::common::get_random_seed;
 
-#[path = "endless_bytes.rs"]
-mod seeding;
+mod common;
 
 fn main() {
     const TOTAL_OUTPUT_BYTES: u64 = 1 << 34;
