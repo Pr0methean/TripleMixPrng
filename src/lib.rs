@@ -330,7 +330,7 @@ impl TripleMixSimdCore {
 
             // Sum_{j=0}^{n-1} w_lo_j = n * w_lo + n(n-1)/2 * i_lo mod 2^64
             let sum_w_lo = n.wrapping_mul(w_lo as u128).wrapping_add(
-                if n % 2 == 0 {
+                if n.is_multiple_of(2) {
                     (n / 2).wrapping_mul(n.wrapping_sub(1)).wrapping_mul(i_lo as u128)
                 } else {
                     n.wrapping_mul(n.wrapping_sub(1) / 2).wrapping_mul(i_lo as u128)
@@ -393,12 +393,12 @@ impl TripleMixSimdCore {
         let tm1_arr = self.tm1.as_mut_array();
         for i in 0..SIMD_WIDTH {
             let x_state = (xr0_arr[i] as u128) | ((xr1_arr[i] as u128) << 64);
-            let x_new = apply_mat(&x_pow, x_state);
+            let x_new = apply_mat(x_pow, x_state);
             xr0_arr[i] = x_new as u64;
             xr1_arr[i] = (x_new >> 64) as u64;
 
             let t_state = (tm0_arr[i] as u128) | ((tm1_arr[i] as u128) << 64);
-            let t_new = apply_mat(&t_pow, t_state);
+            let t_new = apply_mat(t_pow, t_state);
             tm0_arr[i] = t_new as u64;
             tm1_arr[i] = (t_new >> 64) as u64;
         }
