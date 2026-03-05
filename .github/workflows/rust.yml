@@ -20,7 +20,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Install libtss-sys1 (Ubuntu x86)
-      run: sudo apt-get install libtss-sys1
+      run: sudo apt-get update && sudo apt-get install libtss-sys1
     - name: Build
       run: cargo +nightly build --verbose --tests
     - name: Run tests
@@ -39,7 +39,7 @@ jobs:
     - uses: actions/checkout@v6
     - name: Install libtss-sys1 (Ubuntu x86)
       if: matrix.os == 'ubuntu-latest'
-      run: sudo apt-get install libtss-sys1
+      run: sudo apt-get update && sudo apt-get install libtss-sys1
     - name: Install libtss-sys1 (MacOS x86)
       if: matrix.os == 'macos-26-intel'
       run: brew install tpm2-tss
