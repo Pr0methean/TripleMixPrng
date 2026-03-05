@@ -44,7 +44,8 @@ gf2 = "2.1.0"
 itertools = "0.14.0"
 aws-lc-rs = "1.16"
 
-[target.'cfg(all(unix, target_arch = "x86_64"))'.dev-dependencies]
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dev-dependencies]
+# FIXME: Should also work on MacOS if a way to install libtss2-dev there can be found
 tss-esapi = "7.6"
 
 [target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dev-dependencies]
