@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![allow(long_running_const_eval)]
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx2",
@@ -206,6 +207,25 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
+    // These are the hexadecimal expansion of pi, except that the first digit is changed in the
+    // first and last constant to increase low-bit rank and avalanche effect.
+    const LANE_CONSTANTS: Simd64 = Simd64::from_array([
+        0xd243_f6a8_885a_308d,
+        0x3131_98a2_e037_0734,
+        0xca40_9382_2299_f31d,
+        0x7082_efa9_8ec4_e6c8,
+    ]);
+
+    const XOROSHIRO_JUMP_MAT: [u128; 128] = compute_xoroshiro_mat();
+    const TINYMT_JUMP_MAT: [u128; 128] = compute_tinymt_mat();
+
+    // 2^128 == 2^1 mod (2^127 - 1)
+    const TINYMT_JUMP_128_MAT: [u128; 128] =
+        pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 1);
+    // 2^256 == 2^2 mod (2^127 - 1)
+    const TINYMT_JUMP_256_MAT: [u128; 128] =
+        pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
+
     #[inline(always)]
     fn as_bytes(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts((self as *const Self) as *const u8, size_of::<Self>()) }
@@ -216,15 +236,6 @@ impl TripleMixSimdCore {
         if blocks.is_empty() {
             return;
         }
-
-        // These are the hexadecimal expansion of pi, except that the first digit is changed in the
-        // first and last constant to increase low-bit rank and avalanche effect.
-        const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-            0xd243_f6a8_885a_308d,
-            0x3131_98a2_e037_0734,
-            0xca40_9382_2299_f31d,
-            0x7082_efa9_8ec4_e6c8,
-        ]);
 
         let mut xr0 = self.xr0;
         let mut xr1 = self.xr1;
@@ -237,6 +248,7 @@ impl TripleMixSimdCore {
 
         for block in blocks {
             // TinyMT64 output tempering
+            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
             let mut x = tm0 ^ tm1;
             x ^= x << Simd::splat(12);
             x ^= x >> Simd::splat(32);
@@ -255,7 +267,7 @@ impl TripleMixSimdCore {
             let x_out = rotl(xr0 + xr1, 17) + xr0;
 
             // Mixing
-            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_hi);
+            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_lo + i_hi);
 
             // Xoroshiro++ update
             let t = xr0 ^ xr1;
@@ -264,16 +276,15 @@ impl TripleMixSimdCore {
 
             // TinyMT64 update
             let mask = (x & Simd::splat(1)).wrapping_neg();
-            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1) & Simd::splat(TINYMT64_LANE_MASK));
+            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
             tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
 
             // LCG update
-            let high_product = simd_mul(w_lo, LANE_CONSTANTS); // ← only AVX2-dispatched op
+            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // ← only AVX2-dispatched op
             let carry: Simd64 = next_w_lo
                 .simd_lt(w_lo).to_simd().cast();
             w_lo = next_w_lo;
             w_hi += high_product + i_hi; // Port 1
-            w_lo += i_lo;                // Port 5
             // subtracting u64::MAX = adding 1
             w_hi -= carry;
 
@@ -289,6 +300,247 @@ impl TripleMixSimdCore {
         self.weyl_lo = w_lo;
         self.weyl_hi = w_hi;
     }
+
+    /// Advances the state of the PRNG by `steps`.
+    #[inline(never)] // To avoid bloating inline sites
+    pub fn advance(&mut self, steps: u128) {
+        if steps == 0 {
+            return;
+        }
+
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
+        let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
+
+        let n = steps % (1 << 64);
+        let n_u64 = n as u64;
+        let periods = (steps >> 64) as u64;
+
+        let mut xr0_arr = self.xr0.to_array();
+        let mut xr1_arr = self.xr1.to_array();
+        let mut tm0_arr = self.tm0.to_array();
+        let mut tm1_arr = self.tm1.to_array();
+        let mut weyl_lo_arr = self.weyl_lo.to_array();
+        let mut weyl_hi_arr = self.weyl_hi.to_array();
+
+        for i in 0..SIMD_WIDTH {
+            let x_state = (xr0_arr[i] as u128) | ((xr1_arr[i] as u128) << 64);
+            let x_new = apply_mat(&x_pow, x_state);
+            xr0_arr[i] = x_new as u64;
+            xr1_arr[i] = (x_new >> 64) as u64;
+
+            let t_state = (tm0_arr[i] as u128) | ((tm1_arr[i] as u128) << 64);
+            let t_new = apply_mat(&t_pow, t_state);
+            tm0_arr[i] = t_new as u64;
+            tm1_arr[i] = (t_new >> 64) as u64;
+
+            let w_lo = weyl_lo_arr[i];
+            let w_hi = weyl_hi_arr[i];
+            let i_lo = self.inc_lo.as_array()[i];
+            let i_hi = self.inc_hi.as_array()[i];
+            let l = Self::LANE_CONSTANTS.as_array()[i];
+
+            let n_u128 = n as u128;
+            let w_lo_n = w_lo.wrapping_add(n_u64.wrapping_mul(i_lo));
+
+            // Sum_{j=0}^{n-1} w_lo_j = n * w_lo + n(n-1)/2 * i_lo mod 2^64
+            let sum_w_lo = n_u128.wrapping_mul(w_lo as u128).wrapping_add(
+                if n_u128 % 2 == 0 {
+                    (n_u128 / 2).wrapping_mul(n_u128.wrapping_sub(1)).wrapping_mul(i_lo as u128)
+                } else {
+                    n_u128.wrapping_mul(n_u128.wrapping_sub(1) / 2).wrapping_mul(i_lo as u128)
+                }
+            ) as u64;
+
+            // Carry sum = how many times w_lo wrapped around 2^64
+            let carry_sum = ((w_lo as u128).wrapping_add(n_u128.wrapping_mul(i_lo as u128)) >> 64) as u64;
+
+            let delta_hi = n_u64.wrapping_mul(i_hi)
+                .wrapping_add(sum_w_lo.wrapping_mul(l))
+                .wrapping_add(carry_sum);
+
+            // Over a full 2^64 period:
+            // Delta W_lo = 0
+            // Sum_{j=0}^{2^64-1} w_lo_j = 2^63 * i_lo = 2^63 mod 2^64
+            // Carry Sum = i_lo
+            // Delta W_hi = L * 2^63 + i_lo
+            let period_delta = l.wrapping_mul(1u64 << 63).wrapping_add(i_lo);
+
+            weyl_lo_arr[i] = w_lo_n;
+            weyl_hi_arr[i] = w_hi.wrapping_add(delta_hi).wrapping_add(periods.wrapping_mul(period_delta));
+        }
+
+        self.xr0 = Simd64::from_array(xr0_arr);
+        self.xr1 = Simd64::from_array(xr1_arr);
+        self.tm0 = Simd64::from_array(tm0_arr);
+        self.tm1 = Simd64::from_array(tm1_arr);
+        self.weyl_lo = Simd64::from_array(weyl_lo_arr);
+        self.weyl_hi = Simd64::from_array(weyl_hi_arr);
+    }
+
+    /// Advances the state of the PRNG by exactly `multiples` x 2^128 steps.
+    #[inline(never)]
+    pub fn advance_2_128(&mut self, multiples: u128) {
+        if multiples == 0 {
+            return;
+        }
+
+        // 2^128 = 1 mod (2^128 - 1)
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
+        let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
+        // LCG returns exactly to its same state after 2^128 steps
+
+        let mut xr0_arr = self.xr0.to_array();
+        let mut xr1_arr = self.xr1.to_array();
+        let mut tm0_arr = self.tm0.to_array();
+        let mut tm1_arr = self.tm1.to_array();
+
+        for i in 0..SIMD_WIDTH {
+            let x_state = (xr0_arr[i] as u128) | ((xr1_arr[i] as u128) << 64);
+            let x_new = apply_mat(&x_pow, x_state);
+            xr0_arr[i] = x_new as u64;
+            xr1_arr[i] = (x_new >> 64) as u64;
+
+            let t_state = (tm0_arr[i] as u128) | ((tm1_arr[i] as u128) << 64);
+            let t_new = apply_mat(&t_pow, t_state);
+            tm0_arr[i] = t_new as u64;
+            tm1_arr[i] = (t_new >> 64) as u64;
+        }
+
+        self.xr0 = Simd64::from_array(xr0_arr);
+        self.xr1 = Simd64::from_array(xr1_arr);
+        self.tm0 = Simd64::from_array(tm0_arr);
+        self.tm1 = Simd64::from_array(tm1_arr);
+    }
+
+    /// Advances the state of the PRNG by exactly `multiples` x 2^256 steps.
+    #[inline(never)]
+    pub fn advance_2_256(&mut self, multiples: u128) {
+        if multiples == 0 {
+            return;
+        }
+        // 2^256 = 1 mod (2^128 - 1)
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
+        let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
+
+        let mut xr0_arr = self.xr0.to_array();
+        let mut xr1_arr = self.xr1.to_array();
+        let mut tm0_arr = self.tm0.to_array();
+        let mut tm1_arr = self.tm1.to_array();
+
+        for i in 0..SIMD_WIDTH {
+            let x_state = (xr0_arr[i] as u128) | ((xr1_arr[i] as u128) << 64);
+            let x_new = apply_mat(&x_pow, x_state);
+            xr0_arr[i] = x_new as u64;
+            xr1_arr[i] = (x_new >> 64) as u64;
+
+            let t_state = (tm0_arr[i] as u128) | ((tm1_arr[i] as u128) << 64);
+            let t_new = apply_mat(&t_pow, t_state);
+            tm0_arr[i] = t_new as u64;
+            tm1_arr[i] = (t_new >> 64) as u64;
+        }
+
+        self.xr0 = Simd64::from_array(xr0_arr);
+        self.xr1 = Simd64::from_array(xr1_arr);
+        self.tm0 = Simd64::from_array(tm0_arr);
+        self.tm1 = Simd64::from_array(tm1_arr);
+    }
+}
+
+// ============================================================================
+// Jump-ahead helpers
+// ============================================================================
+
+const fn compute_xoroshiro_mat() -> [u128; 128] {
+    let mut res = [0; 128];
+    let mut i = 0;
+    while i < 128 {
+        let state = 1u128 << i;
+        let mut xr0 = state as u64;
+        let mut xr1 = (state >> 64) as u64;
+        let t = xr0 ^ xr1;
+        xr0 = rotl_scalar(xr0, 24) ^ t ^ (t << 16);
+        xr1 = rotl_scalar(t, 37);
+        res[i] = (xr0 as u128) | ((xr1 as u128) << 64);
+        i += 1;
+    }
+    res
+}
+
+const fn compute_tinymt_mat() -> [u128; 128] {
+    let mut res = [0; 128];
+    let mut i = 0;
+    while i < 128 {
+        let state = 1u128 << i;
+        let mut tm0 = state as u64 & TINYMT64_LANE_MASK;
+        let mut tm1 = (state >> 64) as u64;
+        const TINYMT_MAT1: u64 = 0xdaa51b54;
+        const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
+        const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
+
+        let mut x = tm0 ^ tm1;
+        x ^= x << 12;
+        x ^= x >> 32;
+        x ^= x << 32;
+        x ^= x << 11;
+        let mask = (x & 1).wrapping_neg();
+        tm0 = tm1 ^ (mask & TINYMT_MAT1);
+        tm1 = x ^ (mask & TINYMT_MAT2);
+        res[i] = (tm0 as u128) | ((tm1 as u128) << 64);
+        i += 1;
+    }
+    res
+}
+
+const fn rotl_scalar(x: u64, k: u32) -> u64 {
+    x.rotate_left(k)
+}
+
+const fn apply_mat(mat: &[u128; 128], mut vec: u128) -> u128 {
+    let mut res = 0;
+    let mut i = 0;
+    while i < 128 {
+        if vec & 1 != 0 {
+            res ^= mat[i];
+        }
+        vec >>= 1;
+        i += 1;
+    }
+    res
+}
+
+const fn mul_mat(a: &[u128; 128], b: &[u128; 128]) -> [u128; 128] {
+    let mut res = [0; 128];
+    let mut i = 0;
+    while i < 128 {
+        res[i] = apply_mat(a, b[i]);
+        i += 1;
+    }
+    res
+}
+
+const fn pow_mat(mut a: [u128; 128], mut n: u128) -> [u128; 128] {
+    let mut res = [0; 128];
+    let mut i = 0;
+    while i < 128 {
+        res[i] = 1 << i;
+        i += 1;
+    }
+    while n > 0 {
+        if n & 1 != 0 {
+            res = mul_mat(&a, &res);
+        }
+        a = mul_mat(&a, &a);
+        n >>= 1;
+    }
+    res
+}
+
+const fn pow_mat_2_exp(mut a: [u128; 128], mut exp: u32) -> [u128; 128] {
+    while exp > 0 {
+        a = mul_mat(&a, &a);
+        exp -= 1;
+    }
+    a
 }
 
 #[inline(always)]
@@ -297,7 +549,7 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 }
 
 #[inline(always)]
-fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
+fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
     // no pairs that sum to 64 are used.
     const MIXING_ROTATION_12: u64 = 7;
@@ -335,14 +587,14 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 
     // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
     // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
+    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i, MIXING_ROTATION_00);
+    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i;
 
     // Round 1 (ARX, local): 4 xor, 5 add/sub, 3 rotl
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ w_lo, MIXING_ROTATION_01)) + l0_1;
+    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
     let r1_1 = l1_1 - l0_1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
@@ -646,6 +898,38 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             inc_hi: Simd::splat(0),
         })
     }
+
+    /// Advances the PRNG by `steps` internal sub-generator steps.
+    /// Since the sub-generators are updated once per block of `OUTPUT_LEN` generated `u64` words,
+    /// a single step here corresponds to moving past `OUTPUT_LEN` outputs.
+    /// The unconsumed buffer of outputs is discarded.
+    #[inline]
+    pub fn advance(&mut self, steps: u128) {
+        self.block_core.core.advance(steps);
+        self.block_core.reset_and_skip(0);
+    }
+
+    /// Advances the PRNG by exactly `multiples` x 2^128 sub-generator steps.
+    /// This is dramatically faster than ordinary `advance` because the 128-bit LCG
+    /// exactly wraps its full state space and thus undergoes zero change for every 2^128 steps,
+    /// while the matrices for TinyMT and Xoroshiro wrap tightly modulo their periods.
+    /// The unconsumed buffer of outputs is discarded.
+    #[inline]
+    pub fn advance_2_128(&mut self, multiples: u128) {
+        self.block_core.core.advance_2_128(multiples);
+        self.block_core.reset_and_skip(0);
+    }
+
+    /// Advances the PRNG by exactly `multiples` x 2^256 sub-generator steps.
+    /// This is dramatically faster than ordinary `advance` because the 128-bit LCG
+    /// exactly wraps its full state space and thus undergoes zero change for every 2^128 steps,
+    /// while the matrices for TinyMT and Xoroshiro wrap tightly modulo their periods.
+    /// The unconsumed buffer of outputs is discarded.
+    #[inline]
+    pub fn advance_2_256(&mut self, multiples: u128) {
+        self.block_core.core.advance_2_256(multiples);
+        self.block_core.reset_and_skip(0);
+    }
 }
 
 impl<R: Reproducibility> SeedableRng for TripleMixPrng<R> {
@@ -899,6 +1183,15 @@ mod tests {
     use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
 
     #[test]
+    fn test_jump_ahead_constants() {
+        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 128), TripleMixSimdCore::XOROSHIRO_JUMP_MAT);
+        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 256), TripleMixSimdCore::XOROSHIRO_JUMP_MAT);
+
+        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_128_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 128));
+        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_256_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 256));
+    }
+
+    #[test]
     pub fn test_mix_matrix() {
         let mut random_inputs = [Simd64::splat(0); 5];
         let mut seed_rng = rng();
@@ -1119,6 +1412,67 @@ mod tests {
     }
 
     #[test]
+    fn test_jump_ahead() {
+        for mut prng in create_rngs::<NotReproducible>() {
+            // Advance sequential by 12 steps (meaning 12 * 8 = 96 next_u64 calls)
+            for _ in 0..12 {
+                for _ in 0..OUTPUT_LEN {
+                    prng.next_u64();
+                }
+            }
+            
+            let mut prng_jmp = prng.clone();
+            // Advance jumping by 12 steps
+            prng_jmp.advance(12);
+            for _ in 0..12 {
+                for _ in 0..OUTPUT_LEN {
+                    prng.next_u64();
+                }
+            }
+            for _ in 0..OUTPUT_LEN {
+                assert_eq!(prng.next_u64(), prng_jmp.next_u64());
+            }
+
+            // Test advance_2_128 and advance consistency
+            let mut base_a_for_2_128 = prng.clone();
+            base_a_for_2_128.advance(1u128 << 127);
+            base_a_for_2_128.advance(1u128 << 127);
+            let mut base_b_for_2_128 = prng.clone();
+            base_b_for_2_128.advance(1);
+            base_b_for_2_128.advance(u128::MAX);
+            
+            let mut prng_2_128 = prng.clone();
+            prng_2_128.advance_2_128(1);
+            
+            for _ in 0..10_000 {
+                // Ensure internal state logic lines up perfectly equivalent.
+                let prng_2_128_u64 = prng_2_128.next_u64();
+                assert_eq!(base_a_for_2_128.next_u64(), prng_2_128_u64);
+                assert_eq!(base_b_for_2_128.next_u64(), prng_2_128_u64);
+            }
+
+            // Test advance_2_256 and advance consistency
+            let mut base_a_for_2_256 = prng.clone();
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            let mut base_b_for_2_256 = prng.clone();
+            base_b_for_2_256.advance_2_128(1u128 << 127);
+            base_b_for_2_256.advance_2_128(1u128 << 127);
+
+            let mut prng_2_256 = prng.clone();
+            prng_2_256.advance_2_256(1);
+
+            for _ in 0..10_000 {
+                // Ensure internal state logic lines up perfectly equivalent.
+                let prng_2_256_u64 = prng_2_256.next_u64();
+                assert_eq!(base_a_for_2_256.next_u64(), prng_2_256_u64);
+                assert_eq!(base_b_for_2_256.next_u64(), prng_2_256_u64);
+            }
+
+        }
+    }
+
+    #[test]
     fn test_byte_frequencies() {
         for mut prng in create_rngs::<NotReproducible>() {
             let mut frequencies = [0u32; u8::MAX as usize + 1];
@@ -1266,7 +1620,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "94CAAB5D8512CE4B1BE47F803C8AB077396CB929FC370CD70491CEBBBC295477FC2F2C108C1234F3E673C1375FC7F2CA78720944EAD7A178EC67957E9C3EAB6EA35DDB3EBCF8B4E9D4DA83124F69EBD11239D1A888852EB3EA2BD16DAA815F5A711723D23B1EAA6B0D744E2A243E4F9DD363375E0718594E89CD24343F3B20AC96C1BD292AB97AFA246611BB086967A448BBFF5112EF85494764A0A16D6AB58D8D69B9FE6F2CC24422ACF5DF5C3A32855C7847C069BFEAADA92DF57E85F994DE71334E5A7BF380EC7A1060C76722710DCF63BB7FD1FC1E89A8325017A04B4680543FF1A59167664B59B3F1ADB81CAF42E35E9BD51FA21869C422DE7BBA4886AE";
+        let expected = "42407F52FDF3A396758C1B61C93265111E38F4CC6427AE707247F6E125909C3620E4638CA0590F607AA0A59FFF31937A7CB13CB3B464679DAEE4241E966FE7BE4F2882783532FE4AFDDE15A4A40ECBB9F3E23048E1D50F46A64070A4E9A4B2078D9A344FF1CEEF02FFE77459EF6BCD4DD20B01AA208E00C6B7033E357DC8AB966951E537D6255D0B310AEECE3A3B7F8FCB37E871B1DD66F751E691DE96E4CB5FD6D3A13C2088A32FE81BCDF82C288BCA91E613B0EA8E0681ED04E9EBDEAD93A7406577021A18C46094D728EC96D92B97E79B1869337F49024EA8C0F67B9C5311E9134AA76C855A9A90BC3C753DF4190389DB62291B6CFA801D5B8A20A1C4CAE6";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
