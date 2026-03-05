@@ -285,7 +285,6 @@ impl TripleMixSimdCore {
                 .simd_lt(w_lo).to_simd().cast();
             w_lo = next_w_lo;
             w_hi += high_product + i_hi; // Port 1
-            w_lo += i_lo;                // Port 5
             // subtracting u64::MAX = adding 1
             w_hi -= carry;
 
@@ -340,7 +339,7 @@ impl TripleMixSimdCore {
             let i_hi = self.inc_hi.as_array()[i];
             let l = Self::LANE_CONSTANTS.as_array()[i];
 
-            let w_lo_n = w_lo.wrapping_add(n_u64.wrapping_mul(i_lo).wrapping_mul(2));
+            let w_lo_n = w_lo.wrapping_add(n_u64.wrapping_mul(i_lo));
             let sum_w_lo = n_u64
                 .wrapping_mul(w_lo)
                 .wrapping_add(n_u64.wrapping_mul(n_u64.wrapping_sub(1)).wrapping_mul(i_lo));
