@@ -216,15 +216,15 @@ impl TripleMixSimdCore {
         0x7082_efa9_8ec4_e6c8,
     ]);
 
-    const XOROSHIRO_MAT: [u128; 128] = compute_xoroshiro_mat();
-    const TINYMT_MAT: [u128; 128] = compute_tinymt_mat();
+    const XOROSHIRO_JUMP_MAT: [u128; 128] = compute_xoroshiro_mat();
+    const TINYMT_JUMP_MAT: [u128; 128] = compute_tinymt_mat();
 
-    // 2^128 == 2 mod (2^127 - 1)
+    // 2^128 == 2^1 mod (2^127 - 1)
     const TINYMT_JUMP_128_MAT: [u128; 128] =
-        pow_mat_2_exp(Self::TINYMT_MAT, 2);
-    // 2^256 == 4 mod (2^127 - 1)
+        pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 1);
+    // 2^256 == 2^2 mod (2^127 - 1)
     const TINYMT_JUMP_256_MAT: [u128; 128] =
-        pow_mat_2_exp(Self::TINYMT_JUMP_128_MAT, 4);
+        pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
 
     #[inline(always)]
     fn as_bytes(&self) -> &[u8] {
@@ -309,8 +309,8 @@ impl TripleMixSimdCore {
             return;
         }
 
-        let x_pow = pow_mat(Self::XOROSHIRO_MAT, steps);
-        let t_pow = pow_mat(Self::TINYMT_MAT, steps);
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
+        let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
 
         let n = steps % (1 << 64);
         let n_u64 = n as u64;
@@ -377,7 +377,7 @@ impl TripleMixSimdCore {
         }
 
         // 2^128 = 1 mod (2^128 - 1)
-        let x_pow = pow_mat(Self::XOROSHIRO_MAT, multiples);
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
         // LCG returns exactly to its same state after 2^128 steps
 
@@ -411,7 +411,7 @@ impl TripleMixSimdCore {
             return;
         }
         // 2^256 = 1 mod (2^128 - 1)
-        let x_pow = pow_mat(Self::XOROSHIRO_MAT, multiples);
+        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
 
         let mut xr0_arr = self.xr0.to_array();
@@ -1198,11 +1198,11 @@ mod tests {
 
     #[test]
     fn test_jump_ahead_constants() {
-        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_MAT, 128), TripleMixSimdCore::XOROSHIRO_MAT);
-        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_MAT, 256), TripleMixSimdCore::XOROSHIRO_MAT);
+        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 128), TripleMixSimdCore::XOROSHIRO_JUMP_MAT);
+        assert_eq!(pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 256), TripleMixSimdCore::XOROSHIRO_JUMP_MAT);
 
-        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_128_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_128_MAT, 128));
-        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_256_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_128_MAT, 256));
+        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_128_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 128));
+        assert_eq!(TripleMixSimdCore::TINYMT_JUMP_256_MAT, pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 256));
     }
 
     #[test]
@@ -1448,17 +1448,39 @@ mod tests {
             }
 
             // Test advance_2_128 and advance consistency
-            let mut base_for_2_128 = prng.clone();
-            base_for_2_128.advance(1u128 << 127);
-            base_for_2_128.advance(1u128 << 127);
+            let mut base_a_for_2_128 = prng.clone();
+            base_a_for_2_128.advance(1u128 << 127);
+            base_a_for_2_128.advance(1u128 << 127);
+            let mut base_b_for_2_128 = prng.clone();
+            base_b_for_2_128.advance(1);
+            base_b_for_2_128.advance(u128::MAX);
             
             let mut prng_2_128 = prng.clone();
             prng_2_128.advance_2_128(1);
             
             for _ in 0..10_000 {
                 // Ensure internal state logic lines up perfectly equivalent.
-                assert_eq!(base_for_2_128.next_u64(), prng_2_128.next_u64());
+                let prng_2_128_u64 = prng_2_128.next_u64();
+                assert_eq!(base_a_for_2_128.next_u64(), prng_2_128_u64);
+                assert_eq!(base_b_for_2_128.next_u64(), prng_2_128_u64);
             }
+
+            // Test advance_2_256 and advance consistency
+            let mut base_a_for_2_256 = prng.clone();
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            let mut base_b_for_2_256 = prng.clone();
+            base_b_for_2_256.advance_2_128(1u128 << 127);
+            base_b_for_2_256.advance_2_128(1u128 << 127);
+
+            let mut prng_2_256 = prng.clone();
+            prng_2_256.advance_2_256(1);
+
+            for _ in 0..10_000 {
+                // Ensure internal state logic lines up perfectly equivalent.
+                assert_eq!(base_b_for_2_256.next_u64(), prng_2_256.next_u64());
+            }
+
         }
     }
 
