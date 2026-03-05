@@ -267,7 +267,7 @@ impl TripleMixSimdCore {
             let x_out = rotl(xr0 + xr1, 17) + xr0;
 
             // Mixing
-            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_hi);
+            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_lo + i_hi);
 
             // Xoroshiro++ update
             let t = xr0 ^ xr1;
@@ -543,35 +543,13 @@ const fn pow_mat_2_exp(mut a: [u128; 128], mut exp: u32) -> [u128; 128] {
     a
 }
 
-fn floor_sum(mut n: u128, mut m: u128, mut a: u128, mut b: u128) -> u128 {
-    let mut ans = 0u128;
-    while n > 0 {
-        if a >= m {
-            ans = ans.wrapping_add((n - 1).wrapping_mul(n) / 2 * (a / m));
-            a %= m;
-        }
-        if b >= m {
-            ans = ans.wrapping_add(n.wrapping_mul(b / m));
-            b %= m;
-        }
-        let y_max = (a * n + b) / m;
-        if y_max == 0 {
-            break;
-        }
-        b = (a * n + b) % m;
-        std::mem::swap(&mut m, &mut a);
-        n = y_max;
-    }
-    ans
-}
-
 #[inline(always)]
 fn rotl(x: Simd64, k: u64) -> Simd64 {
     (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
 }
 
 #[inline(always)]
-fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Simd64, Simd64) {
+fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
     // no pairs that sum to 64 are used.
     const MIXING_ROTATION_12: u64 = 7;
@@ -609,14 +587,14 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i_hi: Simd64) -> (Si
 
     // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
     // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i_hi, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i_hi;
+    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i, MIXING_ROTATION_00);
+    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i;
 
     // Round 1 (ARX, local): 4 xor, 5 add/sub, 3 rotl
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ w_lo, MIXING_ROTATION_01)) + l0_1;
+    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
     let r1_1 = l1_1 - l0_1;
 
     // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
@@ -1642,7 +1620,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "94CAAB5D8512CE4B1BE47F803C8AB077396CB929FC370CD70491CEBBBC295477FC2F2C108C1234F3E673C1375FC7F2CA78720944EAD7A178EC67957E9C3EAB6EA35DDB3EBCF8B4E9D4DA83124F69EBD11239D1A888852EB3EA2BD16DAA815F5A711723D23B1EAA6B0D744E2A243E4F9DD363375E0718594E89CD24343F3B20AC96C1BD292AB97AFA246611BB086967A448BBFF5112EF85494764A0A16D6AB58D8D69B9FE6F2CC24422ACF5DF5C3A32855C7847C069BFEAADA92DF57E85F994DE71334E5A7BF380EC7A1060C76722710DCF63BB7FD1FC1E89A8325017A04B4680543FF1A59167664B59B3F1ADB81CAF42E35E9BD51FA21869C422DE7BBA4886AE";
+        let expected = "42407F52FDF3A396758C1B61C93265111E38F4CC6427AE707247F6E125909C3620E4638CA0590F607AA0A59FFF31937A7CB13CB3B464679DAEE4241E966FE7BE4F2882783532FE4AFDDE15A4A40ECBB9F3E23048E1D50F46A64070A4E9A4B2078D9A344FF1CEEF02FFE77459EF6BCD4DD20B01AA208E00C6B7033E357DC8AB966951E537D6255D0B310AEECE3A3B7F8FCB37E871B1DD66F751E691DE96E4CB5FD6D3A13C2088A32FE81BCDF82C288BCA91E613B0EA8E0681ED04E9EBDEAD93A7406577021A18C46094D728EC96D92B97E79B1869337F49024EA8C0F67B9C5311E9134AA76C855A9A90BC3C753DF4190389DB62291B6CFA801D5B8A20A1C4CAE6";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
