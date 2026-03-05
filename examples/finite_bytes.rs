@@ -1,11 +1,11 @@
-use std::env::args_os;
-use std::ffi::OsString;
-use std::io::{stdout, Write};
-use std::str::FromStr;
+use crate::common::get_random_seed;
 use aws_lc_rs::test::from_hex;
 use rand_core::{Rng, SeedableRng};
-use rand_triplemix::{NotReproducible, TripleMixPrng, SEED_SIZE};
-use crate::common::get_random_seed;
+use rand_triplemix::{NotReproducible, SEED_SIZE, TripleMixPrng};
+use std::env::args_os;
+use std::ffi::OsString;
+use std::io::{Write, stdout};
+use std::str::FromStr;
 
 mod common;
 

@@ -1,14 +1,17 @@
-use std::thread;
-use rand::rngs::SysRng;
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
+use rand::rngs::SysRng;
 use rand_core::TryRng;
 use rand_triplemix::SEED_SIZE;
+use std::thread;
 
 pub fn get_random_seed() -> [u8; 256] {
     const OS_ENTROPY_BYTES: usize = 32;
     let mut seed = [0u8; SEED_SIZE];
     for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
-        #[cfg_attr(not(any(all(unix, target_arch = "x86_64"), feature = "rdrand")), allow(unused_mut))]
+        #[cfg_attr(
+            not(any(all(unix, target_arch = "x86_64"), feature = "rdrand")),
+            allow(unused_mut)
+        )]
         let mut seeded = false;
         if index >= 2 {
             #[cfg(feature = "rdrand")]
@@ -23,8 +26,8 @@ pub fn get_random_seed() -> [u8; 256] {
             #[cfg(all(unix, target_arch = "x86_64"))]
             if !seeded
                 && let Ok(mut ctx) = tss_esapi::Context::new_with_tabrmd(
-                tss_esapi::tcti_ldr::TabrmdConfig::default(),
-            )
+                    tss_esapi::tcti_ldr::TabrmdConfig::default(),
+                )
                 .or_else(|_| {
                     tss_esapi::Context::new(tss_esapi::Tcti::Device(
                         tss_esapi::tcti_ldr::DeviceConfig::default(),
