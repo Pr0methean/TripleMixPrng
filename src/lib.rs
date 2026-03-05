@@ -334,30 +334,39 @@ impl TripleMixSimdCore {
             tm1_arr[i] = (t_new >> 64) as u64;
 
             let w_lo = weyl_lo_arr[i];
-            let mut w_hi = weyl_hi_arr[i];
+            let w_hi = weyl_hi_arr[i];
             let i_lo = self.inc_lo.as_array()[i];
             let i_hi = self.inc_hi.as_array()[i];
             let l = Self::LANE_CONSTANTS.as_array()[i];
 
+            let n_u128 = n as u128;
             let w_lo_n = w_lo.wrapping_add(n_u64.wrapping_mul(i_lo));
-            let sum_w_lo = n_u64
-                .wrapping_mul(w_lo)
-                .wrapping_add(n_u64.wrapping_mul(n_u64.wrapping_sub(1)).wrapping_mul(i_lo));
 
-            let c_sum1 = floor_sum(n, 1 << 64, (i_lo as u128) * 2, (w_lo as u128) + (i_lo as u128));
-            let c_sum2 = floor_sum(n, 1 << 64, (i_lo as u128) * 2, w_lo as u128);
-            let c_sum = c_sum1.wrapping_sub(c_sum2) as u64;
+            // Sum_{j=0}^{n-1} w_lo_j = n * w_lo + n(n-1)/2 * i_lo mod 2^64
+            let sum_w_lo = n_u128.wrapping_mul(w_lo as u128).wrapping_add(
+                if n_u128 % 2 == 0 {
+                    (n_u128 / 2).wrapping_mul(n_u128.wrapping_sub(1)).wrapping_mul(i_lo as u128)
+                } else {
+                    n_u128.wrapping_mul(n_u128.wrapping_sub(1) / 2).wrapping_mul(i_lo as u128)
+                }
+            ) as u64;
 
-            let delta_hi = n_u64
-                .wrapping_mul(i_hi)
+            // Carry sum = how many times w_lo wrapped around 2^64
+            let carry_sum = ((w_lo as u128).wrapping_add(n_u128.wrapping_mul(i_lo as u128)) >> 64) as u64;
+
+            let delta_hi = n_u64.wrapping_mul(i_hi)
                 .wrapping_add(sum_w_lo.wrapping_mul(l))
-                .wrapping_add(c_sum);
+                .wrapping_add(carry_sum);
 
-            w_hi = w_hi.wrapping_add(delta_hi);
-            w_hi = w_hi.wrapping_add(periods.wrapping_mul(i_lo));
+            // Over a full 2^64 period:
+            // Delta W_lo = 0
+            // Sum_{j=0}^{2^64-1} w_lo_j = 2^63 * i_lo = 2^63 mod 2^64
+            // Carry Sum = i_lo
+            // Delta W_hi = L * 2^63 + i_lo
+            let period_delta = l.wrapping_mul(1u64 << 63).wrapping_add(i_lo);
 
             weyl_lo_arr[i] = w_lo_n;
-            weyl_hi_arr[i] = w_hi;
+            weyl_hi_arr[i] = w_hi.wrapping_add(delta_hi).wrapping_add(periods.wrapping_mul(period_delta));
         }
 
         self.xr0 = Simd64::from_array(xr0_arr);
