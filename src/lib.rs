@@ -1478,7 +1478,9 @@ mod tests {
 
             for _ in 0..10_000 {
                 // Ensure internal state logic lines up perfectly equivalent.
-                assert_eq!(base_b_for_2_256.next_u64(), prng_2_256.next_u64());
+                let prng_2_256_u64 = prng_2_256.next_u64();
+                assert_eq!(base_a_for_2_256.next_u64(), prng_2_256_u64);
+                assert_eq!(base_b_for_2_256.next_u64(), prng_2_256_u64);
             }
 
         }
