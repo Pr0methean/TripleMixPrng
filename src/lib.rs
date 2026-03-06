@@ -570,7 +570,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let l0_2 = l0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
     let l1_2 = l1_1 + (sr1_1 ^ sl0_1);
     let r0_2 = r0_1 ^ rotl(sl1_1 + sr1_1, MIXING_ROTATION_07);
-    let r1_2 = r1_1 + rotl(sl0_1 + r0_2, MIXING_ROTATION_09);
+    let r1_2 = r1_1 + rotl(sl0_1 + t, MIXING_ROTATION_09);
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
