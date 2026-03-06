@@ -553,23 +553,22 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i, MIXING_ROTATION_00);
     let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i;
 
-    // Round 1 (ARX, local): 4 xor, 5 add/sub, 3 rotl
+    // Round 1 (ARX, local): 4 xor, 4 add/sub, 3 rotl
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
     let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
-    let r1_1 = l1_1 - l0_1;
 
-    // Round 2 (cross-lane): 4 xor, 4 add, 3 rotl, 3 simd_swizzle
+    // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
-    let sr1_1 = simd_swizzle!(r1_1, [2, 3, 0, 1]);
+    let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
     let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
     let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
 
-    let l0_2 = l0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let l1_2 = l1_1 + (sr1_1 ^ sl0_1);
-    let r0_2 = r0_1 ^ rotl(sl1_1 + sr1_1, MIXING_ROTATION_07);
-    let r1_2 = r1_1 + rotl(sl0_1 + t, MIXING_ROTATION_09);
+    let l0_2 = sl0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
+    let l1_2 = sr0_1 - t + (l1_1 ^ sl0_1);
+    let r0_2 = sl1_1 ^ rotl(x_in + sr0_1, MIXING_ROTATION_07);
+    let r1_2 = l1_1 + rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
@@ -1584,7 +1583,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "B77185E686D70FFE9C7C3575415D889634FF39718E80858B9862459949C51AB1EEE61CA9193C3B527E5C8FB12238E2937E68F067369A79824CE709BEAC917379BC1DDE908F90BD9CBD039BB624A7BC3BA1000D7CFDD48ECEEF6B8E3C93DB7572B123E6B471B9F6E6E64E6D07A94EF37D035BF722C66FA1360FD81F9AE157495D0BB66C5BC85F188239E55E1D37A68FBBE89DFBC1850A3BD44D62793AE5531BC8BD5307B7080CC0E81DA0CD825D7D46CAD6EA2C828DEFDC7BC9B53048F5AA36972DF4DA0F54C8A3AAA66E42BFBC306F7B79232952CB064DFB496D47D65C3EFF014CC6A751EC08F3AC835D414D7652515B1CB4831E7883BF1408379F5B70C4F111";
+        let expected = "58B75412CFEBA5F89F3F3867FA73EA8DF9DDD18077C3037CD58C62CA46A67499DDAA093319471197A5F3DD023631283D39E2D6B5CA22CE25D6F6F2F37CB415D9D71567C41941AA026D62610E77BDFDBE467A89BF7078CDDE12FB441735430B7888FFF175655A8C7D38E2DA4484AB17BFFF73B0F1624BA1ECBB7DF7250CB038C737270C71E46336DC2F30BB98E756F632493517FE965DD0229EFD4281CBA92C4201553A14DB3E9280A6E74B630C6F39FA0C71F44A9984287654B26BF7B918839230798A55CA2DE8C0D45E920CDDACDECD6B47A11670ED700BF5EBC55CA6131AC1F5B2072CFA9E584B73E9111DEBB55D435A80F06E9E886DF0C20EE4DE6D64E3FD";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
