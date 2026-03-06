@@ -22,12 +22,12 @@ TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lan
   lanes even when those lanes have a similar internal state.
 * Runs faster on AVX2 than ChaCha12Rng for both `fill_bytes` (measured on a 1MiB output) and `next_u64`.
 * Byte-sequence entropy measurements (based on 16 GiB from an instance produced by 
-  `TripleMixPrng::<NotReproducible>::almost_all_zeroes_state()` on an AVX2 CPU) are:
-  | Metric                            | Value                           |
-  |-----------------------------------|---------------------------------|
-  | 0th-order Shannon entropy H0      | 7.999 999 990 161 419 bits/byte |
-  | 1st-order Shannon entropy H1\|0   | 7.999 997 228 632 659 bits/byte |
-  | 2nd-order Shannon entropy H2\|1,0 | 7.999 298 293 210 073 bits/byte |
-  | Hurst exponent                    | 0.501 807 019 454 615           |
+  `TripleMixPrng::<NotReproducible>::almost_all_zeroes_state()` on an AVX2 CPU, calculated using 
+  https://github.com/Pr0methean/EntroPy) are:
+  | Entropy measure   | Value (bits/byte)     |
+  |-------------------|-----------------------|
+  | 0th-order H0      | 7.999 999 989 642 104 |
+  | 1st-order H1\|0   | 7.999 997 261 713 890 |
+  | 2nd-order H2\|1,0 | 7.999 298 354 885 777 |
 * Passes PractRand 0.96 for at least 32 TiB (tested with 7 seeds) and with `-tf 2` option for at least 64 GiB (tested
   with 32 seeds).
