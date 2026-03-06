@@ -532,7 +532,6 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     const MIXING_ROTATION_09: u64 = 44;
     const MIXING_ROTATION_22: u64 = 49;
     const MIXING_ROTATION_18: u64 = 54;
-    const MIXING_ROTATION_04: u64 = 34;
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
@@ -587,22 +586,12 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16); // carry injection
     let r1_3 = l1_2 ^ m1 ^ m2;
 
-    // Round 4 (transport): 3 xor, 3 add, 1 rotl, 1 simd_swizzle
-    // ---------------------------------------------------------
+    // Round 4 (transport & output): 7 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
+    // --------------------------------------------------------------------------------
     let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-
-    let tl0r1 = sl0_3 + r1_3;
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-
-    let l0_4 = r0_3 ^ tl0r1;
-    let l1_4 = l0_3 + tl1r0;
-    let r0_4 = tl0r1 - l1_3;
-    let r1_4 = tl1r0 ^ sl0_3;
-
-    // Output finalizer: 5 add/sub, 4 xor, 1 rotl, 3 shift
-    // ---------------------------------------------------
-    let t0 = (r0_4 + l0_4) ^ (r1_4 - l1_4); // strong carry interaction
-    let t1 = (l1_4 ^ r0_4) + (r1_4 << MIXING_ROTATION_19);
+    let t0 = (sl0_3 + r1_3) ^ (l0_3 - l1_3); // strong carry interaction
+    let t1 = (r0_3 ^ sl0_3 ^ tl1r0) + ((sl0_3 - r1_3) << MIXING_ROTATION_19);
     let t2 = t0 + t1;
     let t3 = t1 ^ rotl(t0, MIXING_ROTATION_21);
     let out0 = t2 ^ (t3 >> MIXING_ROTATION_22);
@@ -1595,7 +1584,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "B5EB784837518FF4CFFC10D22935B4C4E6B5F00B2C545F4D8D42CCB1D5D482841C3AEFF6FC8B280885ADB9397AC01AF3A569E406EA9242371C9896EB5AF2FD534F331B68349DF9E804C2BA84968133CB059FFE9C4C689E2880F03E1179DDE19F9E4D51FEE2DB1D9AE3D054A36F1C76FD495B8EBCBABB72E50EE42BAF989C9E4F967DA9886DB10C023639CCDE7F9977F80821C20F7CA92C24586FF53D8F50EE7993333C1D33F3A0D8987760EFA1C7E25D090FD5A88F3A105C71E324D50435C98E6DAF12F8A9378B5045145BDB14020ADF3F30AA4574896D3AD3AAD6604145DC837D07F36F78FD0EFCD85315ADCF6DDC5D0ED8F416773A4F515FEF444EE77F097C";
+        let expected = "F0EE69A5DE6C1BD51C5B04A60914AC31F3D1F0C4A367CE9FE0D383C43D10B95CEEE60429585CAD947E5CEF1F4D28CEB07EE882A696F9C4B54CE70985544EA8181B3D75AA50E41A918206DDE14BB2BF2AACDD1151A44572DFC38FB90342F13F21B123D77073C085C9E64E69062191FC1E035BFF6052F50F990F18F70ACD712EF393945B9ED0A0C210801E86445763D735436D81D7DF8E312A2BF1833492C10C2DBD93444D1952D7221D207C561C2DE25AD6EA2DF28D9CD14AC9B52054D5157FE484D5A62555A51AD262B72B95DFE2DB2AB4C5C472688226B42C3725A486E32A8C4CC66F816FB6D4A1835D44BDEBA9F7CF1CF4845F30A7E200087783537CB5BC20";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
