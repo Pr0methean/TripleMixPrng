@@ -585,7 +585,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16); // carry injection
     let r1_3 = l1_2 ^ m1 ^ m2;
 
-    // Round 4 (transport & output): 7 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
+    // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
     let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
