@@ -633,6 +633,7 @@ const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 #[cfg(feature = "no_std")]
 macro_rules! once_kmac {
     ($domain:expr) => {
+        extern crate alloc;
         static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
         return INSTANCE
             .get_or_init(|| alloc::boxed::Box::new(Kmac::v256($domain, &[])))
@@ -901,7 +902,7 @@ impl<R: Reproducibility> SeedableRng for TripleMixPrng<R> {
     type Seed = GenericArray<u8, U<{ SEED_SIZE }>>;
 
     #[inline(always)]
-    fn from_seed(seed: Self::Seed) -> Self {
+    fn from_seed(seed: GenericArray<u8, U<{ SEED_SIZE }>>) -> Self {
         Self::from(&seed)
     }
 
@@ -1104,18 +1105,18 @@ impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
     type Error = Infallible;
 
     #[inline(always)]
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
         let next_u64 = self.try_next_u64()?;
         Ok((next_u64 >> 32 ^ next_u64) as u32)
     }
 
     #[inline(always)]
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
         Ok(self.block_core.next_word())
     }
 
     #[inline(always)]
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Infallible> {
         R::fill_bytes(&mut self.block_core, dst);
         Ok(())
     }
