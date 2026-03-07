@@ -511,22 +511,14 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
     (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
 }
 
-// Words 3, 7, 11 and 15 of the fractional part of the Golden Ratio.
-const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([
-    0x1082276bf3a27251,
-    0xf01886f092840300,
-    0x64d325d1c5371682,
-    0x471c4ab3ed3d82a5,
-]);
 #[inline(always)]
 fn permute_sparx64(input: Simd64) -> Simd64 {
         const SHIFT_MOD: u64 = 37;
-        let count1 = input.count_ones();
-        let shift = (count1 % Simd::splat(37)) + Simd::splat(8);
-        let count2 = (count1 << 1) + (input + FEISTEL_CONSTANT_3).count_ones();
+        let count = input.count_ones();
+        let shift = (count % Simd::splat(37)) + Simd::splat(8);
 
         /* odd increment */
-        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + ((count2 << 8) | Simd::splat(1));
+        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + ((count << 8) | Simd::splat(1));
         let t = input + rotl(inc, 41) + rotl(input, 29);
         t + (inc ^ (Simd::splat(1) << shift))
 }
