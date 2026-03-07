@@ -29,5 +29,4 @@ TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lan
   | 0th-order H0      | 7.999 999 991 000 918 |
   | 1st-order H1\|0   | 7.999 997 257 735 001 |
   | 2nd-order H2\|1,0 | 7.999 297 968 590 858 |
-* Passes PractRand 0.96 for at least 32 TiB (tested with 7 seeds) and with `-tf 2` option for at least 64 GiB (tested
-  with 32 seeds).
+* Passes PractRand 0.96 for at least 32 TiB (tested with 10 seeds).
