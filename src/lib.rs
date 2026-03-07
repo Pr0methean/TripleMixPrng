@@ -511,15 +511,23 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
     (x << Simd::splat(k)) | (x >> Simd::splat(64 - k))
 }
 
+// Words 3, 7, 11 and 15 of the fractional part of the Golden Ratio.
+const FEISTEL_CONSTANT_3: Simd64 = Simd::from_array([
+    0x1082276bf3a27251,
+    0xf01886f092840300,
+    0x64d325d1c5371682,
+    0x471c4ab3ed3d82a5,
+]);
 #[inline(always)]
 fn permute_sparx64(input: Simd64) -> Simd64 {
         const SHIFT_MOD: u64 = 37;
-        let count = input.count_ones();
-        let shift = (count % Simd::splat(SHIFT_MOD)) + Simd::splat(7);
+        let count1 = input.count_ones();
+        let shift = (count1 % Simd::splat(37)) + Simd::splat(8);
+        let count2 = (count1 << 1) + (input + FEISTEL_CONSTANT_3).count_ones();
 
         /* odd increment */
-        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + (((input + rotl(count, 7)) << 1) | Simd::splat(1));
-        let t = input + rotl(inc, 13) + rotl(input, 29);
+        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + ((count2 << 8) | Simd::splat(1));
+        let t = input + rotl(inc, 41) + rotl(input, 29);
         t + (inc ^ (Simd::splat(1) << shift))
 }
 
@@ -584,10 +592,10 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
-    let x = permute_sparx64(r0_2 ^ permute_sparx64(r1_2 >> MIXING_ROTATION_10));
-    let y = permute_sparx64(l0_2 + permute_sparx64(l1_2 >> MIXING_ROTATION_12));
+    let x = permute_sparx64(r0_2 ^ permute_sparx64( permute_sparx64(r1_2) >> MIXING_ROTATION_10));
+    let y = permute_sparx64(l0_2 + permute_sparx64( permute_sparx64(l1_2) >> MIXING_ROTATION_12));
 
-    let m1 = rotl(x, MIXING_ROTATION_13);
+    let m1 = rotl(permute_sparx64(x), MIXING_ROTATION_13);
     let m2 = permute_sparx64(x ^ (y >> MIXING_ROTATION_14));
 
     // asymmetric feedback (no duplicated structure)
@@ -1594,7 +1602,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "58B75412CFEBA5F89F3F3867FA73EA8DF9DDD18077C3037CD58C62CA46A67499DDAA093319471197A5F3DD023631283D39E2D6B5CA22CE25D6F6F2F37CB415D9D71567C41941AA026D62610E77BDFDBE467A89BF7078CDDE12FB441735430B7888FFF175655A8C7D38E2DA4484AB17BFFF73B0F1624BA1ECBB7DF7250CB038C737270C71E46336DC2F30BB98E756F632493517FE965DD0229EFD4281CBA92C4201553A14DB3E9280A6E74B630C6F39FA0C71F44A9984287654B26BF7B918839230798A55CA2DE8C0D45E920CDDACDECD6B47A11670ED700BF5EBC55CA6131AC1F5B2072CFA9E584B73E9111DEBB55D435A80F06E9E886DF0C20EE4DE6D64E3FD";
+        let expected = "CC1A766C2BF69BD17490653511516CDEFBA555AC8E3C004A2883272A18E28E5C32A7F4FB443495BEA329C4EA5F33F99DA6F1AE2F7682896498DA53C9B9C3D7930AA4B875CF744034FF127F2557CA24C0E3F821F33BFE39CE8D557D46F736F87474FE578FEF4EFFAA754BAF00A32A0FB6C4D55271DE0EB1E6A88CD50F6472A70ED44EDE18E25BB462D77D2E8F258E6454D5D09CBEC2C28051C3E04E15D1686897B0C3ACD90C055AF0FA4C592032F7FC727A5A19C589B6BBBC8397C1A9B572D4E61A69C3DFB6642E69EBC0FE61DB8A3D4AF0BE879B30D6806FABF74BCC8B8654A7F018D45F4A60304F7E13CE743D5E0CC8F921BD45C18B992A966A627FC63C4AD6";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
