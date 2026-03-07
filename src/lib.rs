@@ -596,7 +596,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let y = permute_sparx64(l0_2 + (l1_2 >> MIXING_ROTATION_12));
 
     let m1 = permute_sparx64(rotl(x, MIXING_ROTATION_13));
-    let m2 = permute_sparx64(x ^ (y >> MIXING_ROTATION_14));
+    let m2 = x ^ (y >> MIXING_ROTATION_14);
 
     // asymmetric feedback (no duplicated structure)
     let l0_3 = r0_2 ^ m1;
