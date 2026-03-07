@@ -558,8 +558,8 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let wx = w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02);
     let l0_1 = wx ^ first_mix_with_i_hi;
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let second_mix_wx_rotated = second_mix_with_i_hi ^ rotl(wx, MIXING_ROTATION_01);
-    let r0_1 = (t ^ second_mix_wx_rotated) + w_lo;
+    let wx_rotated = rotl(wx, MIXING_ROTATION_01);
+    let r0_1 = (t + second_mix_with_i_hi) ^ wx_rotated;
 
     // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
@@ -567,12 +567,15 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
     let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
 
-    let l0_2 = sl0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let sr0l1 = sr0_1 - t + l1_1;
+    let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
+    let l0_2 = sl0_1 ^ r0sl1;
+    let sr0t = sr0_1 - t;
+    let sr0l1 = sr0t + l1_1;
     let l1_2 = sr0l1 ^ sl0_1;
     let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
     let r0_2 = sl1_1 ^ sr01r;
-    let r1_2 = l1_1 + rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
+    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
+    let r1_2 = l1_1 + sl0l0;
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
@@ -585,8 +588,6 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let r1_3_partial = l1_2 ^ m2;
     let r0_3_partial = l0_2 + (m2 >> MIXING_ROTATION_16);
     let m1 = rotl(m, MIXING_ROTATION_13);
-
-    // asymmetric feedback (no duplicated structure)
     let l0_3 = r0_2 ^ m1;
     let r0_3 = r0_3_partial + m1;
     let r1_3 = r1_3_partial ^ m;
