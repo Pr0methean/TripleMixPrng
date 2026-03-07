@@ -512,6 +512,18 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 }
 
 #[inline(always)]
+fn permute_sparx64(input: Simd64) -> Simd64 {
+        const SHIFT_MOD: u64 = 37;
+        let count = input.count_ones();
+        let shift = (count % Simd::splat(SHIFT_MOD)) + Simd::splat(7);
+
+        /* odd increment */
+        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + (((input + rotl(count, 7)) << 1) | Simd::splat(1));
+        let t = input + rotl(inc, 13) + rotl(input, 29);
+        t + (inc ^ (Simd::splat(1) << shift))
+}
+
+#[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
     // no pairs that sum to 64 are used.
@@ -572,12 +584,11 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
-    let x = r0_2 ^ (r1_2 >> MIXING_ROTATION_10);
-    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12);
-    let m = simd_mul(x, y);
+    let x = permute_sparx64(r0_2 ^ permute_sparx64(r1_2 >> MIXING_ROTATION_10));
+    let y = permute_sparx64(l0_2 + permute_sparx64(l1_2 >> MIXING_ROTATION_12));
 
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
+    let m1 = rotl(x, MIXING_ROTATION_13);
+    let m2 = permute_sparx64(x ^ (y >> MIXING_ROTATION_14));
 
     // asymmetric feedback (no duplicated structure)
     let l0_3 = r0_2 ^ m1;
