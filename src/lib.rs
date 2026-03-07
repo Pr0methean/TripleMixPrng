@@ -576,7 +576,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Round 1 (ARX, local): 4 xor, 4 add/sub, 3 rotl
     // ------------------------------------------
     let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
-    let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
+    let l1_1 = permute_sparx64(x_in ^ rotl(t + l0_1, MIXING_ROTATION_03));
     let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
 
     // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
@@ -592,10 +592,10 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
-    let x = permute_sparx64(r0_2 ^ permute_sparx64( permute_sparx64(r1_2) >> MIXING_ROTATION_10));
-    let y = permute_sparx64(l0_2 + permute_sparx64( permute_sparx64(l1_2) >> MIXING_ROTATION_12));
+    let x = permute_sparx64(r0_2 ^ (r1_2 >> MIXING_ROTATION_10));
+    let y = permute_sparx64(l0_2 + (l1_2 >> MIXING_ROTATION_12));
 
-    let m1 = rotl(permute_sparx64(x), MIXING_ROTATION_13);
+    let m1 = permute_sparx64(rotl(x, MIXING_ROTATION_13));
     let m2 = permute_sparx64(x ^ (y >> MIXING_ROTATION_14));
 
     // asymmetric feedback (no duplicated structure)
