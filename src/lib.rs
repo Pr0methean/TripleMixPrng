@@ -513,12 +513,11 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 #[inline(always)]
 fn permute_sparx64(input: Simd64) -> Simd64 {
-        const SHIFT_MOD: u64 = 37;
         let count = input.count_ones();
-        let shift = (count % Simd::splat(37)) + Simd::splat(8);
+        let shift = count | Simd::splat(7);
 
         /* odd increment */
-        let inc = (Simd::splat(1) << (Simd::splat(14 + SHIFT_MOD) - shift)) + ((count << 8) | Simd::splat(1));
+        let inc = (Simd::splat(1) << (Simd::splat(63) & !shift)) + (count << 8);
         let t = input + rotl(inc, 41) + rotl(input, 29);
         t + (inc ^ (Simd::splat(1) << shift))
 }
