@@ -1,5 +1,5 @@
-TripleMixPrng
-=============
+rand_triplemix
+==============
 
 This is a vectorized pseudorandom number generator (PRNG) that combines, in each of 4 SIMD lanes, an instance of 
 xoroshiro128, TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lanes. This PRNG has not been 
