@@ -583,24 +583,28 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
     let m = simd_mul(x, y);
-    let m2 = x ^ (y >> MIXING_ROTATION_14);
+    let n = x ^ (y >> MIXING_ROTATION_14);
 
-    let l1_3 = r1_2 + m2;
-    let r1_3_partial = l1_2 ^ m2;
-    let r0_3_partial = l0_2 + (m2 >> MIXING_ROTATION_16);
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let l0_3 = r0_2 ^ m1;
-    let r0_3 = r0_3_partial + m1;
+    let l1_3 = r1_2 + n;
+    let r1_3_partial = l1_2 ^ n;
+    let r0_3_partial = l0_2 + (n >> MIXING_ROTATION_16);
+    let mr = rotl(m, MIXING_ROTATION_13);
+    let l0_3 = r0_2 ^ mr;
+
+    let r0_3 = r0_3_partial + mr;
+    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
+    let r0l0l1 = l0_3 ^ tl1r0;
     let r1_3 = r1_3_partial ^ m;
 
     // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
-    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-    let t0 = (sl0_3 + r1_3) ^ (l0_3 - l1_3); // strong carry interaction
-    let t1 = (r0_3 ^ tl1r0) + ((sl0_3 - r1_3) << MIXING_ROTATION_19);
+    let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
+    let t0 = sl0_3 + r1l0l1; // strong carry interaction
+    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
+    let t1 = r0l0l1 + sl0r1r;
     let rot_t0 = rotl(t0, MIXING_ROTATION_21);
-    let t3 = t1 ^ (sl0_3 ^ rot_t0);
+    let t3 = sl0_3 ^ (t1 ^ rot_t0);
     let t3_shift = t3 >> MIXING_ROTATION_22;
     let t2 = t0 + t1;
     let out0 = t2 ^ t3_shift;
