@@ -575,15 +575,17 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let x = r0_2 ^ (r1_2 >> MIXING_ROTATION_10);
     let y = l0_2 + (l1_2 >> MIXING_ROTATION_12);
     let m = simd_mul(x, y);
+    let m2 = x ^ (y >> MIXING_ROTATION_14);
 
+    let l1_3 = r1_2 + m2;
+    let r1_3_partial = l1_2 ^ m2;
+    let r0_3_partial = l0_2 + (m2 >> MIXING_ROTATION_16);
     let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
 
     // asymmetric feedback (no duplicated structure)
     let l0_3 = r0_2 ^ m1;
-    let l1_3 = r1_2 + m2;
-    let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16); // carry injection
-    let r1_3 = l1_2 ^ m1 ^ m2;
+    let r0_3 = r0_3_partial + m1;
+    let r1_3 = r1_3_partial ^ m1;
 
     // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
@@ -591,9 +593,11 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
     let t0 = (sl0_3 + r1_3) ^ (l0_3 - l1_3); // strong carry interaction
     let t1 = (r0_3 ^ tl1r0) + ((sl0_3 - r1_3) << MIXING_ROTATION_19);
+    let rot_t0 = rotl(t0, MIXING_ROTATION_21);
+    let t3 = (t1 ^ sl0_3) ^ rot_t0;
+    let t3_shift = t3 >> MIXING_ROTATION_22;
     let t2 = t0 + t1;
-    let t3 = (t1 ^ sl0_3) ^ rotl(t0, MIXING_ROTATION_21);
-    let out0 = t2 ^ (t3 >> MIXING_ROTATION_22);
+    let out0 = t2 ^ t3_shift;
     let out1 = t3 + (out0 << MIXING_ROTATION_23);
 
     (out0, out1)
