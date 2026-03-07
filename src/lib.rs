@@ -563,17 +563,17 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
     let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
-    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
-    let r1_2 = l1_1 + sl0l0;
-    let r1r = r1_2 >> MIXING_ROTATION_10;
     let r0_1 = (t + second_mix_with_i_hi) ^ wx_rotated;
+    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
+    let sl0l1 = (sl0_1 - t) + l1_1;
+    let r1_2 = l1_1 + sl0l0;
 
     let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
     let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
     let l0_2 = sl0_1 ^ r0sl1;
+    let r1r = r1_2 >> MIXING_ROTATION_10;
 
     let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
-    let sl0l1 = (sl0_1 - t) + l1_1;
     let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
     let l1_2 = sl0l1 ^ sr0_1;
     let r0_2 = sl1_1 ^ sr01r;
@@ -590,8 +590,8 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let r0_3_partial = l0_2 + (n >> MIXING_ROTATION_16);
     let mr = rotl(m, MIXING_ROTATION_13);
     let l0_3 = r0_2 ^ mr;
-
     let r0_3 = r0_3_partial + mr;
+
     let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
     let r0l0l1 = l0_3 ^ tl1r0;
@@ -600,12 +600,12 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
     let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
-    let t0 = sl0_3 + r1l0l1; // strong carry interaction
+    let t0 = sl0_3 + r1l0l1;
     let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
     let t1 = r0l0l1 + sl0r1r;
     let rot_t0 = rotl(t0, MIXING_ROTATION_21);
-    let t2 = t0 + t1;
-    let t3 = sl0_3 ^ (t1 ^ rot_t0);
+    let t2 = t0 + t1;  // bottleneck!
+    let t3 = sl0_3 ^ (t1 ^ rot_t0);  // bottleneck!
     let t3_shift = t3 >> MIXING_ROTATION_22;
     let out0 = t2 ^ t3_shift;
     let out1 = t3 + (t2 << MIXING_ROTATION_23);
@@ -1597,7 +1597,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "7FCF82869A376A3F628545EC4BBD2F970BC81D75542C5D61A96D1534F6A1577F1BBAE46045DDADC205A148F8CDFDAB1551A39883B140B3345696DB7AA5D22D85BA835679E9762DE55CBEAFC3F78DCFB1B9B8B1A540D7A1853F9B89A72CBCA35A525A229717CF8E29D6041E66EF6A5389613447ACFF760EF2C768E598A848C312C49B53D1E5D8BC21FCE211234AB135A759DA6E2C6BB13BD4F9F4168DAA85636C7B4BBCD21D336F423F2D08C02F0674B2417CA9A3D00986327330B5B3B90655FC1EBEA8667AEED4C3440E63968D0D14316ED136B1FE25C7106BC41A7FC5786B1DF73C257BBD81F147737A41C32C835329272147481955448A2346C31F0FFC5A3D";
+        let expected = "0E66A1E4F20EF926A54F73201D9951B569843CA27C71279DDC8D772222283CC6AE2BBC545687954F0116E313B85EAE89ACE431B0E3B6663F5812EDF11AD8AD0CE59C0DA58A9CD96D779A1616D3B564654BDBCC4B6CBF3E0668EABC1EF4CB3648DB77B065DA3C2FF649F1CFF43146B109E77C8FDA8B4D386887D25C9CE6A16F8443D2783B6839D06AECE0E43ACA95A49051931DBD75D8F4606F62277FDD7439E218FEAFE671F4EC30E131F45E4F7CB99BEC21EE817E11D7EB6222B78CEBABAF1CF3A3B92037E96C521BB4E87CD723F24D9B18EC247BB437F428F2EEF5168A095701262B43469A6C2EE1F86B9C98C5D4707E33736736B4DDA73A5195E9212B9143";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
