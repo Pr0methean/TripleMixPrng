@@ -20,7 +20,7 @@ once_cell = { version = "1.21.3", optional = true, default-features = false }
 [features]
 zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
-no_std = ["once_cell/race"]
+no_std = ["once_cell/race", "once_cell/alloc"]
 bench_include_threadrng = []
 
 [lib]
