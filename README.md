@@ -1,8 +1,13 @@
 TripleMixPrng
 =============
 
-This is a vectorized pseudorandom number generator that combines, in each of 4 SIMD lanes, an instance of xoroshiro128,
-TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lanes. It has the following properties:
+This is a vectorized pseudorandom number generator (PRNG) that combines, in each of 4 SIMD lanes, an instance of 
+xoroshiro128, TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lanes. This PRNG has not been 
+evaluated for cryptographic use.
+
+Requires the `portable_simd` feature, which is currently nightly-only.
+
+The PRNG has the following properties:
 
 * The output block size is 64 bytes (8 u64's).
 * The state size is 256 bytes: 508 bits of identity, 1532 bits of mutable state, 8 bits of overhead.
@@ -20,7 +25,7 @@ TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lan
 * Within each lane, the mutable-state bits form a single cycle.
 * The mixing function uses SIMD-lane-specific constants, so it will not generate closely related output in different 
   lanes even when those lanes have a similar internal state.
-* Runs faster on AVX2 than ChaCha12Rng for both `fill_bytes` (measured on a 1MiB output) and `next_u64`.
+* Runs in 0.6 cycles per byte on Ubuntu with AVX2, faster than ChaCha12Rng.
 * Byte-sequence entropy measurements (based on 16 GiB from an instance produced by 
   `TripleMixPrng::<NotReproducible>::almost_all_zeroes_state()` on an AVX2 CPU, calculated using 
   https://github.com/Pr0methean/EntroPy) are:
