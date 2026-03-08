@@ -25,9 +25,6 @@ jobs:
       fail-fast: false
     steps:
     - uses: actions/checkout@v6
-    - name: Install libtss-sys1 (Ubuntu x86)
-      if: matrix.os == 'ubuntu-latest'
-      run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Build
       run: cargo +nightly build --verbose --tests
     - name: Run tests
