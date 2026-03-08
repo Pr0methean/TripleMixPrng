@@ -1140,6 +1140,7 @@ mod tests {
     use super::*;
     use bytemuck::cast_slice_mut;
     use core::simd::cmp::SimdPartialEq;
+    use std::iter;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
@@ -1458,8 +1459,8 @@ mod tests {
                 frequencies[byte as usize] += 1;
             }
             let chi_square = goodness_of_fit(
-                frequencies.map(f64::from),
-                std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
+                &frequencies.map(f64::from).collect(),
+                &std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1).into(),
                 0.01,
             )
             .unwrap();
@@ -1477,8 +1478,8 @@ mod tests {
                 frequencies[word as usize] += 1;
             }
             let chi_square = goodness_of_fit(
-                frequencies.into_iter().map(f64::from),
-                std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1),
+                frequencies.into_iter().map(f64::from).into(),
+                std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1).into(),
                 0.01,
             )
             .unwrap();
@@ -1501,8 +1502,8 @@ mod tests {
                         bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
                     }
                     let p = goodness_of_fit(
-                        bins.map(|bin| bin as f64),
-                        [SAMPLE_COUNT as f64 * 0.25; 4],
+                        &bins.map(|bin| bin as f64).collect(),
+                        &iter::repeat_n(SAMPLE_COUNT as f64 * 0.25, 4).into(),
                         P_THRESHOLD,
                     )
                     .unwrap()
@@ -1522,8 +1523,8 @@ mod tests {
                         lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                     }
                     let p = goodness_of_fit(
-                        lagged_bins.map(|bin| bin as f64),
-                        [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
+                        &lagged_bins.map(|bin| bin as f64).collect(),
+                        &iter::repeat_n((SAMPLE_COUNT - 1) as f64 * 0.25, 4).into(),
                         P_THRESHOLD,
                     )
                     .unwrap()
