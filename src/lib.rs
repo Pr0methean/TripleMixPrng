@@ -245,49 +245,48 @@ impl TripleMixSimdCore {
         let i_hi = self.inc_hi;
 
         for block in blocks {
-            // TinyMT64 output tempering
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK);
-            let mut x = tm0 ^ tm1;
-            x ^= x << Simd::splat(12);
-            x ^= x >> Simd::splat(32);
-            x ^= x << Simd::splat(32);
-            x ^= x << Simd::splat(11);
+            tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
 
             // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            // NB: w_lo is updated in the output but w_hi isn't, so this isn't quite a pure LCG!
+            // NB: w_lo is updated in the output but w_hi isn't, so the output is permuted compared
+            // to a standard LCG!
             let next_w_lo = w_lo + i_lo;
 
-            // Output prep
-            let mut ty = tm0 + tm1;
-            ty ^= tm0 >> Simd::splat(8);
+            let mut x = tm0 ^ tm1; // TinyMT64 update
+
+            x ^= x << Simd::splat(12); // TinyMT64 output tempering
+
+            let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
+
+            let mut ty = tm0 + tm1; // TinyMT64 update
+
+            x ^= x >> Simd::splat(32); // TinyMT64 output tempering
+
+            ty ^= tm0 >> Simd::splat(8); // TinyMT64 update
+
+            x ^= x << Simd::splat(32); // TinyMT64++ output tempering
+
+            // TinyMT64 update
             let t_out =
                 ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
-            let x_out = rotl(xr0 + xr1, 17) + xr0;
+
+            x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
             let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_lo + i_hi);
-
-            // Xoroshiro++ update
-            let t = xr0 ^ xr1;
-            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16));
-            xr1 = rotl(t, 37);
-
-            // TinyMT64 update
-            let mask = (x & Simd::splat(1)).wrapping_neg();
-            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1));
-            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2));
-
-            // LCG update
-            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // ← only AVX2-dispatched op
-            let carry: Simd64 = next_w_lo.simd_lt(w_lo).to_simd().cast();
-            w_lo = next_w_lo;
-            w_hi += high_product + i_hi; // Port 1
-            // subtracting u64::MAX = adding 1
-            w_hi -= carry;
-
-            // Final output
-            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
+            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
+            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
+            let carry: Simd64 = next_w_lo.simd_lt(w_lo).to_simd().cast(); // LCG update
+            let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
+            let t = xr0 ^ xr1; // Xoroshiro++ update
+            w_lo = next_w_lo; // LCG update
+            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
+            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16)); // Xoroshiro++ update
+            w_hi += high_product + i_hi; // LCG update
+            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
+            xr1 = rotl(t, 37); // Xoroshiro++ update
+            w_hi -= carry; // LCG update: subtracting u64::MAX = adding 1
         }
 
         self.xr0 = xr0;
