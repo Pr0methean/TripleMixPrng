@@ -12,20 +12,26 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ci-${{ (github.ref == 'refs/heads/master' && github.sha) || (github.event_name == 'pull_request' && github.head_ref) || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   unit-tests:
-
-    runs-on: ubuntu-latest
-
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # FIXME: Add macos-latest once https://github.com/bluss/matrixmultiply/issues/97 is fixed
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
+      fail-fast: false
     steps:
     - uses: actions/checkout@v6
-    - name: Install libtss-sys1 (Ubuntu x86)
-      run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Build
       run: cargo +nightly build --verbose --tests
     - name: Run tests
       run: cargo +nightly test --verbose
   benchmarks:
+    needs: unit-tests
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

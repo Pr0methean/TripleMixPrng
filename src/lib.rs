@@ -550,51 +550,64 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
 
     // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
     // too weak.
-    let first_mix_with_i_hi = FEISTEL_CONSTANT_1 + rotl(i, MIXING_ROTATION_00);
-    let second_mix_with_i_hi = FEISTEL_CONSTANT_2 ^ i;
-
-    // Round 1 (ARX, local): 4 xor, 4 add/sub, 3 rotl
-    // ------------------------------------------
-    let l0_1 = (w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02)) ^ first_mix_with_i_hi;
+    let rotated_i = rotl(i, MIXING_ROTATION_00);
+    let wx = w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02);
+    let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
+    let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
+    let l0_1 = wx ^ i_mix_1;
+    let wx_rotated = rotl(wx, MIXING_ROTATION_01);
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
-    let r0_1 = (t ^ rotl(second_mix_with_i_hi ^ l0_1, MIXING_ROTATION_01)) + w_lo;
 
     // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
     // ----------------------------------------------------------
-    let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
+    let r0_1 = (t + i_mix_0) ^ wx_rotated;
     let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
     let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
+    let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
+    let tl1 = t - l1_1; // last use of t
+    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
+    let sl0l1 = sl0_1 - tl1; // last use of tl1
+    let r1_2 = l1_1 + sl0l0; // last use of l1_1 and sl0l0
+    let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
+    let l1_2 = sl0l1 ^ sr0_1;
 
-    let l0_2 = sl0_1 ^ rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let l1_2 = sr0_1 - t + (l1_1 ^ sl0_1);
-    let r0_2 = sl1_1 ^ rotl(x_in + sr0_1, MIXING_ROTATION_07);
-    let r1_2 = l1_1 + rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
+    let r1r = r1_2 >> MIXING_ROTATION_10;
+    let r0_2 = sl1_1 ^ sr01r;
+    let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
+    let x = r0_2 ^ r1r; // last use of r1r
+    let l0_2 = sl0_1 ^ r0sl1;
+    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12); // Bottleneck!
 
     // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
     // -------------------------------------------------------------------
-    let x = r0_2 ^ (r1_2 >> MIXING_ROTATION_10);
-    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12);
-    let m = simd_mul(x, y);
+    let m = simd_mul(x, y); // RAW: y
+    let n = x ^ (y >> MIXING_ROTATION_14); // Bottleneck?
+    let mr = rotl(m, MIXING_ROTATION_13);
+    let l1_3 = r1_2 + n;
+    let l0_3 = r0_2 ^ mr;
+    let r1_3_partial = l1_2 ^ n;
+    let r0_3_partial = l0_2 + (n >> MIXING_ROTATION_16);
+    let r1_3 = r1_3_partial ^ m;
+    let r0_3 = r0_3_partial + mr;
 
-    let m1 = rotl(m, MIXING_ROTATION_13);
-    let m2 = m ^ (m >> MIXING_ROTATION_14);
-
-    // asymmetric feedback (no duplicated structure)
-    let l0_3 = r0_2 ^ m1;
-    let l1_3 = r1_2 + m2;
-    let r0_3 = l0_2 + m1 + (m2 >> MIXING_ROTATION_16); // carry injection
-    let r1_3 = l1_2 ^ m1 ^ m2;
+    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
+    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
+    let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
+    let r0l0l1 = l0_3 ^ tl1r0;
 
     // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
-    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-    let t0 = (sl0_3 + r1_3) ^ (l0_3 - l1_3); // strong carry interaction
-    let t1 = (r0_3 ^ tl1r0) + ((sl0_3 - r1_3) << MIXING_ROTATION_19);
-    let t2 = t0 + t1;
-    let t3 = (t1 ^ sl0_3) ^ rotl(t0, MIXING_ROTATION_21);
-    let out0 = t2 ^ (t3 >> MIXING_ROTATION_22);
-    let out1 = t3 + (out0 << MIXING_ROTATION_23);
+    let t0 = sl0_3 + r1l0l1;
+    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
+    let t1 = r0l0l1 + sl0r1r;
+    let rot_t0 = rotl(t0, MIXING_ROTATION_21);
+    let t2 = t0 + t1; // bottleneck!
+    let t1t0 = t1 ^ rot_t0;
+    let t2_shift = t2 << MIXING_ROTATION_23;
+    let t3 = sl0_3 ^ t1t0; // bottleneck!
+    let out1 = t3 + t2_shift;
+    let t3_shift = t3 >> MIXING_ROTATION_22;
+    let out0 = t2 ^ t3_shift;
 
     (out0, out1)
 }
@@ -620,6 +633,7 @@ const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 #[cfg(feature = "no_std")]
 macro_rules! once_kmac {
     ($domain:expr) => {
+        extern crate alloc;
         static INSTANCE: once_cell::race::OnceBox<Kmac> = once_cell::race::OnceBox::new();
         return INSTANCE
             .get_or_init(|| alloc::boxed::Box::new(Kmac::v256($domain, &[])))
@@ -888,7 +902,7 @@ impl<R: Reproducibility> SeedableRng for TripleMixPrng<R> {
     type Seed = GenericArray<u8, U<{ SEED_SIZE }>>;
 
     #[inline(always)]
-    fn from_seed(seed: Self::Seed) -> Self {
+    fn from_seed(seed: GenericArray<u8, U<{ SEED_SIZE }>>) -> Self {
         Self::from(&seed)
     }
 
@@ -1091,18 +1105,18 @@ impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
     type Error = Infallible;
 
     #[inline(always)]
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
         let next_u64 = self.try_next_u64()?;
         Ok((next_u64 >> 32 ^ next_u64) as u32)
     }
 
     #[inline(always)]
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
         Ok(self.block_core.next_word())
     }
 
     #[inline(always)]
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Infallible> {
         R::fill_bytes(&mut self.block_core, dst);
         Ok(())
     }
@@ -1583,7 +1597,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "58B75412CFEBA5F89F3F3867FA73EA8DF9DDD18077C3037CD58C62CA46A67499DDAA093319471197A5F3DD023631283D39E2D6B5CA22CE25D6F6F2F37CB415D9D71567C41941AA026D62610E77BDFDBE467A89BF7078CDDE12FB441735430B7888FFF175655A8C7D38E2DA4484AB17BFFF73B0F1624BA1ECBB7DF7250CB038C737270C71E46336DC2F30BB98E756F632493517FE965DD0229EFD4281CBA92C4201553A14DB3E9280A6E74B630C6F39FA0C71F44A9984287654B26BF7B918839230798A55CA2DE8C0D45E920CDDACDECD6B47A11670ED700BF5EBC55CA6131AC1F5B2072CFA9E584B73E9111DEBB55D435A80F06E9E886DF0C20EE4DE6D64E3FD";
+        let expected = "0E66A1E4F20EF926A54F73201D9951B569843CA27C71279DDC8D772222283CC6AE2BBC545687954F0116E313B85EAE89ACE431B0E3B6663F5812EDF11AD8AD0CE59C0DA58A9CD96D779A1616D3B564654BDBCC4B6CBF3E0668EABC1EF4CB3648DB77B065DA3C2FF649F1CFF43146B109E77C8FDA8B4D386887D25C9CE6A16F8443D2783B6839D06AECE0E43ACA95A49051931DBD75D8F4606F62277FDD7439E218FEAFE671F4EC30E131F45E4F7CB99BEC21EE817E11D7EB6222B78CEBABAF1CF3A3B92037E96C521BB4E87CD723F24D9B18EC247BB437F428F2EEF5168A095701262B43469A6C2EE1F86B9C98C5D4707E33736736B4DDA73A5195E9212B9143";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
