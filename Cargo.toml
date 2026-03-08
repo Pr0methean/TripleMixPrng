@@ -46,5 +46,8 @@ gf2 = "2.1.0"
 itertools = "0.14.0"
 aws-lc-rs = "1.16"
 
+[patch]
+matrixmultiply = { version = "=0.3.9" }
+
 [target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dev-dependencies]
 criterion-cycles-per-byte = "0.8"
