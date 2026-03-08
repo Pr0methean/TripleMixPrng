@@ -1,7 +1,7 @@
 [package]
 name = "rand_triplemix"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "Apache-2.0"
 description = "Pseudorandom number generator that's faster than ChaCha12Rng and has a 1.99*2<sup>382</sup>-block period"
 
@@ -38,8 +38,8 @@ codegen-units = 1
 opt-level = 3
 
 [dev-dependencies]
-hypors = "0.3.0"
-statrs = "0.18.0"
+hypors = ">=0.2.2,<0.3"
+statrs = ">=0.16.0,<0.18"
 criterion = "0.8"
 rand = "0.10.0"
 gf2 = "2.1.0"
