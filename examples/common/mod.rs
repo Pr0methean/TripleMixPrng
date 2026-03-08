@@ -23,24 +23,6 @@ pub fn get_random_seed() -> [u8; 256] {
             } else {
                 eprintln!("RDSEED failed.");
             }
-            #[cfg(all(unix, target_arch = "x86_64"))]
-            if !seeded
-                && let Ok(mut ctx) = tss_esapi::Context::new_with_tabrmd(
-                    tss_esapi::tcti_ldr::TabrmdConfig::default(),
-                )
-                .or_else(|_| {
-                    tss_esapi::Context::new(tss_esapi::Tcti::Device(
-                        tss_esapi::tcti_ldr::DeviceConfig::default(),
-                    ))
-                })
-                && let Ok(random) = ctx.get_random(OS_ENTROPY_BYTES)
-            {
-                chunk.copy_from_slice(&random);
-                eprintln!("Generated a seed chunk using TPM GetRandom");
-                seeded = true;
-            } else {
-                eprintln!("TPM GetRandom failed.");
-            }
         }
         if !seeded {
             if index.is_multiple_of(2) {
@@ -49,6 +31,9 @@ pub fn get_random_seed() -> [u8; 256] {
             } else {
                 SystemRandom::default().fill(chunk).unwrap();
                 eprintln!("Generated a seed chunk using aws-lc");
+            }
+            #[allow(unused_assignments)] {
+                seeded = true;
             }
             thread::yield_now();
         }
