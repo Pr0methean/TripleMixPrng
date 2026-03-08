@@ -243,6 +243,7 @@ impl TripleMixSimdCore {
         let mut w_hi = self.weyl_hi;
         let i_lo = self.inc_lo;
         let i_hi = self.inc_hi;
+        let i_mixed = i_lo + i_hi;
 
         for block in blocks {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
@@ -273,7 +274,7 @@ impl TripleMixSimdCore {
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
-            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_lo + i_hi);
+            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_mixed);
             let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
