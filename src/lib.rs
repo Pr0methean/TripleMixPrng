@@ -254,17 +254,11 @@ impl TripleMixSimdCore {
             let next_w_lo = w_lo + i_lo;
 
             let mut x = tm0 ^ tm1; // TinyMT64 update
-
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
-
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
-
             let mut ty = tm0 + tm1; // TinyMT64 update
-
             x ^= x >> Simd::splat(32); // TinyMT64 output tempering
-
             ty ^= tm0 >> Simd::splat(8); // TinyMT64 update
-
             x ^= x << Simd::splat(32); // TinyMT64++ output tempering
 
             // TinyMT64 update
