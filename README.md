@@ -31,7 +31,7 @@ The PRNG has the following properties:
   https://github.com/Pr0methean/EntroPy) are:
   | Entropy measure   | Value (bits/byte)     |
   |-------------------|-----------------------|
-  | 0th-order H0      | 7.999 999 991 000 918 |
-  | 1st-order H1\|0   | 7.999 997 257 735 001 |
-  | 2nd-order H2\|1,0 | 7.999 297 968 590 858 |
+  | 0th-order H0      | 7.999 999 989 156 823 |
+  | 1st-order H1\|0   | 7.999 997 269 145 100 |
+  | 2nd-order H2\|1,0 | 7.999 297 889 304 314 |
 * Passes PractRand 0.96 for at least 32 TiB (tested with 10 seeds).

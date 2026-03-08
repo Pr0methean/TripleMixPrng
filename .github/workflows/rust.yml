@@ -31,10 +31,9 @@ jobs:
         egress-policy: audit
 
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-    - name: Build
-      run: cargo +nightly build --verbose --tests
     - name: Run tests
       run: cargo +nightly test --verbose
+      timeout-minutes: 20
   benchmarks:
     needs: unit-tests
     runs-on: ${{ matrix.os }}
@@ -58,6 +57,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Run benchmarks
       run: cargo +nightly bench -- --output-format bencher | tee bench-output.txt
+      timeout-minutes: 20
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
       with:
