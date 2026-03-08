@@ -251,8 +251,8 @@ impl TripleMixSimdCore {
             // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
             // NB: w_lo is updated in the output but w_hi isn't, so the output is permuted compared
             // to a standard LCG!
-            let next_w_lo = w_lo + i_lo;
-
+            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
+            let next_w_lo = w_lo + i_lo; // LCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
@@ -269,17 +269,17 @@ impl TripleMixSimdCore {
 
             // Mixing
             let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_mixed);
-            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
-            let carry: Simd64 = next_w_lo.simd_lt(w_lo).to_simd().cast(); // LCG update
             let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
             let t = xr0 ^ xr1; // Xoroshiro++ update
-            w_lo = next_w_lo; // LCG update
+            let carry: Simd64 = next_w_lo.simd_lt(w_lo).to_simd().cast(); // LCG update
             tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
+            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
             xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16)); // Xoroshiro++ update
             w_hi += high_product + i_hi; // LCG update
-            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
+
+            w_lo = next_w_lo; // LCG update
             xr1 = rotl(t, 37); // Xoroshiro++ update
             w_hi -= carry; // LCG update: subtracting u64::MAX = adding 1
         }
