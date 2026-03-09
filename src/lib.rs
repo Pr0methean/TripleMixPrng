@@ -1165,15 +1165,21 @@ mod tests {
 
     #[test]
     pub fn test_mix_matrix() {
-        let mut random_inputs = [Simd64::splat(0); 5];
+        let mut random_inputs = [[Simd64::splat(0); 5]; 5];
         let mut seed_rng = rng();
-        for cell in random_inputs.iter_mut() {
-            seed_rng.fill(cell.as_mut_array());
+        for input in random_inputs.iter_mut() {
+            for cell in input.iter_mut() {
+                seed_rng.fill(cell.as_mut_array());
+            }
         }
         let mix_inputs = [
             [Simd64::splat(0); 5],
             [Simd64::splat(u64::MAX); 5],
-            random_inputs,
+            random_inputs[0],
+            random_inputs[1],
+            random_inputs[2],
+            random_inputs[3],
+            random_inputs[4],
         ];
         for base_input in mix_inputs {
             let (base_out0, base_out1) = mix(
