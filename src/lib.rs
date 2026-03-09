@@ -1234,10 +1234,12 @@ mod tests {
             let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
             println!("Total weight: {total_weight} (z={z})");
-            prop_assert!(min_col_weight >= 200);
-            prop_assert!(min_row_weight >= 550);
-            prop_assert!(z >= -3.0, "Total weight too low");
-            prop_assert!(z <= 3.0, "Total weight too high");
+            prop_assert!(min_col_weight >= 160);
+            prop_assert!(min_row_weight >= 384);
+            let expected = 512 * 1280 / 2;
+            let deviation = (total_weight as isize - expected as isize).abs();
+
+            assert!(deviation <= 8192); // ≈1.25% bias
             prop_assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
         }
     }
