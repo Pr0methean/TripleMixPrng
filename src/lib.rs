@@ -510,7 +510,6 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
     // no pairs that sum to 64 are used.
     const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_10: u64 = 9;
     const MIXING_ROTATION_07: u64 = 11;
     const MIXING_ROTATION_19: u64 = 13;
     const MIXING_ROTATION_02: u64 = 14;
@@ -524,7 +523,6 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     const MIXING_ROTATION_01: u64 = 41;
     const MIXING_ROTATION_21: u64 = 43;
     const MIXING_ROTATION_09: u64 = 44;
-    const MIXING_ROTATION_22: u64 = 49;
     const MIXING_ROTATION_18: u64 = 54;
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
@@ -565,10 +563,9 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
     let l1_2 = sl0l1 ^ sr0_1;
 
-    let r1r = r1_2 >> MIXING_ROTATION_10;
     let r0_2 = sl1_1 ^ sr01r;
     let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let x = r0_2 ^ r1r; // last use of r1r
+    let x = r0_2 ^ r1_2;
     let l0_2 = sl0_1 ^ r0sl1;
     let y = l0_2 + (l1_2 >> MIXING_ROTATION_12); // Bottleneck!
 
@@ -595,13 +592,12 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
     let t1 = r0l0l1 + sl0r1r;
     let rot_t0 = rotl(t0, MIXING_ROTATION_21);
-    let t2 = t0 + t1; // bottleneck!
+    let t2 = t0 + t1;
     let t1t0 = t1 ^ rot_t0;
+    let t3 = sl0_3 + t1t0;
     let t2_shift = t2 << MIXING_ROTATION_23;
-    let t3 = sl0_3 ^ t1t0; // bottleneck!
+    let out0 = t2 ^ t3;
     let out1 = t3 + t2_shift;
-    let t3_shift = t3 >> MIXING_ROTATION_22;
-    let out0 = t2 ^ t3_shift;
 
     (out0, out1)
 }
