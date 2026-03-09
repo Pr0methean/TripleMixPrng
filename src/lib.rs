@@ -508,20 +508,8 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
-    // no pairs that sum to 64 are used.
-    const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_02: u64 = 13;
-    const MIXING_ROTATION_14: u64 = 17;
-    const MIXING_ROTATION_13: u64 = 19;
+    // no pairs that sum to 64 are used
     const MIXING_ROTATION_00: u64 = 32;
-    const MIXING_ROTATION_05: u64 = 29;
-    const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 26;
-    const MIXING_ROTATION_01: u64 = 41;
-    const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 55;
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
@@ -541,62 +529,45 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Round 1: 3 xor, 4 add/sub, 4 rotl
     // ---------------------------------
     let rotated_i = rotl(i, MIXING_ROTATION_00);
-    let wx = w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02);
     let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
     let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
-    let l0_1 = wx ^ i_mix_1;
-    let wx_rotated = rotl(wx, MIXING_ROTATION_01);
-    let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
 
+    let mut a = w_lo + x_in;
+    let mut b = t + i_mix_0;
+    let mut c = x_in ^ i_mix_1;
+    let mut d = w_hi ^ t;
+
+    macro_rules! cha_cha_quarter_round {
+        () => {
+            a += b; d ^= a; d = rotl(d,16);
+            c += d; b ^= c; b = rotl(b,12);
+            a += b; d ^= a; d = rotl(d,8);
+            c += d; b ^= c; b = rotl(b,7);
+        };
+    }
+
+    cha_cha_quarter_round!();
     // Round 2 (cross-lane): 5 xor, 8 add/sub, 4 rotl, 1 shift, 3 simd_swizzle
     // -------------------------------------------------------------------
-    let r0_1 = (t + i_mix_0) ^ wx_rotated;
-    let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
-    let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
-    let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
-    let tl1 = t - l1_1; // last use of t
-    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
-    let sl0l1 = sl0_1 + tl1; // last use of tl1
-    let r1_2 = l1_1 + sl0l0; // last use of l1_1 and sl0l0
-    let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
-    let l1_2 = sl0l1 ^ sr0_1;
-    let r0_2 = sl1_1 ^ sr01r;
-    let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let x = r0_2 - r1_2;
-    let l0_2 = sl0_1 ^ r0sl1;
-    let y = l0_2 - (l1_2 >> MIXING_ROTATION_12);
+    let ar = simd_swizzle!(a, [3, 0, 1, 2]);
+    let br = simd_swizzle!(b, [1, 2, 3, 0]);
+    let cr = simd_swizzle!(c, [2, 3, 0, 1]);
+    let dr = simd_swizzle!(d, [2, 3, 1, 0]);
+    cha_cha_quarter_round!();
+    b ^= cr; d += ar;
+    c += dr; a ^= br;
+    let m = simd_mul(a + b, c + d);
+    cha_cha_quarter_round!();
+    c ^= m; a += rotl(m, 17);
+    b += m; d ^= rotl(m, 41);
+    cha_cha_quarter_round!();
+    let mut x = a + c;
+    let mut y = b + d;
 
-    // Round 3 (nonlinear core): 7 xor, 5 add/sub, 3 rotl, 1 simd_mul, 1 simd_swizzle
-    // ------------------------------------------------------------------------------
-    let m = simd_mul(x, y); // RAW: y
-    let n = x ^ rotl(y, MIXING_ROTATION_14); // Bottleneck?
-    let mr = rotl(m, MIXING_ROTATION_13);
-    let l1_3 = r1_2 + n;
-    let l0_3 = r0_2 + mr;
-    let r1_3_partial = l1_2 ^ n;
-    let r0_3_partial = l0_2 ^ (n - mr);
-    let r1_3 = r1_3_partial ^ m;
-    let r0_3 = r0_3_partial ^ mr;
+    x ^= rotl(y, 17);
+    y ^= rotl(x, 41);
 
-    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-    let r1l0r0 = r1_3 ^ (r0_3 - l0_3);
-    let r0l0l1 = l0_3 - tl1r0;
-
-    // Round 4 (transport & output): 4 xor, 4 add/sub, 1 shift, 1 rotl
-    // ---------------------------------------------------------------
-    let sl0r1 = r1_3 ^ sl0_3;
-    let t0 = r1l0r0 ^ sl0_3;
-    let t1 = r0l0l1 + sl0r1;
-    let rot_t0 = rotl(t0, MIXING_ROTATION_21);
-    let t2 = t0 + t1; // bottleneck!
-    let t1t0 = t1 ^ rot_t0;
-    let t3 = sl0_3 - t1t0;
-    let t2_shift = t2 << MIXING_ROTATION_23;
-    let out0 = t2 ^ t3;
-    let out1 = t3 + t2_shift;
-
-    (out0, out1)
+    (x, y)
 }
 
 /// Instances must not be used again after being zeroized.
@@ -1236,6 +1207,7 @@ mod tests {
             println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
         }
         let total_weight = row_weights.into_iter().sum::<usize>();
+        println!("Total weight: {total_weight}");
         MixMatrixStats { total_weight, min_row_weight, min_col_weight }
     }
 
@@ -1607,7 +1579,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "FEE43D2D32DE7E2582B5492A515D9CB5A46999CEF38F7EC06C77BC8BA6EF1892B52E0B1676521F99BDABB8E8AA8188F532B44C9A356CF2B39F8195F67D1B7B616AE5AF4849445CA9831230A71D764C8AD3629E8A0C73BEE43EE25C1F33005908C9736E358025A63D0B07865FEDEE916FF75B425B56EA91C654C22B74E15CF483359A0C929D5F3750859085F0F8C39868B2BE0CC1964F0E3563DCA951BD59C087FE7D7A92A3E28C7CD2B2433C3764B9047E4E64C34737DEA5597728AC0C16F88B16A03B4D140AA1C458129F4A40AA173EE59A9462CA3EDC5D245A848C99EC75C819ED342A30F1DCE0DCE5B67E5D84901783E33799AD3A631E8B3E52B6545119B8";
+        let expected = "98C6C5F32E97CFE38E590A903AB4E92F3B982F8CA0712444BC224E828A719937DD4682072D55D55D4F3B7B3EF3CCC062C0B7A0096F4B72FC502746C5754ED16C0C982D4FBD48431BBDC883C252AD176B908346082F94872931DB6C34FE43035DBAA9ABA92DA0C9562C14887B991199F93BBB65E790B897D6DC17989D004E67FE67B8E32AFB205F8AE603E759D8D623823E9A85F2B7F417AE16E3BA2EF3E7FBD03B801A50C44FEB51D983020BB9DD2BCD4CCC192347F01B84A49F64EBCF7E572E104F13E7D8424815964D85B2B915306A992A6B136AEFEAA85E5F5D9355C597BA1EF6AD03917C5ADF20F7246724FA64EFAFFDB236FAE8ACC811DAC3EA5A761FC7";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
