@@ -543,8 +543,8 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // too weak.
     let rotated_i = rotl(i, MIXING_ROTATION_00);
     let wx = w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02);
-    let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
     let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
+    let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
     let l0_1 = wx ^ i_mix_1;
     let wx_rotated = rotl(wx, MIXING_ROTATION_01);
     let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
