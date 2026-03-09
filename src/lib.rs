@@ -537,30 +537,37 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let mut c = x_in ^ i_mix_1;
     let mut d = w_hi ^ t;
 
-    macro_rules! cha_cha_quarter_round {
+    macro_rules! cha_cha_first_half_round {
         () => {
             a += b; d ^= a; d = rotl(d,16);
             c += d; b ^= c; b = rotl(b,12);
+        };
+    }
+
+    macro_rules! cha_cha_second_half_round {
+        () => {
             a += b; d ^= a; d = rotl(d,8);
             c += d; b ^= c; b = rotl(b,7);
         };
     }
 
-    cha_cha_quarter_round!();
+    cha_cha_first_half_round!();
+    cha_cha_second_half_round!();
     // Round 2 (cross-lane): 5 xor, 8 add/sub, 4 rotl, 1 shift, 3 simd_swizzle
     // -------------------------------------------------------------------
     let ar = simd_swizzle!(a, [3, 0, 1, 2]);
     let br = simd_swizzle!(b, [1, 2, 3, 0]);
     let cr = simd_swizzle!(c, [2, 3, 0, 1]);
     let dr = simd_swizzle!(d, [2, 3, 1, 0]);
-    cha_cha_quarter_round!();
+    cha_cha_first_half_round!();
     b ^= cr; d += ar;
     c += dr; a ^= br;
     let m = simd_mul(a + b, c + d);
-    cha_cha_quarter_round!();
+    cha_cha_second_half_round!();
     c ^= m; a += rotl(m, 17);
     b += m; d ^= rotl(m, 41);
-    cha_cha_quarter_round!();
+    cha_cha_first_half_round!();
+    cha_cha_second_half_round!();
     let mut x = a + c;
     let mut y = b + d;
 
@@ -1579,7 +1586,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "98C6C5F32E97CFE38E590A903AB4E92F3B982F8CA0712444BC224E828A719937DD4682072D55D55D4F3B7B3EF3CCC062C0B7A0096F4B72FC502746C5754ED16C0C982D4FBD48431BBDC883C252AD176B908346082F94872931DB6C34FE43035DBAA9ABA92DA0C9562C14887B991199F93BBB65E790B897D6DC17989D004E67FE67B8E32AFB205F8AE603E759D8D623823E9A85F2B7F417AE16E3BA2EF3E7FBD03B801A50C44FEB51D983020BB9DD2BCD4CCC192347F01B84A49F64EBCF7E572E104F13E7D8424815964D85B2B915306A992A6B136AEFEAA85E5F5D9355C597BA1EF6AD03917C5ADF20F7246724FA64EFAFFDB236FAE8ACC811DAC3EA5A761FC7";
+        let expected = "E1BED8163158C43A9A8E5319DFB134657A5F2C47002056F4FAF309FDC7CF1894D853EBFED84ADBCEE7FB851417930A2DEB803DBAEBD7B00F0298E6586C2230E58E2202EFA3CDAC93C9B8AFA45223C755A2E70D3E308703BF2AE30FC0C67983FB8BEF069126610B97AD08241311455D4223382B28ED53E7749FB3C21A34C6060DCCD2F0FAED120D27BD695DFC5B9A15AE63755A86866474FFB40D5AA1B8B784E30F5E56D3F5FA4E2D6DC3F5188C800040C537E399FFC8993BD468E858C650D20E78B5DD991D120AD3F935130D1EA4EF4D53E683DB71E912295F9BC46E56CE2198EDFAD57F661EC23431B40DDAE56FEBDFA323D69D3DF5F6ECC0DE50937163CED2";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
