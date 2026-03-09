@@ -1130,7 +1130,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
-    use proptest::{prop_assert, prop_assert_eq, proptest};
+    use proptest::{prop_assert, proptest};
     use rand::rngs::SysRng;
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
@@ -1157,90 +1157,115 @@ mod tests {
         );
     }
 
-    proptest! {
-        #[test]
-        fn test_mix_matrix(mix_input: [u64; 20]) {
-            let base_input = [Simd::from_slice(&mix_input[0..4]),
-                Simd::from_slice(&mix_input[4..8]),
-                Simd::from_slice(&mix_input[8..12]),
-                Simd::from_slice(&mix_input[12..16]),
-                Simd::from_slice(&mix_input[16..20])];
-            let (base_out0, base_out1) = mix(
-                base_input[0],
-                base_input[1],
-                base_input[2],
-                base_input[3],
-                base_input[4],
-            );
-            let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
-            let mut i = 0;
-            for variable_idx in 0..5 {
-                for lane_idx in 0..SIMD_WIDTH {
-                    for bit_idx in 0..64 {
-                        let mut modified_input = base_input.clone();
-                        modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
-                        let (mod_out0, mod_out1) = mix(
-                            modified_input[0],
-                            modified_input[1],
-                            modified_input[2],
-                            modified_input[3],
-                            modified_input[4],
-                        );
-                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                        let mut j = 0;
-                        for out_lane_idx in 0..SIMD_WIDTH {
-                            for out_bit_idx in 0..64 {
-                                xor_matrix.set(
-                                    j,
-                                    i,
-                                    (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                                );
-                                j += 1;
-                            }
-                            for out_bit_idx in 0..64 {
-                                xor_matrix.set(
-                                    j,
-                                    i,
-                                    (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                                );
-                                j += 1;
-                            }
+    struct MixMatrixStats {
+        total_weight: usize,
+        min_row_weight: usize,
+        min_col_weight: usize,
+    }
+
+    fn evaluate_mix_matrix(mix_input: [u64; 20]) -> MixMatrixStats {
+        let base_input = [Simd::from_slice(&mix_input[0..4]),
+            Simd::from_slice(&mix_input[4..8]),
+            Simd::from_slice(&mix_input[8..12]),
+            Simd::from_slice(&mix_input[12..16]),
+            Simd::from_slice(&mix_input[16..20])];
+        let (base_out0, base_out1) = mix(
+            base_input[0],
+            base_input[1],
+            base_input[2],
+            base_input[3],
+            base_input[4],
+        );
+        let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
+        let mut i = 0;
+        for variable_idx in 0..5 {
+            for lane_idx in 0..SIMD_WIDTH {
+                for bit_idx in 0..64 {
+                    let mut modified_input = base_input.clone();
+                    modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
+                    let (mod_out0, mod_out1) = mix(
+                        modified_input[0],
+                        modified_input[1],
+                        modified_input[2],
+                        modified_input[3],
+                        modified_input[4],
+                    );
+                    let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                    let mut j = 0;
+                    for out_lane_idx in 0..SIMD_WIDTH {
+                        for out_bit_idx in 0..64 {
+                            xor_matrix.set(
+                                j,
+                                i,
+                                (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                            );
+                            j += 1;
                         }
-                        i += 1;
+                        for out_bit_idx in 0..64 {
+                            xor_matrix.set(
+                                j,
+                                i,
+                                (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                            );
+                            j += 1;
+                        }
                     }
+                    i += 1;
                 }
             }
-            let row_weights = (0..512)
-                .map(|row| xor_matrix.row(row).count_ones())
-                .collect::<Vec<_>>();
-            let min_row_weight = row_weights.iter().copied().min().unwrap();
-            let max_row_weight = row_weights.iter().copied().max().unwrap();
-            let col_weights = (0..1280)
-                .map(|col| xor_matrix.col(col).count_ones())
-                .collect::<Vec<_>>();
-            let min_col_weight = col_weights.iter().copied().min().unwrap();
-            let max_col_weight = col_weights.iter().copied().max().unwrap();
-            println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
-            println!("Row weights:");
-            for row_chunk in row_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>());
-            }
-            println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
-            println!("Column weights:");
-            for col_chunk in col_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
-            }
-            let total_weight = row_weights.into_iter().sum::<usize>();
-            let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
-            let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
-            println!("Total weight: {total_weight} (z={z})");
+        }
+        assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+        let row_weights = (0..512)
+            .map(|row| xor_matrix.row(row).count_ones())
+            .collect::<Vec<_>>();
+        let min_row_weight = row_weights.iter().copied().min().unwrap();
+        let max_row_weight = row_weights.iter().copied().max().unwrap();
+        let col_weights = (0..1280)
+            .map(|col| xor_matrix.col(col).count_ones())
+            .collect::<Vec<_>>();
+        let min_col_weight = col_weights.iter().copied().min().unwrap();
+        let max_col_weight = col_weights.iter().copied().max().unwrap();
+        println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
+        println!("Row weights:");
+        for row_chunk in row_weights.chunks_exact(64) {
+            println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>());
+        }
+        println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
+        println!("Column weights:");
+        for col_chunk in col_weights.chunks_exact(64) {
+            println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
+        }
+        let total_weight = row_weights.into_iter().sum::<usize>();
+        MixMatrixStats { total_weight, min_row_weight, min_col_weight }
+    }
+
+    proptest! {
+        #[test]
+        fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
+            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
+                evaluate_mix_matrix(mix_input);
             prop_assert!(min_col_weight >= 160);
             prop_assert!(min_row_weight >= 384);
             let expected = 512 * 1280 / 2;
             let deviation = (total_weight as isize - expected as isize).abs();
+            prop_assert!(deviation <= 8192); // ≈1.25% bias
+        }
+    }
 
-            assert!(deviation <= 8192); // ≈1.25% bias
-            prop_assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+    #[test]
+    fn test_mix_matrix_random_inputs() {
+        let mut rng = rng();
+        let mut mix_input = [0u64; 20];
+        let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
+        for _ in 0..5 {
+            rng.fill(&mut mix_input);
+            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
+                evaluate_mix_matrix(mix_input);
+            let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
+            assert!(min_col_weight >= 160, "Min column weight {min_col_weight} too low");
+            assert!(min_row_weight >= 384, "Min row weight {min_row_weight} too low");
+            assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
+            assert!(z <= 3.0, "Total weight {total_weight} (z={z}) too high");
         }
     }
 
