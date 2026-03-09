@@ -510,18 +510,22 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
     // no pairs that sum to 64 are used.
     const MIXING_ROTATION_12: u64 = 7;
+    const MIXING_ROTATION_10: u64 = 9;
     const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_02: u64 = 13;
+    const MIXING_ROTATION_19: u64 = 13;
+    const MIXING_ROTATION_02: u64 = 14;
     const MIXING_ROTATION_14: u64 = 17;
     const MIXING_ROTATION_13: u64 = 19;
-    const MIXING_ROTATION_00: u64 = 32;
-    const MIXING_ROTATION_05: u64 = 29;
+    const MIXING_ROTATION_00: u64 = 22;
+    const MIXING_ROTATION_05: u64 = 23;
+    const MIXING_ROTATION_16: u64 = 29;
     const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 26;
+    const MIXING_ROTATION_23: u64 = 39;
     const MIXING_ROTATION_01: u64 = 41;
     const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 55;
+    const MIXING_ROTATION_09: u64 = 44;
+    const MIXING_ROTATION_22: u64 = 49;
+    const MIXING_ROTATION_18: u64 = 54;
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
@@ -556,45 +560,48 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
     let tl1 = t - l1_1; // last use of t
     let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
-    let sl0l1 = sl0_1 + tl1; // last use of tl1
+    let sl0l1 = sl0_1 - tl1; // last use of tl1
     let r1_2 = l1_1 + sl0l0; // last use of l1_1 and sl0l0
     let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
     let l1_2 = sl0l1 ^ sr0_1;
+
+    let r1r = r1_2 >> MIXING_ROTATION_10;
     let r0_2 = sl1_1 ^ sr01r;
     let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let x = r0_2 - r1_2;
+    let x = r0_2 ^ r1r; // last use of r1r
     let l0_2 = sl0_1 ^ r0sl1;
-    let y = l0_2 - (l1_2 >> MIXING_ROTATION_12);
+    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12); // Bottleneck!
 
-    // Round 3 (nonlinear core): 7 xor, 5 add/sub, 3 rotl, 1 simd_mul, 1 simd_swizzle
-    // ------------------------------------------------------------------------------
+    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
+    // -------------------------------------------------------------------
     let m = simd_mul(x, y); // RAW: y
-    let n = x ^ rotl(y, MIXING_ROTATION_14); // Bottleneck?
+    let n = x ^ (y >> MIXING_ROTATION_14); // Bottleneck?
     let mr = rotl(m, MIXING_ROTATION_13);
     let l1_3 = r1_2 + n;
-    let l0_3 = r0_2 + mr;
+    let l0_3 = r0_2 ^ mr;
     let r1_3_partial = l1_2 ^ n;
-    let r0_3_partial = l0_2 ^ (n - mr);
+    let r0_3_partial = l0_2 + (n >> MIXING_ROTATION_16);
     let r1_3 = r1_3_partial ^ m;
-    let r0_3 = r0_3_partial ^ mr;
+    let r0_3 = r0_3_partial + mr;
 
     let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-    let r1l0r0 = r1_3 ^ (r0_3 - l0_3);
-    let r0l0l1 = l0_3 - tl1r0;
+    let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
+    let r0l0l1 = l0_3 ^ tl1r0;
 
-    // Round 4 (transport & output): 4 xor, 4 add/sub, 1 shift, 1 rotl
-    // ---------------------------------------------------------------
-    let sl0r1 = r1_3 ^ sl0_3;
-    let t0 = r1l0r0 ^ sl0_3;
-    let t1 = r0l0l1 + sl0r1;
+    // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
+    // --------------------------------------------------------------------------------
+    let t0 = sl0_3 + r1l0l1;
+    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
+    let t1 = r0l0l1 + sl0r1r;
     let rot_t0 = rotl(t0, MIXING_ROTATION_21);
     let t2 = t0 + t1; // bottleneck!
     let t1t0 = t1 ^ rot_t0;
-    let t3 = sl0_3 - t1t0;
     let t2_shift = t2 << MIXING_ROTATION_23;
-    let out0 = t2 ^ t3;
+    let t3 = sl0_3 ^ t1t0; // bottleneck!
     let out1 = t3 + t2_shift;
+    let t3_shift = t3 >> MIXING_ROTATION_22;
+    let out0 = t2 ^ t3_shift;
 
     (out0, out1)
 }
@@ -1181,7 +1188,7 @@ mod tests {
         for variable_idx in 0..5 {
             for lane_idx in 0..SIMD_WIDTH {
                 for bit_idx in 0..64 {
-                    let mut modified_input = base_input.clone();
+                    let mut modified_input = base_input;
                     modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
                     let (mod_out0, mod_out1) = mix(
                         modified_input[0],
@@ -1262,8 +1269,8 @@ mod tests {
             let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
                 evaluate_mix_matrix(mix_input);
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
-            assert!(min_col_weight >= 160, "Min column weight {min_col_weight} too low");
-            assert!(min_row_weight >= 384, "Min row weight {min_row_weight} too low");
+            assert!(min_col_weight >= 200, "Min column weight {min_col_weight} too low");
+            assert!(min_row_weight >= 550, "Min row weight {min_row_weight} too low");
             assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
             assert!(z <= 3.0, "Total weight {total_weight} (z={z}) too high");
         }
