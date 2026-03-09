@@ -574,7 +574,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let l1_3 = r1_2 + n;
     let l0_3 = r0_2 + mr;
     let r1_3_partial = l1_2 ^ n;
-    let r0_3_partial = l0_2 - (n ^ mr);
+    let r0_3_partial = l0_2 ^ (n - mr);
     let r1_3 = r1_3_partial ^ m;
     let r0_3 = r0_3_partial ^ mr;
 
