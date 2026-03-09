@@ -1171,11 +1171,11 @@ mod tests {
     }
 
     fn evaluate_mix_matrix(mix_input: [u64; 20]) -> MixMatrixStats {
-        let base_input = [Simd::from_slice(&mix_input[0..4]),
-            Simd::from_slice(&mix_input[4..8]),
-            Simd::from_slice(&mix_input[8..12]),
-            Simd::from_slice(&mix_input[12..16]),
-            Simd::from_slice(&mix_input[16..20])];
+        let base_input = [Simd::from_array(mix_input[0..4].try_into().unwrap()),
+            Simd::from_array(mix_input[4..8].try_into().unwrap()),
+            Simd::from_array(mix_input[8..12].try_into().unwrap()),
+            Simd::from_array(mix_input[12..16].try_into().unwrap()),
+            Simd::from_array(mix_input[16..20].try_into().unwrap())];
         let (base_out0, base_out1) = mix(
             base_input[0],
             base_input[1],
@@ -1189,7 +1189,7 @@ mod tests {
             for lane_idx in 0..SIMD_WIDTH {
                 for bit_idx in 0..64 {
                     let mut modified_input = base_input;
-                    modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
+                    modified_input[variable_idx][lane_idx] ^= 1u64 << bit_idx;
                     let (mod_out0, mod_out1) = mix(
                         modified_input[0],
                         modified_input[1],
@@ -1221,7 +1221,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+        assert_eq!(xor_matrix.clone().to_echelon_form().count_ones(), 512);
         let row_weights = (0..512)
             .map(|row| xor_matrix.row(row).count_ones())
             .collect::<Vec<_>>();
@@ -1246,19 +1246,6 @@ mod tests {
         MixMatrixStats { total_weight, min_row_weight, min_col_weight }
     }
 
-    proptest! {
-        #[test]
-        fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
-            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
-                evaluate_mix_matrix(mix_input);
-            prop_assert!(min_col_weight >= 160);
-            prop_assert!(min_row_weight >= 384);
-            let expected = 512 * 1280 / 2;
-            let deviation = (total_weight as isize - expected as isize).abs();
-            prop_assert!(deviation <= 8192); // ≈1.25% bias
-        }
-    }
-
     #[test]
     fn test_mix_matrix_random_inputs() {
         let mut rng = rng();
@@ -1273,6 +1260,19 @@ mod tests {
             assert!(min_row_weight >= 550, "Min row weight {min_row_weight} too low");
             assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
             assert!(z <= 3.0, "Total weight {total_weight} (z={z}) too high");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
+            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
+                evaluate_mix_matrix(mix_input);
+            prop_assert!(min_col_weight >= 160);
+            prop_assert!(min_row_weight >= 384);
+            let expected = 512 * 1280 / 2;
+            let deviation = (total_weight as isize - expected as isize).abs();
+            prop_assert!(deviation <= 8192); // ≈1.25% bias
         }
     }
 
