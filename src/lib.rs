@@ -560,6 +560,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     cha_cha_quarter_round!();
     c ^= m; a += rotl(m, 17);
     b += m; d ^= rotl(m, 41);
+    cha_cha_quarter_round!();
     let mut x = a + c;
     let mut y = b + d;
 
