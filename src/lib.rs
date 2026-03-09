@@ -516,8 +516,8 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     const MIXING_ROTATION_13: u64 = 19;
     const MIXING_ROTATION_23: u64 = 22;
     const MIXING_ROTATION_02: u64 = 23;
-    const MIXING_ROTATION_05: u64 = 29;
-    const MIXING_ROTATION_00: u64 = 33;
+    const MIXING_ROTATION_05: u64 = 25;
+    const MIXING_ROTATION_00: u64 = 32;
     const MIXING_ROTATION_03: u64 = 37;
     const MIXING_ROTATION_21: u64 = 41;
     const MIXING_ROTATION_01: u64 = 43;
@@ -576,7 +576,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let l1_3 = r1_2 + n;
     let l0_3 = r0_2 ^ mr;
     let r1_3_partial = l1_2 ^ n;
-    let r0_3_partial = l0_2 + (n ^ m);
+    let r0_3_partial = (n ^ m) - l0_2;
     let r1_3 = r1_3_partial ^ m;
     let r0_3 = r0_3_partial + mr;
 
