@@ -1130,6 +1130,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
+    use proptest::proptest;
     use rand::rngs::SysRng;
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
@@ -1156,19 +1157,14 @@ mod tests {
         );
     }
 
-    #[test]
-    pub fn test_mix_matrix() {
-        let mut random_inputs = [Simd64::splat(0); 5];
-        let mut seed_rng = rng();
-        for cell in random_inputs.iter_mut() {
-            seed_rng.fill(cell.as_mut_array());
-        }
-        let mix_inputs = [
-            [Simd64::splat(0); 5],
-            [Simd64::splat(u64::MAX); 5],
-            random_inputs,
-        ];
-        for base_input in mix_inputs {
+    proptest! {
+        #[test]
+        fn test_mix_matrix(mix_input: [u64; 20]) {
+            let base_input = [Simd::from_slice(&mix_input[0..4]),
+                Simd::from_slice(&mix_input[4..8]),
+                Simd::from_slice(&mix_input[8..12]),
+                Simd::from_slice(&mix_input[12..16]),
+                Simd::from_slice(&mix_input[16..20])];
             let (base_out0, base_out1) = mix(
                 base_input[0],
                 base_input[1],
@@ -1181,7 +1177,7 @@ mod tests {
             for variable_idx in 0..5 {
                 for lane_idx in 0..SIMD_WIDTH {
                     for bit_idx in 0..64 {
-                        let mut modified_input = base_input;
+                        let mut modified_input = base_input.clone();
                         modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
                         let (mod_out0, mod_out1) = mix(
                             modified_input[0],
