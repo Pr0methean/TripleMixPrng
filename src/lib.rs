@@ -585,11 +585,11 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
     let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
     let r0l0l1 = l0_3 ^ tl1r0;
+    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
 
     // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
     // --------------------------------------------------------------------------------
     let t0 = sl0_3 + r1l0l1;
-    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
     let t1 = r0l0l1 + sl0r1r;
     let rot_t0 = rotl(t0, MIXING_ROTATION_21);
     let t2 = t0 + t1;
