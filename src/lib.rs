@@ -1130,7 +1130,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
-    use proptest::proptest;
+    use proptest::{prop_assert, prop_assert_eq, proptest};
     use rand::rngs::SysRng;
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
@@ -1234,11 +1234,11 @@ mod tests {
             let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
             println!("Total weight: {total_weight} (z={z})");
-            assert!(min_col_weight >= 200);
-            assert!(min_row_weight >= 550);
-            assert!(z >= -3.0, "Total weight too low");
-            assert!(z <= 3.0, "Total weight too high");
-            assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+            prop_assert!(min_col_weight >= 200);
+            prop_assert!(min_row_weight >= 550);
+            prop_assert!(z >= -3.0, "Total weight too low");
+            prop_assert!(z <= 3.0, "Total weight too high");
+            prop_assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
         }
     }
 
