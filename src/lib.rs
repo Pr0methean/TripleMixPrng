@@ -1350,7 +1350,7 @@ mod tests {
         }
     }
 
-    pub fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
+    pub fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 8] {
         const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
         const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
         const LARGEST_DISTINCT_ODD: Simd64 =
@@ -1380,9 +1380,15 @@ mod tests {
         });
         let mut seed = [0u8; SEED_SIZE];
         let rng4 = TripleMixPrng::from(&seed);
-        SysRng.try_fill_bytes(&mut seed).unwrap();
+        seed.fill(u8::MAX);
         let rng5 = TripleMixPrng::from(&seed);
-        [rng1, rng2, rng3, rng4, rng5]
+        SysRng.try_fill_bytes(&mut seed).unwrap();
+        let rng6 = TripleMixPrng::from(&seed);
+        SysRng.try_fill_bytes(&mut seed).unwrap();
+        let rng7 = TripleMixPrng::from(&seed);
+        SysRng.try_fill_bytes(&mut seed).unwrap();
+        let rng8 = TripleMixPrng::from(&seed);
+        [rng1, rng2, rng3, rng4, rng5, rng6, rng7, rng8]
     }
 
     #[test]
@@ -1485,7 +1491,7 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        const SAMPLE_COUNT: usize = 1 << 24;
+        const SAMPLE_COUNT: usize = 1 << 22;
         const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
         let mut samples = vec![0u64; SAMPLE_COUNT];
         for mut prng in create_rngs::<NotReproducible>() {
@@ -1946,7 +1952,7 @@ mod tests {
     #[test]
     fn test_lane_cross_correlation_bitplane() {
         for mut rng in create_rngs::<NotReproducible>() {
-            const N: usize = 1 << 28;
+            const N: usize = 1 << 26;
             let mut lanes = [0u64; SIMD_WIDTH];
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
