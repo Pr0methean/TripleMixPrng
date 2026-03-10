@@ -562,6 +562,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let mut c = x_in ^ i_mix_1;
     let mut d = w_hi;
 
+    // First ChaCha round
     a += b; d ^= a; d = rotl16(d);
     c += d; b ^= c; b = rotl(b,12);
     a += b; d ^= a; d = rotl8(d);
