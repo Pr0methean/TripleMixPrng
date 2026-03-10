@@ -23,7 +23,6 @@ use rand_core::block::{BlockRng, Generator};
 use rand_core::{Rng, SeedableRng, TryRng};
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
 use typenum::U;
-use zeroize::Zeroize;
 // ============================================================================
 // Multiplication dispatch — the ONLY operation where AVX2 differs
 // ============================================================================
@@ -125,6 +124,7 @@ impl<R: Reproducibility> zeroize::Zeroize for TripleMixPrng<R> {
 #[cfg(feature = "zeroize")]
 impl<R: Reproducibility> Drop for TripleMixPrng<R> {
     fn drop(&mut self) {
+        use zeroize::Zeroize;
         self.zeroize();
     }
 }
