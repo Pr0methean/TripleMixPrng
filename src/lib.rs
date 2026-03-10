@@ -121,6 +121,14 @@ impl<R: Reproducibility> zeroize::Zeroize for TripleMixPrng<R> {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl<R: Reproducibility> Drop for TripleMixPrng<R> {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.zeroize();
+    }
+}
+
 #[cfg(feature = "serde")]
 impl<R: Reproducibility> serde::Serialize for TripleMixPrng<R> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
