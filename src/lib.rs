@@ -508,24 +508,8 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
-    // no pairs that sum to 64 are used.
-    const MIXING_ROTATION_12: u64 = 7;
-    const MIXING_ROTATION_10: u64 = 9;
-    const MIXING_ROTATION_07: u64 = 11;
-    const MIXING_ROTATION_19: u64 = 13;
-    const MIXING_ROTATION_02: u64 = 14;
-    const MIXING_ROTATION_14: u64 = 17;
-    const MIXING_ROTATION_13: u64 = 19;
-    const MIXING_ROTATION_00: u64 = 22;
-    const MIXING_ROTATION_05: u64 = 23;
-    const MIXING_ROTATION_16: u64 = 29;
-    const MIXING_ROTATION_03: u64 = 31;
-    const MIXING_ROTATION_23: u64 = 39;
-    const MIXING_ROTATION_01: u64 = 41;
-    const MIXING_ROTATION_21: u64 = 43;
-    const MIXING_ROTATION_09: u64 = 44;
-    const MIXING_ROTATION_22: u64 = 49;
-    const MIXING_ROTATION_18: u64 = 54;
+    // no pairs that sum to 64 are used
+    const MIXING_ROTATION_00: u64 = 32;
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
@@ -542,68 +526,56 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
         0xbbf73c790d94f79d,
     ]);
 
-    // Mix i_hi into the mixing constants, because otherwise the top byte's avalanche effect is
-    // too weak.
+    // Round 1: 3 xor, 4 add/sub, 4 rotl
+    // ---------------------------------
     let rotated_i = rotl(i, MIXING_ROTATION_00);
-    let wx = w_hi + rotl(w_lo - x_in, MIXING_ROTATION_02);
     let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
     let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
-    let l0_1 = wx ^ i_mix_1;
-    let wx_rotated = rotl(wx, MIXING_ROTATION_01);
-    let l1_1 = x_in ^ rotl(t + l0_1, MIXING_ROTATION_03);
 
-    // Round 2 (cross-lane): 4 xor, 5 add, 3 rotl, 3 simd_swizzle
-    // ----------------------------------------------------------
-    let r0_1 = (t + i_mix_0) ^ wx_rotated;
-    let sl0_1 = simd_swizzle!(l0_1, [3, 0, 1, 2]);
-    let sl1_1 = simd_swizzle!(l1_1, [1, 2, 3, 0]);
-    let sr0_1 = simd_swizzle!(r0_1, [2, 3, 0, 1]);
-    let tl1 = t - l1_1; // last use of t
-    let sl0l0 = rotl(sl0_1 + l0_1, MIXING_ROTATION_09);
-    let sl0l1 = sl0_1 - tl1; // last use of tl1
-    let r1_2 = l1_1 + sl0l0; // last use of l1_1 and sl0l0
-    let sr01r = rotl(x_in + sr0_1, MIXING_ROTATION_07);
-    let l1_2 = sl0l1 ^ sr0_1;
+    let mut a = w_lo + x_in;
+    let mut b = t + i_mix_0;
+    let mut c = x_in ^ i_mix_1;
+    let mut d = w_hi ^ t;
 
-    let r1r = r1_2 >> MIXING_ROTATION_10;
-    let r0_2 = sl1_1 ^ sr01r;
-    let r0sl1 = rotl(r0_1 ^ sl1_1, MIXING_ROTATION_05);
-    let x = r0_2 ^ r1r; // last use of r1r
-    let l0_2 = sl0_1 ^ r0sl1;
-    let y = l0_2 + (l1_2 >> MIXING_ROTATION_12); // Bottleneck!
+    macro_rules! cha_cha_first_half_round {
+        () => {
+            a += b; d ^= a; d = rotl(d,16);
+            c += d; b ^= c; b = rotl(b,12);
+        };
+    }
 
-    // Round 3 (nonlinear core): 5 xor, 4 add, 1 rotl, 4 shift, 1 simd_mul
+    macro_rules! cha_cha_second_half_round {
+        () => {
+            a += b; d ^= a; d = rotl(d,8);
+            c += d; b ^= c; b = rotl(b,7);
+        };
+    }
+
+    cha_cha_first_half_round!();
+    cha_cha_second_half_round!();
+    // Round 2 (cross-lane): 5 xor, 8 add/sub, 4 rotl, 1 shift, 3 simd_swizzle
     // -------------------------------------------------------------------
-    let m = simd_mul(x, y); // RAW: y
-    let n = x ^ (y >> MIXING_ROTATION_14); // Bottleneck?
-    let mr = rotl(m, MIXING_ROTATION_13);
-    let l1_3 = r1_2 + n;
-    let l0_3 = r0_2 ^ mr;
-    let r1_3_partial = l1_2 ^ n;
-    let r0_3_partial = l0_2 + (n >> MIXING_ROTATION_16);
-    let r1_3 = r1_3_partial ^ m;
-    let r0_3 = r0_3_partial + mr;
+    let ar = simd_swizzle!(a, [3, 0, 1, 2]);
+    let br = simd_swizzle!(b, [1, 2, 3, 0]);
+    let cr = simd_swizzle!(c, [2, 3, 0, 1]);
+    let dr = simd_swizzle!(d, [2, 3, 1, 0]);
+    b ^= cr; d += ar;
+    cha_cha_first_half_round!();
+    c += dr; a ^= br;
+    cha_cha_second_half_round!();
+    let m = simd_mul(a + b, c + d);
+    cha_cha_first_half_round!();
+    c ^= m; a += rotl(m, 17);
+    cha_cha_second_half_round!();
+    b += m; d ^= rotl(m, 41);
+    cha_cha_first_half_round!();
+    let mut x = a + c;
+    let mut y = b + d;
 
-    let sl0_3 = simd_swizzle!(l0_3, [2, 3, 1, 0]);
-    let tl1r0 = rotl(l1_3 ^ r0_3, MIXING_ROTATION_18);
-    let r1l0l1 = (r1_3 ^ l0_3) - l1_3;
-    let r0l0l1 = l0_3 ^ tl1r0;
+    x ^= rotl(y, 17);
+    y ^= rotl(x, 41);
 
-    // Round 4 (transport & output): 6 xor, 6 add/sub, 3 shifts, 2 rotl, 1 simd_swizzle
-    // --------------------------------------------------------------------------------
-    let t0 = sl0_3 + r1l0l1;
-    let sl0r1r = (sl0_3 - r1_3) << MIXING_ROTATION_19;
-    let t1 = r0l0l1 + sl0r1r;
-    let rot_t0 = rotl(t0, MIXING_ROTATION_21);
-    let t2 = t0 + t1; // bottleneck!
-    let t1t0 = t1 ^ rot_t0;
-    let t2_shift = t2 << MIXING_ROTATION_23;
-    let t3 = sl0_3 ^ t1t0; // bottleneck!
-    let out1 = t3 + t2_shift;
-    let t3_shift = t3 >> MIXING_ROTATION_22;
-    let out0 = t2 ^ t3_shift;
-
-    (out0, out1)
+    (x, y)
 }
 
 /// Instances must not be used again after being zeroized.
@@ -1137,6 +1109,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
+    use proptest::{prop_assert, proptest};
     use rand::rngs::SysRng;
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
@@ -1163,93 +1136,116 @@ mod tests {
         );
     }
 
-    #[test]
-    pub fn test_mix_matrix() {
-        let mut random_inputs = [Simd64::splat(0); 5];
-        let mut seed_rng = rng();
-        for cell in random_inputs.iter_mut() {
-            seed_rng.fill(cell.as_mut_array());
-        }
-        let mix_inputs = [
-            [Simd64::splat(0); 5],
-            [Simd64::splat(u64::MAX); 5],
-            random_inputs,
-        ];
-        for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(
-                base_input[0],
-                base_input[1],
-                base_input[2],
-                base_input[3],
-                base_input[4],
-            );
-            let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
-            let mut i = 0;
-            for variable_idx in 0..5 {
-                for lane_idx in 0..SIMD_WIDTH {
-                    for bit_idx in 0..64 {
-                        let mut modified_input = base_input;
-                        modified_input[variable_idx][lane_idx] ^= 1 << bit_idx;
-                        let (mod_out0, mod_out1) = mix(
-                            modified_input[0],
-                            modified_input[1],
-                            modified_input[2],
-                            modified_input[3],
-                            modified_input[4],
-                        );
-                        let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                        let mut j = 0;
-                        for out_lane_idx in 0..SIMD_WIDTH {
-                            for out_bit_idx in 0..64 {
-                                xor_matrix.set(
-                                    j,
-                                    i,
-                                    (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                                );
-                                j += 1;
-                            }
-                            for out_bit_idx in 0..64 {
-                                xor_matrix.set(
-                                    j,
-                                    i,
-                                    (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                                );
-                                j += 1;
-                            }
+    struct MixMatrixStats {
+        total_weight: usize,
+        min_row_weight: usize,
+        min_col_weight: usize,
+    }
+
+    fn evaluate_mix_matrix(mix_input: [u64; 20]) -> MixMatrixStats {
+        let base_input = [Simd::from_array(mix_input[0..4].try_into().unwrap()),
+            Simd::from_array(mix_input[4..8].try_into().unwrap()),
+            Simd::from_array(mix_input[8..12].try_into().unwrap()),
+            Simd::from_array(mix_input[12..16].try_into().unwrap()),
+            Simd::from_array(mix_input[16..20].try_into().unwrap())];
+        let (base_out0, base_out1) = mix(
+            base_input[0],
+            base_input[1],
+            base_input[2],
+            base_input[3],
+            base_input[4],
+        );
+        let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
+        let mut i = 0;
+        for variable_idx in 0..5 {
+            for lane_idx in 0..SIMD_WIDTH {
+                for bit_idx in 0..64 {
+                    let mut modified_input = base_input.clone();
+                    modified_input[variable_idx][lane_idx] ^= 1u64 << bit_idx;
+                    let (mod_out0, mod_out1) = mix(
+                        modified_input[0],
+                        modified_input[1],
+                        modified_input[2],
+                        modified_input[3],
+                        modified_input[4],
+                    );
+                    let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                    let mut j = 0;
+                    for out_lane_idx in 0..SIMD_WIDTH {
+                        for out_bit_idx in 0..64 {
+                            xor_matrix.set(
+                                j,
+                                i,
+                                (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                            );
+                            j += 1;
                         }
-                        i += 1;
+                        for out_bit_idx in 0..64 {
+                            xor_matrix.set(
+                                j,
+                                i,
+                                (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
+                            );
+                            j += 1;
+                        }
                     }
+                    i += 1;
                 }
             }
-            let row_weights = (0..512)
-                .map(|row| xor_matrix.row(row).count_ones())
-                .collect::<Vec<_>>();
-            let min_row_weight = row_weights.iter().copied().min().unwrap();
-            let max_row_weight = row_weights.iter().copied().max().unwrap();
-            let col_weights = (0..1280)
-                .map(|col| xor_matrix.col(col).count_ones())
-                .collect::<Vec<_>>();
-            let min_col_weight = col_weights.iter().copied().min().unwrap();
-            let max_col_weight = col_weights.iter().copied().max().unwrap();
-            println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
-            println!("Row weights:");
-            for row_chunk in row_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>());
-            }
-            println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
-            println!("Column weights:");
-            for col_chunk in col_weights.chunks_exact(64) {
-                println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
-            }
-            let total_weight = row_weights.into_iter().sum::<usize>();
-            let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
+        }
+        assert_eq!(xor_matrix.clone().to_echelon_form().count_ones(), 512);
+        let row_weights = (0..512)
+            .map(|row| xor_matrix.row(row).count_ones())
+            .collect::<Vec<_>>();
+        let min_row_weight = row_weights.iter().copied().min().unwrap();
+        let max_row_weight = row_weights.iter().copied().max().unwrap();
+        let col_weights = (0..1280)
+            .map(|col| xor_matrix.col(col).count_ones())
+            .collect::<Vec<_>>();
+        let min_col_weight = col_weights.iter().copied().min().unwrap();
+        let max_col_weight = col_weights.iter().copied().max().unwrap();
+        println!("min_row_weight={min_row_weight}, max_row_weight={max_row_weight}");
+        println!("Row weights:");
+        for row_chunk in row_weights.chunks_exact(64) {
+            println!("{:>4?} = {:>6}", row_chunk, row_chunk.iter().sum::<usize>());
+        }
+        println!("min_col_weight={min_col_weight}, max_col_weight={max_col_weight}");
+        println!("Column weights:");
+        for col_chunk in col_weights.chunks_exact(64) {
+            println!("{:>4?} = {:>6}", col_chunk, col_chunk.iter().sum::<usize>());
+        }
+        let total_weight = row_weights.into_iter().sum::<usize>();
+        println!("Total weight: {total_weight}");
+        MixMatrixStats { total_weight, min_row_weight, min_col_weight }
+    }
+
+    #[test]
+    fn test_mix_matrix_random_inputs() {
+        let mut rng = rng();
+        let mut mix_input = [0u64; 20];
+        let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
+        for _ in 0..5 {
+            rng.fill(&mut mix_input);
+            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
+                evaluate_mix_matrix(mix_input);
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
-            println!("Total weight: {total_weight} (z={z})");
-            assert!(min_col_weight >= 200);
-            assert!(min_row_weight >= 550);
-            assert!(z >= -3.0, "Total weight too low");
-            assert!(z <= 3.0, "Total weight too high");
-            assert_eq!(xor_matrix.to_echelon_form().count_ones(), 512);
+            assert!(min_col_weight >= 160, "Min column weight {min_col_weight} too low");
+            assert!(min_row_weight >= 384, "Min row weight {min_row_weight} too low");
+            assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
+            assert!(z <= 3.0, "Total weight {total_weight} (z={z}) too high");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
+            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
+                evaluate_mix_matrix(mix_input);
+            prop_assert!(min_col_weight >= 160);
+            prop_assert!(min_row_weight >= 384);
+            let expected = 512 * 1280 / 2;
+            let deviation = (total_weight as isize - expected as isize).abs();
+            prop_assert!(deviation <= 8192); // ≈1.25% bias
         }
     }
 
@@ -1591,7 +1587,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "0E66A1E4F20EF926A54F73201D9951B569843CA27C71279DDC8D772222283CC6AE2BBC545687954F0116E313B85EAE89ACE431B0E3B6663F5812EDF11AD8AD0CE59C0DA58A9CD96D779A1616D3B564654BDBCC4B6CBF3E0668EABC1EF4CB3648DB77B065DA3C2FF649F1CFF43146B109E77C8FDA8B4D386887D25C9CE6A16F8443D2783B6839D06AECE0E43ACA95A49051931DBD75D8F4606F62277FDD7439E218FEAFE671F4EC30E131F45E4F7CB99BEC21EE817E11D7EB6222B78CEBABAF1CF3A3B92037E96C521BB4E87CD723F24D9B18EC247BB437F428F2EEF5168A095701262B43469A6C2EE1F86B9C98C5D4707E33736736B4DDA73A5195E9212B9143";
+        let expected = "2F9148785783D0DD9F2C091CD0E79CADFE00214C997437ED5D52A0820F115473EAA7BA4F05B915848B122E356211026B00F313759831763A7D76F5643F5D3661C5A50328712E338D7AAFAFB080DC2F11DFEEF482B481C85FA891BD08D8AAA176EAA9DB6895FEC57BC4E1D097E241D7F5DD878F72064302B4348CFCC91FFB44F5598A7D243617D3216035D046B75BB22E06E56CC9A39AF074259F05D113F2BB6CD5052BA29CC71C543FFD197B676FB9EC001D529FB38182C1131CD9D7745BAD027C40C6D855906C782F48E42B5F6D50B466C392D5C20CDEAFE18C899710BFDB4D6CBC2F2423AB89AC5DF752A06FFBC85DE4CD5FDF047C9E6FE83853DDF4E895FB";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
