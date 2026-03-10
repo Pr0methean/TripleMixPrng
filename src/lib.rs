@@ -536,6 +536,16 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
             31, 24, 25, 26, 27, 28, 29, 30]))
     }
 
+    #[inline(always)]
+    fn rotl24(d: Simd64) -> Simd64 {
+        let d_transmuted: u8x32 = cast(d);
+        cast(simd_swizzle!(d_transmuted, [
+            5, 6, 7, 0, 1, 2, 3, 4,
+            13, 14, 15, 8, 9, 10, 11, 12,
+            21, 22, 23, 16, 17, 18, 19, 20,
+            29, 30, 31, 24, 25, 26, 27, 28]))
+    }
+
     let i_transmuted: u32x8 = cast(i);
     let rotated_i: Simd64 = cast(simd_swizzle!(i_transmuted, [1, 0, 3, 2, 5, 4, 7, 6]));
 
@@ -562,20 +572,25 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let mut c = x_in ^ i_mix_1;
     let mut d = w_hi;
 
+    // This mixing function is a modified ChaCha20 double-round that uses 64-bit rather than 32-bit
+    // words and adds the multiplication. Instead of permuting between rounds, we mix the
+    // permutation in during the second round, thus hiding simd_swizzle's latency.
+
     // First ChaCha round
     a += b; d ^= a; d = rotl16(d);
-    c += d; b ^= c; b = rotl(b,12);
+    c += d; b ^= c; b = rotl24(b);
     a += b; d ^= a; d = rotl8(d);
     c += d; b ^= c; b = rotl(b,7);
 
-    let cr = simd_swizzle!(c, [2, 3, 0, 1]);
-    let ar = simd_swizzle!(a, [3, 0, 1, 2]);
-    let dr = simd_swizzle!(d, [2, 3, 1, 0]);
-    let br = simd_swizzle!(b, [1, 2, 3, 0]);
+    // This permutation is based on the `diagonalize` method in `c2-chacha`:
+    // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
+    let cr = c.rotate_elements_left::<1>();
+    let dr = d.rotate_elements_right::<2>();
+    let ar = a.rotate_elements_right::<1>();
+
     a += b; d ^= a; d = rotl16(d); // 1st quarter of 2nd ChaCha round
-    b ^= cr; d += ar;
-    c += dr; a ^= br;
-    c += d; b ^= c; b = rotl(b,12); // 2nd quarter of 2nd ChaCha round
+    b ^= cr; c += dr; d += ar;
+    c += d; b ^= c; b = rotl24(b); // 2nd quarter of 2nd ChaCha round
     let m = simd_mul(a + b, c + d);
     a += b; d ^= a; d = rotl8(d);  // 3rd quarter of 2nd ChaCha round
     c ^= m; a += rotl(m, 33);
@@ -1614,7 +1629,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "A84BB018A032AA7BC8AF835E999B5F8BADEBCD668DFDEF3A85E714713B01D71004002834180A78B7B52ABA61AD29504B749D92091EC812F3DE52CF34236C9856723D17DCE3093D573C6B66AABE4E1527701E5D2B70F9496F2E9587CCE5D9455937A22E841053E0B91291DB01905218A447AA5FBC7EBF40BED5992FDB9C1CBE6E5B0F944AC2532AA2C4E3DD7C3E3AB21F749F0A6DFE66B90B515D9FA1B7B1C31A9BDACD27C0C0A42031EECD286787A7BCA389CB397521FC96855E3485D52394CD82D26FDD5A222698AF2FC9F8E14BAD5E4CF10D84F3DC4507BBFF8C9736B9737B3F8D26C6769B2C90AAA83E7D28B8AE84B9523E4406D084A1FD793C2302E3F6DF";
+        let expected = "91F85AD3A03CCF3592E3E39BD6DF87F6A7A494AE919EDF3B5861CF92F66BB7DDCAA24E6B8D9DA1EEC6548ECB31C1CD3FA070A552F7BEF4AF47300F67D465F39102018781B322984F9DD317153334B9CE70A70B42295863167BD1512B2E12BC45C0EE4C43D3126D3A6DCC8A31305C3DD7E0DE43F53A44DBF6A4E0818B486B91D773120825ADBE1E2AC76CDEF67C17C72A75B2235E8AE1EFF3EEB10A4B0555B10680BB108EAE8F5F693532ACC2D650F8448AB36A4D5895D1EE9263C24DF80A72F448BE0AC04D091653C4CE5EDCDB5BC7BF280AC4B84145E0C35A7201FACD0684DAF06921B8A9C70478C3EDB107F1CBE94ACF279A0A96E4426ACDBFBF9B7B2F6B35";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
