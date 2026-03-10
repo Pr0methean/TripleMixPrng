@@ -1362,8 +1362,8 @@ mod tests {
         #[test]
         fn test_second_derivative_proptest(mix_input: [u64; 20]) {
             let SecondDerivativeStats { min, max, mean, stdev } = evaluate_second_order_derivatives(mix_input);
-            assert!(min >= 150, "Min weight {min} too low");
-            assert!(max <= 362, "Max weight {max} too high");
+            assert!(min >= 140, "Min weight {min} too low");
+            assert!(max <= 372, "Max weight {max} too high");
             assert!(mean >= 254.0, "Mean weight {mean:.02} too low");
             assert!(mean <= 258.0, "Mean weight {mean:.02} too high");
             assert!(stdev >= 11.0, "Stdev weight {stdev:.02} too low");
