@@ -7,7 +7,7 @@
 ))]
 mod avx2;
 
-use bytemuck::cast_slice;
+use bytemuck::{cast, cast_slice};
 use const_format::formatcp;
 use core::convert::Infallible;
 use core::hint::cold_path;
@@ -18,6 +18,7 @@ use core::simd::num::SimdInt;
 use core::simd::num::SimdUint;
 use core::simd::simd_swizzle;
 use core::slice::from_mut;
+use std::simd::{u16x16, u32x8, u8x32};
 use generic_array::GenericArray;
 use rand_core::block::{BlockRng, Generator};
 use rand_core::{Rng, SeedableRng, TryRng};
@@ -515,28 +516,44 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 
 #[inline(always)]
 fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
-    // Tracking all rotation/shift constants here helps ensure that none are used twice, and that
-    // no pairs that sum to 64 are used
-    const MIXING_ROTATION_00: u64 = 32;
+    #[inline(always)]
+    fn rotl16(d: Simd64) -> Simd64 {
+        let d_transmuted: u16x16 = cast(d);
+        cast(simd_swizzle!(d_transmuted, [
+            3, 0, 1, 2,
+            7, 4, 5, 6,
+            11, 8, 9, 10,
+            15, 12, 13, 14]))
+    }
+
+    #[inline(always)]
+    fn rotl8(d: Simd64) -> Simd64 {
+        let d_transmuted: u8x32 = cast(d);
+        cast(simd_swizzle!(d_transmuted, [
+            7, 0, 1, 2, 3, 4, 5, 6,
+            15, 8, 9, 10, 11, 12, 13, 14,
+            23, 16, 17, 18, 19, 20, 21, 22,
+            31, 24, 25, 26, 27, 28, 29, 30]))
+    }
+
+    let i_transmuted: u32x8 = cast(i);
+    let rotated_i: Simd64 = cast(simd_swizzle!(i_transmuted, [1, 0, 3, 2, 5, 4, 7, 6]));
 
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
-    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
+    static FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
         0x9E3779B97F4A7C15,
         0x2767f0b153d27b7f,
         0xf06ad7ae9717877e,
         0x626e33b8d04b4331,
     ]);
     // Words 2, 6, 10 and 14 of the fractional part of the Golden Ratio.
-    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
+    static FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
         0xf39cc0605cedc834,
         0x0347045b5bf1827f,
         0x85839d6effbd7dc6,
         0xbbf73c790d94f79d,
     ]);
 
-    // Round 1: 3 xor, 4 add/sub, 4 rotl
-    // ---------------------------------
-    let rotated_i = rotl(i, MIXING_ROTATION_00);
     let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
     let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
 
@@ -545,22 +562,21 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let mut c = x_in ^ i_mix_1;
     let mut d = w_hi;
 
-    // First ChaCha round
-    a += b; d ^= a; d = rotl(d,16);
+    a += b; d ^= a; d = rotl16(d);
     c += d; b ^= c; b = rotl(b,12);
-    a += b; d ^= a; d = rotl(d,8);
+    a += b; d ^= a; d = rotl8(d);
     c += d; b ^= c; b = rotl(b,7);
 
     let cr = simd_swizzle!(c, [2, 3, 0, 1]);
     let ar = simd_swizzle!(a, [3, 0, 1, 2]);
     let dr = simd_swizzle!(d, [2, 3, 1, 0]);
     let br = simd_swizzle!(b, [1, 2, 3, 0]);
-    a += b; d ^= a; d = rotl(d,16); // 1st quarter of 2nd ChaCha round
+    a += b; d ^= a; d = rotl16(d); // 1st quarter of 2nd ChaCha round
     b ^= cr; d += ar;
     c += dr; a ^= br;
     c += d; b ^= c; b = rotl(b,12); // 2nd quarter of 2nd ChaCha round
     let m = simd_mul(a + b, c + d);
-    a += b; d ^= a; d = rotl(d,8);  // 3rd quarter of 2nd ChaCha round
+    a += b; d ^= a; d = rotl8(d);  // 3rd quarter of 2nd ChaCha round
     c ^= m; a += rotl(m, 33);
     b += m; d ^= rotl(m, 27);
     c += d; b ^= c; b = rotl(b,7);  // 4th quarter of 2nd ChaCha round
