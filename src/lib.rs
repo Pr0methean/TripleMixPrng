@@ -560,9 +560,15 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let cr = simd_swizzle!(c, [2, 3, 0, 1]);
     let dr = simd_swizzle!(d, [2, 3, 1, 0]);
     cha_cha_first_half_round!();
+    #[cfg(feature = "increased_mixing")] {
+        cha_cha_second_half_round!();
+    }
     b ^= cr; d += ar;
     c += dr; a ^= br;
     let m = simd_mul(a + b, c + d);
+    #[cfg(feature = "increased_mixing")] {
+        cha_cha_first_half_round!();
+    }
     cha_cha_second_half_round!();
     c ^= m; a += rotl(m, 17);
     b += m; d ^= rotl(m, 41);

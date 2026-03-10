@@ -29,7 +29,51 @@ jobs:
     - name: Run tests
       run: cargo +nightly test --verbose
       timeout-minutes: 20
+  unit-tests-increased-mixing:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # FIXME: Add macos-latest once https://github.com/bluss/matrixmultiply/issues/97 is fixed
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run tests
+        run: cargo +nightly test --verbose --features increased-mixing
+        timeout-minutes: 20
   benchmarks:
+    needs: unit-tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, macos-latest, windows-latest, windows-11-arm ]
+      fail-fast: false
+    permissions:
+      contents: write
+      deployments: write
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install libtss2-dev (Ubuntu x86)
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install libtss2-dev
+    - name: Run benchmarks
+      run: cargo +nightly bench -- --output-format bencher | tee bench-output.txt
+      timeout-minutes: 20
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        name: Rust Benchmark
+        tool: 'cargo'
+        output-file-path: bench-output.txt
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        summary-always: true
+        auto-push: ${{ github.event_name != 'pull_request' }}
+        # Show alert with commit comment on detecting possible performance regression
+        alert-threshold: '125%'
+        comment-on-alert: true
+        fail-on-alert: true
+  benchmarks-increased-mixing:
     needs: unit-tests
     runs-on: ${{ matrix.os }}
     strategy:
