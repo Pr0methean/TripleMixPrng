@@ -580,7 +580,7 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     a += b; d ^= a; d = rotl16(d);
     c += d; b ^= c; b = rotl24(b);
     a += b; d ^= a; d = rotl8(d);
-    c += d; b ^= c; b = rotl(b,7);
+    c += d; b ^= c; b = rotl(b,11);
 
     // This permutation is based on the `diagonalize` method in `c2-chacha`:
     // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
