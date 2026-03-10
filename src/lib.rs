@@ -1149,18 +1149,7 @@ mod tests {
     }
 
     fn evaluate_mix_matrix(mix_input: [u64; 20]) -> MixMatrixStats {
-        let base_input = [Simd::from_array(mix_input[0..4].try_into().unwrap()),
-            Simd::from_array(mix_input[4..8].try_into().unwrap()),
-            Simd::from_array(mix_input[8..12].try_into().unwrap()),
-            Simd::from_array(mix_input[12..16].try_into().unwrap()),
-            Simd::from_array(mix_input[16..20].try_into().unwrap())];
-        let (base_out0, base_out1) = mix(
-            base_input[0],
-            base_input[1],
-            base_input[2],
-            base_input[3],
-            base_input[4],
-        );
+        let (base_input, base_out0, base_out1) = mix_from_flat_array(mix_input);
         let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
         let mut i = 0;
         for variable_idx in 0..5 {
@@ -1225,6 +1214,100 @@ mod tests {
         MixMatrixStats { total_weight, min_row_weight, min_col_weight }
     }
 
+    fn mix_from_flat_array(mix_input: [u64; 20]) -> ([Simd<u64, 4>; 5], Simd64, Simd64) {
+        let base_input = [Simd::from_array(mix_input[0..4].try_into().unwrap()),
+            Simd::from_array(mix_input[4..8].try_into().unwrap()),
+            Simd::from_array(mix_input[8..12].try_into().unwrap()),
+            Simd::from_array(mix_input[12..16].try_into().unwrap()),
+            Simd::from_array(mix_input[16..20].try_into().unwrap())];
+        let (base_out0, base_out1) = mix(
+            base_input[0],
+            base_input[1],
+            base_input[2],
+            base_input[3],
+            base_input[4],
+        );
+        (base_input, base_out0, base_out1)
+    }
+
+    struct SecondDerivativeStats {
+        min: u64,
+        max: u64,
+        mean: f64,
+        stdev: f64,
+    }
+
+    fn evaluate_second_order_derivatives(mix_input: [u64; 20]) -> SecondDerivativeStats {
+        let (base_input, base_out0, base_out1) = mix_from_flat_array(mix_input);
+        let mut weights = Vec::new();
+        for var_idx_1 in 0..5 {
+            for var_idx_2 in var_idx_1..5 {
+                for lane_idx_1 in 0..SIMD_WIDTH {
+                    for lane_idx_2 in lane_idx_1..SIMD_WIDTH {
+                        if lane_idx_1 == lane_idx_2 && var_idx_1 == var_idx_2 {
+                            for bit_idx_1 in 0..63 {
+                                for bit_idx_2 in bit_idx_1..64 {
+                                    let mut modified_input = base_input;
+                                    modified_input[var_idx_1][lane_idx_1] ^=
+                                        1 << bit_idx_1 | 1 << bit_idx_2;
+                                    let (mod_out0, mod_out1) = mix(
+                                        modified_input[0],
+                                        modified_input[1],
+                                        modified_input[2],
+                                        modified_input[3],
+                                        modified_input[4],
+                                    );
+                                    let (out_xor_0, out_xor_1) =
+                                        (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                    weights.push(
+                                        out_xor_0.count_ones().reduce_sum()
+                                            + out_xor_1.count_ones().reduce_sum(),
+                                    );
+                                }
+                            }
+                        } else {
+                            for bit_idx in 0..64 {
+                                let mut modified_input = base_input;
+                                modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
+                                modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
+                                let (mod_out0, mod_out1) = mix(
+                                    modified_input[0],
+                                    modified_input[1],
+                                    modified_input[2],
+                                    modified_input[3],
+                                    modified_input[4],
+                                );
+                                let (out_xor_0, out_xor_1) =
+                                    (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
+                                weights.push(
+                                    out_xor_0.count_ones().reduce_sum()
+                                        + out_xor_1.count_ones().reduce_sum(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let sample_size = weights.len();
+        let min = weights.iter().copied().min().unwrap();
+        let max = weights.iter().copied().max().unwrap();
+        let mean =
+            weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
+        let variance_weight = weights
+            .iter()
+            .copied()
+            .map(|weight| weight as f64 - mean)
+            .map(|x| x * x)
+            .sum::<f64>()
+            / (sample_size - 1) as f64;
+        let stdev = variance_weight.sqrt();
+        println!(
+            "N={sample_size}, min={min}, max={max}, mean={mean}, sd={stdev}"
+        );
+        SecondDerivativeStats { min, max, mean, stdev }
+    }
+
     #[test]
     fn test_mix_matrix_random_inputs() {
         let mut rng = rng();
@@ -1242,6 +1325,22 @@ mod tests {
         }
     }
 
+    #[test]
+    pub fn test_second_derivative_random_inputs() {
+        let mut rng = rng();
+        let mut random_inputs = [0u64; 20];
+        for _ in 0..5 {
+            rng.fill(&mut random_inputs);
+            let SecondDerivativeStats { min, max, mean, stdev } = evaluate_second_order_derivatives(random_inputs);
+            assert!(min >= 150, "Min weight {min} too low");
+            assert!(max <= 362, "Max weight {max} too high");
+            assert!(mean >= 254.0, "Mean weight {mean:.02} too low");
+            assert!(mean <= 258.0, "Mean weight {mean:.02} too high");
+            assert!(stdev >= 11.0, "Stdev weight {stdev:.02} too low");
+            assert!(stdev <= 14.0, "Stdev weight {stdev:.02} too high");
+        }
+    }
+
     proptest! {
         #[test]
         fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
@@ -1253,100 +1352,16 @@ mod tests {
             let deviation = (total_weight as isize - expected as isize).abs();
             prop_assert!(deviation <= 8192); // ≈1.25% bias
         }
-    }
 
-    #[test]
-    pub fn test_second_order_derivative() {
-        let mut random_inputs = [Simd64::splat(0); 5];
-        let mut seed_rng = rng();
-        for cell in random_inputs.iter_mut() {
-            seed_rng.fill(cell.as_mut_array());
-        }
-        let mix_inputs = [
-            [Simd64::splat(0); 5],
-            [Simd64::splat(u64::MAX); 5],
-            random_inputs,
-        ];
-        for base_input in mix_inputs {
-            let (base_out0, base_out1) = mix(
-                base_input[0],
-                base_input[1],
-                base_input[2],
-                base_input[3],
-                base_input[4],
-            );
-            let mut weights = Vec::new();
-            for var_idx_1 in 0..5 {
-                for var_idx_2 in var_idx_1..5 {
-                    for lane_idx_1 in 0..SIMD_WIDTH {
-                        for lane_idx_2 in lane_idx_1..SIMD_WIDTH {
-                            if lane_idx_1 == lane_idx_2 && var_idx_1 == var_idx_2 {
-                                for bit_idx_1 in 0..63 {
-                                    for bit_idx_2 in bit_idx_1..64 {
-                                        let mut modified_input = base_input;
-                                        modified_input[var_idx_1][lane_idx_1] ^=
-                                            1 << bit_idx_1 | 1 << bit_idx_2;
-                                        let (mod_out0, mod_out1) = mix(
-                                            modified_input[0],
-                                            modified_input[1],
-                                            modified_input[2],
-                                            modified_input[3],
-                                            modified_input[4],
-                                        );
-                                        let (out_xor_0, out_xor_1) =
-                                            (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                                        weights.push(
-                                            out_xor_0.count_ones().reduce_sum()
-                                                + out_xor_1.count_ones().reduce_sum(),
-                                        );
-                                    }
-                                }
-                            } else {
-                                for bit_idx in 0..64 {
-                                    let mut modified_input = base_input;
-                                    modified_input[var_idx_1][lane_idx_1] ^= 1 << bit_idx;
-                                    modified_input[var_idx_2][lane_idx_2] ^= 1 << bit_idx;
-                                    let (mod_out0, mod_out1) = mix(
-                                        modified_input[0],
-                                        modified_input[1],
-                                        modified_input[2],
-                                        modified_input[3],
-                                        modified_input[4],
-                                    );
-                                    let (out_xor_0, out_xor_1) =
-                                        (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
-                                    weights.push(
-                                        out_xor_0.count_ones().reduce_sum()
-                                            + out_xor_1.count_ones().reduce_sum(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            let sample_size = weights.len();
-            let min_weight = weights.iter().copied().min().unwrap();
-            let max_weight = weights.iter().copied().max().unwrap();
-            let mean_weight =
-                weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
-            let variance_weight = weights
-                .iter()
-                .copied()
-                .map(|weight| weight as f64 - mean_weight)
-                .map(|x| x * x)
-                .sum::<f64>()
-                / (sample_size - 1) as f64;
-            let stdev_weight = variance_weight.sqrt();
-            println!(
-                "N={sample_size}, min={min_weight}, max={max_weight}, mean={mean_weight}, sd={stdev_weight}"
-            );
-            assert!(min_weight >= 150);
-            assert!(max_weight <= 362);
-            assert!(mean_weight >= 254.0);
-            assert!(mean_weight <= 258.0);
-            assert!(stdev_weight >= 11.0);
-            assert!(stdev_weight <= 14.0);
+        #[test]
+        fn test_second_derivative_proptest(mix_input: [u64; 20]) {
+            let SecondDerivativeStats { min, max, mean, stdev } = evaluate_second_order_derivatives(mix_input);
+            assert!(min >= 150, "Min weight {min} too low");
+            assert!(max <= 362, "Max weight {max} too high");
+            assert!(mean >= 254.0, "Mean weight {mean:.02} too low");
+            assert!(mean <= 258.0, "Mean weight {mean:.02} too high");
+            assert!(stdev >= 11.0, "Stdev weight {stdev:.02} too low");
+            assert!(stdev <= 14.0, "Stdev weight {stdev:.02} too high");
         }
     }
 
