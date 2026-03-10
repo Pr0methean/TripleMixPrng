@@ -536,6 +536,16 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
             31, 24, 25, 26, 27, 28, 29, 30]))
     }
 
+    #[inline(always)]
+    fn rotl24(d: Simd64) -> Simd64 {
+        let d_transmuted: u8x32 = cast(d);
+        cast(simd_swizzle!(d_transmuted, [
+            5, 6, 7, 0, 1, 2, 3, 4,
+            13, 14, 15, 8, 9, 10, 11, 12,
+            21, 22, 23, 16, 17, 18, 19, 20,
+            29, 30, 31, 24, 25, 26, 27, 28]))
+    }
+
     let i_transmuted: u32x8 = cast(i);
     let rotated_i: Simd64 = cast(simd_swizzle!(i_transmuted, [1, 0, 3, 2, 5, 4, 7, 6]));
 
@@ -562,18 +572,25 @@ fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd6
     let mut c = x_in ^ i_mix_1;
     let mut d = w_hi;
 
+    // This mixing function is a modified ChaCha20 double-round that uses 64-bit rather than 32-bit
+    // words and adds the multiplication. Instead of permuting between rounds, we mix the
+    // permutation in during the second round, thus hiding simd_swizzle's latency.
+
     // First ChaCha round
     a += b; d ^= a; d = rotl16(d);
-    c += d; b ^= c; b = rotl(b,12);
+    c += d; b ^= c; b = rotl24(b);
     a += b; d ^= a; d = rotl8(d);
     c += d; b ^= c; b = rotl(b,7);
 
+    // This permutation is based on the `diagonalize` method in `c2-chacha`:
+    // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
     let cr = c.rotate_elements_left::<1>();
     let dr = d.rotate_elements_right::<2>();
     let ar = a.rotate_elements_right::<1>();
+
     a += b; d ^= a; d = rotl16(d); // 1st quarter of 2nd ChaCha round
     b ^= cr; c += dr; d += ar;
-    c += d; b ^= c; b = rotl(b,12); // 2nd quarter of 2nd ChaCha round
+    c += d; b ^= c; b = rotl24(b); // 2nd quarter of 2nd ChaCha round
     let m = simd_mul(a + b, c + d);
     a += b; d ^= a; d = rotl8(d);  // 3rd quarter of 2nd ChaCha round
     c ^= m; a += rotl(m, 33);
@@ -1612,7 +1629,7 @@ mod tests {
     fn test_cross_platform_reproducibility() {
         let seed = [0u8; SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
-        let expected = "586F221C30D2EC08CAD0937EE84CF9301CB4BE83CCC9D99A91BCE91A2B82FE417D7C2A193F8CC27E612BAF6FD4E9C148F5904FE62A3CEE66F14CE4C23F657795BA3ED7A1B98DD7EC865295FB06DA4C7D5AAFF2AEC93DDFB65C5672A1D15E14894664116E799BB1C3B3CF5F1F3203C04E35E0AEEC4CB9FACB98B9D6A09D08C40710AF27131BEF4232F9FB813B654315127F0C797B5ADDEEFF0C6E2A944D21FF5B9CC475D7EF6F3C163B7252D940AB8EBE0A821798ECE000C5C46832E89A3D5AFF79AC793E94558573B349787A3FB457B1D26E6964BEBF37897EBEBB553DFA3D28C73EBC34E7178F378A8383CF7C33BEBAC66DAFFF876ADDD93DBA5D91562054E9";
+        let expected = "91F85AD3A03CCF3592E3E39BD6DF87F6A7A494AE919EDF3B5861CF92F66BB7DDCAA24E6B8D9DA1EEC6548ECB31C1CD3FA070A552F7BEF4AF47300F67D465F39102018781B322984F9DD317153334B9CE70A70B42295863167BD1512B2E12BC45C0EE4C43D3126D3A6DCC8A31305C3DD7E0DE43F53A44DBF6A4E0818B486B91D773120825ADBE1E2AC76CDEF67C17C72A75B2235E8AE1EFF3EEB10A4B0555B10680BB108EAE8F5F693532ACC2D650F8448AB36A4D5895D1EE9263C24DF80A72F448BE0AC04D091653C4CE5EDCDB5BC7BF280AC4B84145E0C35A7201FACD0684DAF06921B8A9C70478C3EDB107F1CBE94ACF279A0A96E4426ACDBFBF9B7B2F6B35";
         let mut actual = vec![0u8; expected.len() / 2];
         prng.fill_bytes(&mut actual);
         assert_eq!(
