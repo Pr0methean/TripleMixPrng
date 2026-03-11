@@ -254,11 +254,11 @@ const fn pow_mat_2_exp(mut a: [u128; 128], mut exp: u32) -> [u128; 128] {
 
 #[cfg(test)]
 mod tests {
-    use rand_core::Rng;
+    use crate::TripleMixSimdCore;
     use crate::generate::OUTPUT_LEN;
     use crate::jump::pow_mat_2_exp;
     use crate::reproducibility::NotReproducible;
-    use crate::TripleMixSimdCore;
+    use rand_core::Rng;
 
     #[test]
     fn test_jump_ahead_constants() {

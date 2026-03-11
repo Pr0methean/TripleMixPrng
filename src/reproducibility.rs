@@ -17,10 +17,16 @@ pub trait Reproducibility: Clone + Copy {
 #[cfg(feature = "reproducibility_cross_platform")]
 pub type DefaultReproducibility = cross_platform::CrossPlatform;
 
-#[cfg(all(feature = "reproducibility_same_endianness", not(feature = "reproducibility_cross_platform")))]
+#[cfg(all(
+    feature = "reproducibility_same_endianness",
+    not(feature = "reproducibility_cross_platform")
+))]
 pub type DefaultReproducibility = same_endianness::SameEndianness;
 
-#[cfg(not(any(feature = "reproducibility_same_endianness", feature = "reproducibility_cross_platform")))]
+#[cfg(not(any(
+    feature = "reproducibility_same_endianness",
+    feature = "reproducibility_cross_platform"
+)))]
 pub type DefaultReproducibility = NotReproducible;
 
 /// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
@@ -72,8 +78,8 @@ impl Reproducibility for NotReproducible {
 /// length), as long as both instances are created on machines with the same endianness.
 #[cfg(feature = "reproducibility_same_endianness")]
 pub mod same_endianness {
-    use crate::reproducibility::{fill_bytes_alignment_aware, Reproducibility};
     use crate::TripleMixSimdCore;
+    use crate::reproducibility::{Reproducibility, fill_bytes_alignment_aware};
     use bytemuck::cast_slice;
     use rand_core::block::BlockRng;
 
@@ -120,8 +126,8 @@ pub mod same_endianness {
 /// length) on another machine, even if that machine has a different CPU architecture.
 #[cfg(feature = "reproducibility_cross_platform")]
 pub mod cross_platform {
-    use crate::reproducibility::{fill_bytes_alignment_aware, Reproducibility};
     use crate::TripleMixSimdCore;
+    use crate::reproducibility::{Reproducibility, fill_bytes_alignment_aware};
     use bytemuck::cast_slice;
     use rand_core::block::BlockRng;
 
@@ -191,8 +197,8 @@ pub mod cross_platform {
     mod tests {
         #[test]
         fn test_cross_platform_reproducibility() {
-            use crate::TripleMixPrng;
             use super::CrossPlatform;
+            use crate::TripleMixPrng;
             use crate::seed::DEFAULT_SEED_SIZE;
             use itertools::Itertools;
             use rand_core::Rng;
@@ -256,10 +262,13 @@ fn fill_bytes_inner(
     }
 }
 
-#[cfg(all(test, any(
+#[cfg(all(
+    test,
+    any(
         feature = "reproducibility_cross_platform",
         feature = "reproducibility_same_endianness"
-)))]
+    )
+))]
 fn test_equivalence_generic<R: Reproducibility>() {
     use crate::TripleMixPrng;
     use crate::seed::DEFAULT_SEED_SIZE;
