@@ -202,6 +202,7 @@ mod tests {
         use crate::TripleMixPrng;
         use crate::reproducibility::CrossPlatform;
         use crate::seed::DEFAULT_SEED_SIZE;
+        use itertools::Itertools;
         use rand_core::Rng;
         let seed = [0u8; DEFAULT_SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
