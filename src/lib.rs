@@ -1,11 +1,5 @@
 #![feature(portable_simd)]
 #![allow(long_running_const_eval)]
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
-))]
-mod avx2;
 mod generate;
 #[cfg(feature = "jump")]
 pub mod jump;
