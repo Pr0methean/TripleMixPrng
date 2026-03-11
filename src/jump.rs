@@ -1,6 +1,6 @@
+use crate::generate::{SIMD_WIDTH, Simd64};
+use crate::reproducibility::Reproducibility;
 use crate::{TripleMixPrng, TripleMixSimdCore};
-use crate::generate::{Simd64, SIMD_WIDTH};
-use crate::reproducibility::{Reproducibility};
 
 impl<R: Reproducibility> TripleMixPrng<R> {
     /// Advances the PRNG by `steps` internal sub-generator steps.

@@ -1,8 +1,8 @@
-use crate::{avx2, TripleMixSimdCore};
+use crate::{TripleMixSimdCore, avx2};
 use bytemuck::cast;
 use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::{SimdInt, SimdUint};
-use core::simd::{simd_swizzle, u16x16, u32x8, u8x32, Simd};
+use core::simd::{Simd, simd_swizzle, u8x32, u16x16, u32x8};
 use core::slice::from_mut;
 use rand_core::block::Generator;
 
@@ -122,31 +122,34 @@ pub fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (S
     #[inline(always)]
     fn rotl16(d: Simd64) -> Simd64 {
         let d_transmuted: u16x16 = cast(d);
-        cast(simd_swizzle!(d_transmuted, [
-            3, 0, 1, 2,
-            7, 4, 5, 6,
-            11, 8, 9, 10,
-            15, 12, 13, 14]))
+        cast(simd_swizzle!(
+            d_transmuted,
+            [3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14]
+        ))
     }
 
     #[inline(always)]
     fn rotl8(d: Simd64) -> Simd64 {
         let d_transmuted: u8x32 = cast(d);
-        cast(simd_swizzle!(d_transmuted, [
-            7, 0, 1, 2, 3, 4, 5, 6,
-            15, 8, 9, 10, 11, 12, 13, 14,
-            23, 16, 17, 18, 19, 20, 21, 22,
-            31, 24, 25, 26, 27, 28, 29, 30]))
+        cast(simd_swizzle!(
+            d_transmuted,
+            [
+                7, 0, 1, 2, 3, 4, 5, 6, 15, 8, 9, 10, 11, 12, 13, 14, 23, 16, 17, 18, 19, 20, 21,
+                22, 31, 24, 25, 26, 27, 28, 29, 30
+            ]
+        ))
     }
 
     #[inline(always)]
     fn rotl24(d: Simd64) -> Simd64 {
         let d_transmuted: u8x32 = cast(d);
-        cast(simd_swizzle!(d_transmuted, [
-            5, 6, 7, 0, 1, 2, 3, 4,
-            13, 14, 15, 8, 9, 10, 11, 12,
-            21, 22, 23, 16, 17, 18, 19, 20,
-            29, 30, 31, 24, 25, 26, 27, 28]))
+        cast(simd_swizzle!(
+            d_transmuted,
+            [
+                5, 6, 7, 0, 1, 2, 3, 4, 13, 14, 15, 8, 9, 10, 11, 12, 21, 22, 23, 16, 17, 18, 19,
+                20, 29, 30, 31, 24, 25, 26, 27, 28
+            ]
+        ))
     }
 
     let i_transmuted: u32x8 = cast(i);
@@ -180,10 +183,18 @@ pub fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (S
     // permutation in during the second round, thus hiding simd_swizzle's latency.
 
     // First ChaCha round
-    a += b; d ^= a; d = rotl16(d);
-    c += d; b ^= c; b = rotl24(b);
-    a += b; d ^= a; d = rotl8(d);
-    c += d; b ^= c; b = rotl(b,53);
+    a += b;
+    d ^= a;
+    d = rotl16(d);
+    c += d;
+    b ^= c;
+    b = rotl24(b);
+    a += b;
+    d ^= a;
+    d = rotl8(d);
+    c += d;
+    b ^= c;
+    b = rotl(b, 53);
 
     // This permutation is based on the `diagonalize` method in `c2-chacha`:
     // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
@@ -191,14 +202,26 @@ pub fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (S
     let dr = d.rotate_elements_right::<2>();
     let ar = a.rotate_elements_right::<1>();
 
-    a += b; d ^= a; d = rotl16(d); // 1st quarter of 2nd ChaCha round
-    b ^= cr; c += dr; d += ar;
-    c += d; b ^= c; b = rotl24(b); // 2nd quarter of 2nd ChaCha round
+    a += b;
+    d ^= a;
+    d = rotl16(d); // 1st quarter of 2nd ChaCha round
+    b ^= cr;
+    c += dr;
+    d += ar;
+    c += d;
+    b ^= c;
+    b = rotl24(b); // 2nd quarter of 2nd ChaCha round
     let m = simd_mul(a + b, c + d);
-    a += b; d ^= a; d = rotl8(d);  // 3rd quarter of 2nd ChaCha round
-    c ^= m; a += rotl(m, 33);
-    b += m; d ^= rotl(m, 27);
-    c += d; b ^= c; b = rotl(b,7);  // 4th quarter of 2nd ChaCha round
+    a += b;
+    d ^= a;
+    d = rotl8(d); // 3rd quarter of 2nd ChaCha round
+    c ^= m;
+    a += rotl(m, 33);
+    b += m;
+    d ^= rotl(m, 27);
+    c += d;
+    b ^= c;
+    b = rotl(b, 7); // 4th quarter of 2nd ChaCha round
     let mut x = a + c;
     let mut y = b + d;
 
@@ -219,17 +242,17 @@ impl Generator for TripleMixSimdCore {
 
 #[cfg(test)]
 mod tests {
-    use crate::generate::{mix, Simd64, OUTPUTS_PER_STEP, OUTPUT_LEN, SIMD_WIDTH};
+    use crate::generate::{OUTPUT_LEN, OUTPUTS_PER_STEP, SIMD_WIDTH, Simd64, mix};
     use crate::reproducibility::NotReproducible;
     use bytemuck::cast_slice_mut;
+    use core::simd::Simd;
     use core::simd::cmp::SimdPartialEq;
     use core::simd::num::SimdUint;
-    use core::simd::Simd;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
     use proptest::{prop_assert, proptest};
-    use rand::{rng, RngExt};
+    use rand::{RngExt, rng};
     use rand_core::Rng;
     use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
 
@@ -259,19 +282,11 @@ mod tests {
                     let mut j = 0;
                     for out_lane_idx in 0..SIMD_WIDTH {
                         for out_bit_idx in 0..64 {
-                            xor_matrix.set(
-                                j,
-                                i,
-                                (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                            );
+                            xor_matrix.set(j, i, (out_xor_0[out_lane_idx] >> out_bit_idx) & 1 != 0);
                             j += 1;
                         }
                         for out_bit_idx in 0..64 {
-                            xor_matrix.set(
-                                j,
-                                i,
-                                (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0,
-                            );
+                            xor_matrix.set(j, i, (out_xor_1[out_lane_idx] >> out_bit_idx) & 1 != 0);
                             j += 1;
                         }
                     }
@@ -302,15 +317,21 @@ mod tests {
         }
         let total_weight = row_weights.into_iter().sum::<usize>();
         println!("Total weight: {total_weight}");
-        MixMatrixStats { total_weight, min_row_weight, min_col_weight }
+        MixMatrixStats {
+            total_weight,
+            min_row_weight,
+            min_col_weight,
+        }
     }
 
     fn mix_from_flat_array(mix_input: [u64; 20]) -> ([Simd64; 5], Simd64, Simd64) {
-        let base_input = [Simd::from_array(mix_input[0..4].try_into().unwrap()),
+        let base_input = [
+            Simd::from_array(mix_input[0..4].try_into().unwrap()),
             Simd::from_array(mix_input[4..8].try_into().unwrap()),
             Simd::from_array(mix_input[8..12].try_into().unwrap()),
             Simd::from_array(mix_input[12..16].try_into().unwrap()),
-            Simd::from_array(mix_input[16..20].try_into().unwrap())];
+            Simd::from_array(mix_input[16..20].try_into().unwrap()),
+        ];
         let (base_out0, base_out1) = mix(
             base_input[0],
             base_input[1],
@@ -383,8 +404,7 @@ mod tests {
         let sample_size = weights.len();
         let min = weights.iter().copied().min().unwrap();
         let max = weights.iter().copied().max().unwrap();
-        let mean =
-            weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
+        let mean = weights.iter().copied().map(u64::from).sum::<u64>() as f64 / sample_size as f64;
         let variance_weight = weights
             .iter()
             .copied()
@@ -393,10 +413,13 @@ mod tests {
             .sum::<f64>()
             / (sample_size - 1) as f64;
         let stdev = variance_weight.sqrt();
-        println!(
-            "N={sample_size}, min={min}, max={max}, mean={mean}, sd={stdev}"
-        );
-        SecondDerivativeStats { min, max, mean, stdev }
+        println!("N={sample_size}, min={min}, max={max}, mean={mean}, sd={stdev}");
+        SecondDerivativeStats {
+            min,
+            max,
+            mean,
+            stdev,
+        }
     }
 
     #[test]
@@ -406,11 +429,20 @@ mod tests {
         let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
         for _ in 0..5 {
             rng.fill(&mut mix_input);
-            let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
-                evaluate_mix_matrix(mix_input);
+            let MixMatrixStats {
+                total_weight,
+                min_row_weight,
+                min_col_weight,
+            } = evaluate_mix_matrix(mix_input);
             let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
-            assert!(min_col_weight >= 160, "Min column weight {min_col_weight} too low");
-            assert!(min_row_weight >= 384, "Min row weight {min_row_weight} too low");
+            assert!(
+                min_col_weight >= 160,
+                "Min column weight {min_col_weight} too low"
+            );
+            assert!(
+                min_row_weight >= 384,
+                "Min row weight {min_row_weight} too low"
+            );
             assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
             assert!(z <= 3.0, "Total weight {total_weight} (z={z}) too high");
         }
@@ -422,7 +454,12 @@ mod tests {
         let mut random_inputs = [0u64; 20];
         for _ in 0..5 {
             rng.fill(&mut random_inputs);
-            let SecondDerivativeStats { min, max, mean, stdev } = evaluate_second_order_derivatives(random_inputs);
+            let SecondDerivativeStats {
+                min,
+                max,
+                mean,
+                stdev,
+            } = evaluate_second_order_derivatives(random_inputs);
             assert!(min >= 150, "Min weight {min} too low");
             assert!(max <= 362, "Max weight {max} too high");
             assert!(mean >= 254.0, "Mean weight {mean:.02} too low");

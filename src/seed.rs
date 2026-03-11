@@ -1,16 +1,16 @@
+use crate::generate::{SIMD_WIDTH, Simd64, TINYMT64_LANE_MASK};
 use crate::{Reproducibility, VERSION_OID};
+use crate::{TripleMixPrng, TripleMixSimdCore};
+use const_format::formatcp;
 use core::hint::cold_path;
 use core::marker::PhantomData;
-use core::simd::cmp::SimdPartialEq;
 use core::simd::Simd;
-use const_format::formatcp;
-use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
-use rand_core::{Rng, SeedableRng};
+use core::simd::cmp::SimdPartialEq;
 use generic_array::GenericArray;
-use typenum::U;
 use rand_core::block::BlockRng;
-use crate::{TripleMixPrng, TripleMixSimdCore};
-use crate::generate::{Simd64, SIMD_WIDTH, TINYMT64_LANE_MASK};
+use rand_core::{Rng, SeedableRng};
+use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
+use typenum::U;
 
 #[cfg(feature = "no_std")]
 macro_rules! once_kmac {
@@ -163,7 +163,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             | (a.tm0.simd_eq(b.tm0) & a.tm1.simd_eq(b.tm1))
             | (a.weyl_lo.simd_eq(b.weyl_lo) & a.weyl_hi.simd_eq(b.weyl_hi))
             | (a.inc_lo.simd_eq(b.inc_lo) & a.inc_hi.simd_eq(b.inc_hi)))
-            .any()
+        .any()
     }
 
     /// Returns a new instance derived from both this one and the provided domain-separation bytes.
@@ -272,8 +272,7 @@ fn test_fork_independence_descendants() {
     const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
     const FORKS: usize = 64;
     #[cfg(not(feature = "no_std"))]
-    let mut previous_outputs =
-        std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+    let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
     #[cfg(feature = "no_std")]
     let mut previous_outputs = core::collections::BTreeSet::new();
     for mut prng in crate::create_rngs::<NotReproducible>() {
@@ -295,8 +294,7 @@ fn test_fork_independence_siblings() {
     const SAMPLES_PER_FORK: usize = 32;
     const FORKS: usize = 64;
     #[cfg(not(feature = "no_std"))]
-    let mut previous_outputs =
-        std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+    let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
     #[cfg(feature = "no_std")]
     let mut previous_outputs = core::collections::BTreeSet::new();
     for mut parent_prng in crate::create_rngs::<NotReproducible>() {
@@ -322,8 +320,7 @@ fn test_seed_diffusion() {
         for bit_index in 0..=7 {
             let mut seed = [0u8; DEFAULT_SEED_SIZE];
             seed[byte_index] = 1 << bit_index;
-            let mut rng2 =
-                TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
+            let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
             let start_val2 = rng2.try_next_u64().unwrap();
             let flipped_bits = (start_val1 ^ start_val2).count_ones();
             assert!(

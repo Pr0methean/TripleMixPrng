@@ -1,5 +1,5 @@
-use crate::generate::Simd64;
 use crate::TripleMixPrng;
+use crate::generate::Simd64;
 use crate::reproducibility::Reproducibility;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -45,11 +45,11 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
     where
         D: serde::Deserializer<'de>,
     {
+        use crate::TripleMixSimdCore;
         use core::hint::cold_path;
         use core::marker::PhantomData;
-        use serde::de::Error;
         use rand_core::block::BlockRng;
-        use crate::{TripleMixSimdCore};
+        use serde::de::Error;
         let state = CoreState::deserialize(deserializer)?;
         let core = TripleMixSimdCore {
             xr0: Simd64::from_array(state.xr0),

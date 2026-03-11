@@ -32,7 +32,8 @@ pub fn get_random_seed() -> [u8; 256] {
                 SystemRandom::default().fill(chunk).unwrap();
                 eprintln!("Generated a seed chunk using aws-lc");
             }
-            #[allow(unused_assignments)] {
+            #[allow(unused_assignments)]
+            {
                 seeded = true;
             }
             thread::yield_now();

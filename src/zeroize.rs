@@ -1,6 +1,6 @@
-use core::simd::Simd;
 use crate::reproducibility::Reproducibility;
 use crate::{TripleMixPrng, TripleMixSimdCore};
+use core::simd::Simd;
 
 impl zeroize::Zeroize for TripleMixSimdCore {
     fn zeroize(&mut self) {

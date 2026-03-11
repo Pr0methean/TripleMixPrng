@@ -6,13 +6,13 @@
     not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
 ))]
 mod avx2;
+mod generate;
+#[cfg(feature = "jump")]
+pub mod jump;
+pub mod reproducibility;
 mod seed;
 #[cfg(feature = "serde")]
 mod serde;
-#[cfg(feature = "jump")]
-pub mod jump;
-mod generate;
-pub mod reproducibility;
 #[cfg(feature = "zeroize")]
 mod zeroize;
 
@@ -20,8 +20,8 @@ use const_format::formatcp;
 use core::convert::Infallible;
 use core::marker::PhantomData;
 use generate::Simd64;
-use rand_core::block::BlockRng;
 use rand_core::TryRng;
+use rand_core::block::BlockRng;
 use reproducibility::Reproducibility;
 
 #[derive(Clone, Copy)]
@@ -75,8 +75,7 @@ pub struct TripleMixPrng<R: Reproducibility> {
 }
 
 pub const TRIPLE_MIX_PRNG_OID: &str = "1.3.6.1.4.1.54392.5.3311";
-pub const VERSION_OID: &str =
-    formatcp!("{TRIPLE_MIX_PRNG_OID}.{MAJOR_VERSION}.{MINOR_VERSION}");
+pub const VERSION_OID: &str = formatcp!("{TRIPLE_MIX_PRNG_OID}.{MAJOR_VERSION}.{MINOR_VERSION}");
 
 impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
     type Error = Infallible;
@@ -101,8 +100,8 @@ impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
 
 #[cfg(test)]
 pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
-    use rand::rngs::SysRng;
     use core::simd::Simd;
+    use rand::rngs::SysRng;
     const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
     const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
     const LARGEST_DISTINCT_ODD: Simd64 =

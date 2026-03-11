@@ -1,5 +1,5 @@
 use criterion::measurement::Measurement;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 // Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
 // option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
@@ -11,10 +11,10 @@ use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::TripleMixPrng;
-use std::env::consts::{ARCH, OS};
-use std::hint::black_box;
 use rand_triplemix::reproducibility::{CrossPlatform, NotReproducible, SameEndianness};
 use rand_triplemix::seed::DEFAULT_SEED_SIZE;
+use std::env::consts::{ARCH, OS};
+use std::hint::black_box;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 

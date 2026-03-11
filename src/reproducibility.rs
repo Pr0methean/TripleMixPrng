@@ -1,6 +1,6 @@
+use crate::TripleMixSimdCore;
+use bytemuck::cast_slice;
 use rand_core::block::BlockRng;
-use bytemuck::{cast_slice};
-use crate::{TripleMixSimdCore};
 
 /// Levels of reproducibility for output of [`TripleMixPrng::fill_bytes`] and output after
 /// fill_bytes has been called.
@@ -200,9 +200,9 @@ mod tests {
     #[test]
     fn test_cross_platform_reproducibility() {
         use crate::TripleMixPrng;
+        use crate::reproducibility::CrossPlatform;
         use crate::seed::DEFAULT_SEED_SIZE;
         use rand_core::Rng;
-        use crate::reproducibility::CrossPlatform;
         let seed = [0u8; DEFAULT_SEED_SIZE];
         let mut prng = TripleMixPrng::<CrossPlatform>::from(&seed);
         let expected = "2EA9F9DD18BCB07B2B613BBBE3031EBD7AD9784CDDBDA8A6A9B46CED53A5A5CAF6DFD8656122BA6B0205523BAF3500F9A8EDBDADF9BD5E1400D2048C42B4078039F12C7CAD47202CE57D480C7B362A1A5FED8518E9F2DC1E8DA3B58A4BCE13957E848C8AEC29DCF47071F8CECCF535AADC1CE723244F113E4C02EA8558C281F85F8AAFF027DEFBFB15408AFB9069F0C385DCB44032207FD8863BFDD359F22988F008A481F3DDA45BE59BC41E1B794CCC5DA843A6A611546D6BE2A74308F62440DFEC8F37B4F656C73BF1C09F5614CFC74BDFE58F4C5DB9E0669B2E2657F1C07543764E36BD1F5654CB9FBA933E96004F2CBB6068494C029E991EF1E9DD95E309";
@@ -214,7 +214,10 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "reproducibility_cross_platform", feature = "reproducibility_same_endianness"))]
+    #[cfg(any(
+        feature = "reproducibility_cross_platform",
+        feature = "reproducibility_same_endianness"
+    ))]
     fn test_equivalence_generic<R: crate::Reproducibility + 'static>() {
         use crate::TripleMixPrng;
         use crate::seed::DEFAULT_SEED_SIZE;
