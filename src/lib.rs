@@ -23,6 +23,7 @@ use generate::Simd64;
 use rand_core::TryRng;
 use rand_core::block::BlockRng;
 use reproducibility::Reproducibility;
+use crate::reproducibility::DefaultReproducibility;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -69,7 +70,7 @@ impl TripleMixSimdCore {
 
 /// Instances must not be used again after being zeroized.
 #[derive(Clone, Debug)]
-pub struct TripleMixPrng<R: Reproducibility> {
+pub struct TripleMixPrng<R: Reproducibility = DefaultReproducibility> {
     block_core: BlockRng<TripleMixSimdCore>,
     reproducibility: PhantomData<R>,
 }

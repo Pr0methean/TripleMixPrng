@@ -14,6 +14,15 @@ pub trait Reproducibility: Clone + Copy {
     fn u128_as_bytes(input: u128) -> [u8; 16];
 }
 
+#[cfg(feature = "reproducibility_cross_platform")]
+pub type DefaultReproducibility = cross_platform::CrossPlatform;
+
+#[cfg(all(feature = "reproducibility_same_endianness", not(feature = "reproducibility_cross_platform")))]
+pub type DefaultReproducibility = same_endianness::SameEndianness;
+
+#[cfg(not(any(feature = "reproducibility_same_endianness", feature = "reproducibility_cross_platform")))]
+pub type DefaultReproducibility = NotReproducible;
+
 /// Output of [`TripleMixPrng::fill_bytes`] and the state of the PRNG afterward may depend on the
 /// address alignment where the byte slice starts and ends and the machine endianness.
 #[derive(Copy, Clone, Default, Debug)]
