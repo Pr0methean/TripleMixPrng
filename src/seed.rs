@@ -269,8 +269,16 @@ impl<R: Reproducibility> TripleMixPrng<R> {
 
 #[cfg(test)]
 mod tests {
-    use rand_core::Rng;
+    use generic_array::GenericArray;
+    use rand_core::{Rng, SeedableRng};
+    use tiny_keccak::{Hasher, Kmac};
     use crate::generate::{OUTPUTS_PER_STEP, SIMD_WIDTH};
+    use crate::reproducibility::NotReproducible;
+    use crate::seed::{get_base_kmac, DEFAULT_SEED_SIZE};
+    use crate::TripleMixPrng;
+
+    #[cfg(feature = "no_std")]
+    extern crate alloc;
 
     #[test]
     fn test_fork_independence_descendants() {
@@ -279,7 +287,7 @@ mod tests {
         #[cfg(not(feature = "no_std"))]
         let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         #[cfg(feature = "no_std")]
-        let mut previous_outputs = core::collections::BTreeSet::new();
+        let mut previous_outputs = alloc::collections::BTreeSet::new();
         for mut prng in crate::create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 for _ in 0..SAMPLES_PER_FORK {
@@ -301,7 +309,7 @@ mod tests {
         #[cfg(not(feature = "no_std"))]
         let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
         #[cfg(feature = "no_std")]
-        let mut previous_outputs = core::collections::BTreeSet::new();
+        let mut previous_outputs = alloc::collections::BTreeSet::new();
         for mut parent_prng in crate::create_rngs::<NotReproducible>() {
             for _ in 0..FORKS {
                 let mut prng = parent_prng.fork();
@@ -319,14 +327,14 @@ mod tests {
     fn test_seed_diffusion() {
         let seed = [0u8; DEFAULT_SEED_SIZE];
         let mut rng1 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
-        let start_val1 = rng1.try_next_u64().unwrap();
+        let start_val1 = rng1.next_u64();
 
         for byte_index in 0..DEFAULT_SEED_SIZE {
             for bit_index in 0..=7 {
                 let mut seed = [0u8; DEFAULT_SEED_SIZE];
                 seed[byte_index] = 1 << bit_index;
                 let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
-                let start_val2 = rng2.try_next_u64().unwrap();
+                let start_val2 = rng2.next_u64();
                 let flipped_bits = (start_val1 ^ start_val2).count_ones();
                 assert!(
                     flipped_bits > 1,

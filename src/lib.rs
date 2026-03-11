@@ -102,6 +102,8 @@ impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
 pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
     use core::simd::Simd;
     use rand::rngs::SysRng;
+    use crate::seed::DEFAULT_SEED_SIZE;
+    
     const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
     const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
     const LARGEST_DISTINCT_ODD: Simd64 =

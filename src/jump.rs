@@ -252,83 +252,92 @@ const fn pow_mat_2_exp(mut a: [u128; 128], mut exp: u32) -> [u128; 128] {
     a
 }
 
-#[test]
-fn test_jump_ahead_constants() {
-    assert_eq!(
-        pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 128),
-        TripleMixSimdCore::XOROSHIRO_JUMP_MAT
-    );
-    assert_eq!(
-        pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 256),
-        TripleMixSimdCore::XOROSHIRO_JUMP_MAT
-    );
+#[cfg(test)]
+mod tests {
+    use rand_core::Rng;
+    use crate::generate::OUTPUT_LEN;
+    use crate::jump::pow_mat_2_exp;
+    use crate::reproducibility::NotReproducible;
+    use crate::TripleMixSimdCore;
 
-    assert_eq!(
-        TripleMixSimdCore::TINYMT_JUMP_128_MAT,
-        pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 128)
-    );
-    assert_eq!(
-        TripleMixSimdCore::TINYMT_JUMP_256_MAT,
-        pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 256)
-    );
-}
+    #[test]
+    fn test_jump_ahead_constants() {
+        assert_eq!(
+            pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 128),
+            TripleMixSimdCore::XOROSHIRO_JUMP_MAT
+        );
+        assert_eq!(
+            pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 256),
+            TripleMixSimdCore::XOROSHIRO_JUMP_MAT
+        );
 
-#[test]
-fn test_jump_ahead() {
-    for mut prng in crate::create_rngs::<NotReproducible>() {
-        // Advance sequential by 12 steps (meaning 12 * 8 = 96 next_u64 calls)
-        for _ in 0..12 {
-            for _ in 0..OUTPUT_LEN {
-                prng.next_u64();
+        assert_eq!(
+            TripleMixSimdCore::TINYMT_JUMP_128_MAT,
+            pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 128)
+        );
+        assert_eq!(
+            TripleMixSimdCore::TINYMT_JUMP_256_MAT,
+            pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 256)
+        );
+    }
+
+    #[test]
+    fn test_jump_ahead() {
+        for mut prng in crate::create_rngs::<NotReproducible>() {
+            // Advance sequential by 12 steps (meaning 12 * 8 = 96 next_u64 calls)
+            for _ in 0..12 {
+                for _ in 0..OUTPUT_LEN {
+                    prng.next_u64();
+                }
             }
-        }
 
-        let mut prng_jmp = prng.clone();
-        // Advance jumping by 12 steps
-        prng_jmp.advance(12);
-        for _ in 0..12 {
-            for _ in 0..OUTPUT_LEN {
-                prng.next_u64();
+            let mut prng_jmp = prng.clone();
+            // Advance jumping by 12 steps
+            prng_jmp.advance(12);
+            for _ in 0..12 {
+                for _ in 0..OUTPUT_LEN {
+                    prng.next_u64();
+                }
             }
-        }
-        for _ in 0..OUTPUT_LEN {
-            assert_eq!(prng.next_u64(), prng_jmp.next_u64());
-        }
+            for _ in 0..OUTPUT_LEN {
+                assert_eq!(prng.next_u64(), prng_jmp.next_u64());
+            }
 
-        // Test advance_2_128 and advance consistency
-        let mut base_a_for_2_128 = prng.clone();
-        base_a_for_2_128.advance(1u128 << 127);
-        base_a_for_2_128.advance(1u128 << 127);
-        let mut base_b_for_2_128 = prng.clone();
-        base_b_for_2_128.advance(1);
-        base_b_for_2_128.advance(u128::MAX);
+            // Test advance_2_128 and advance consistency
+            let mut base_a_for_2_128 = prng.clone();
+            base_a_for_2_128.advance(1u128 << 127);
+            base_a_for_2_128.advance(1u128 << 127);
+            let mut base_b_for_2_128 = prng.clone();
+            base_b_for_2_128.advance(1);
+            base_b_for_2_128.advance(u128::MAX);
 
-        let mut prng_2_128 = prng.clone();
-        prng_2_128.advance_2_128(1);
+            let mut prng_2_128 = prng.clone();
+            prng_2_128.advance_2_128(1);
 
-        for _ in 0..10_000 {
-            // Ensure internal state logic lines up perfectly equivalent.
-            let prng_2_128_u64 = prng_2_128.next_u64();
-            assert_eq!(base_a_for_2_128.next_u64(), prng_2_128_u64);
-            assert_eq!(base_b_for_2_128.next_u64(), prng_2_128_u64);
-        }
+            for _ in 0..10_000 {
+                // Ensure internal state logic lines up perfectly equivalent.
+                let prng_2_128_u64 = prng_2_128.next_u64();
+                assert_eq!(base_a_for_2_128.next_u64(), prng_2_128_u64);
+                assert_eq!(base_b_for_2_128.next_u64(), prng_2_128_u64);
+            }
 
-        // Test advance_2_256 and advance consistency
-        let mut base_a_for_2_256 = prng.clone();
-        base_a_for_2_256.advance_2_128(1u128 << 127);
-        base_a_for_2_256.advance_2_128(1u128 << 127);
-        let mut base_b_for_2_256 = prng.clone();
-        base_b_for_2_256.advance_2_128(1u128 << 127);
-        base_b_for_2_256.advance_2_128(1u128 << 127);
+            // Test advance_2_256 and advance consistency
+            let mut base_a_for_2_256 = prng.clone();
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            base_a_for_2_256.advance_2_128(1u128 << 127);
+            let mut base_b_for_2_256 = prng.clone();
+            base_b_for_2_256.advance_2_128(1u128 << 127);
+            base_b_for_2_256.advance_2_128(1u128 << 127);
 
-        let mut prng_2_256 = prng.clone();
-        prng_2_256.advance_2_256(1);
+            let mut prng_2_256 = prng.clone();
+            prng_2_256.advance_2_256(1);
 
-        for _ in 0..10_000 {
-            // Ensure internal state logic lines up perfectly equivalent.
-            let prng_2_256_u64 = prng_2_256.next_u64();
-            assert_eq!(base_a_for_2_256.next_u64(), prng_2_256_u64);
-            assert_eq!(base_b_for_2_256.next_u64(), prng_2_256_u64);
+            for _ in 0..10_000 {
+                // Ensure internal state logic lines up perfectly equivalent.
+                let prng_2_256_u64 = prng_2_256.next_u64();
+                assert_eq!(base_a_for_2_256.next_u64(), prng_2_256_u64);
+                assert_eq!(base_b_for_2_256.next_u64(), prng_2_256_u64);
+            }
         }
     }
 }
