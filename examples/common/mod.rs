@@ -1,20 +1,20 @@
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rand::rngs::SysRng;
 use rand_core::TryRng;
-use rand_triplemix::SEED_SIZE;
+use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 use std::thread;
 
 pub fn get_random_seed() -> [u8; 256] {
     const OS_ENTROPY_BYTES: usize = 32;
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
         #[cfg_attr(
-            not(any(all(unix, target_arch = "x86_64"), feature = "rdrand")),
+            not(any(target_arch = "x86_64", target_arch = "x86")),
             allow(unused_mut)
         )]
         let mut seeded = false;
         if index >= 2 {
-            #[cfg(feature = "rdrand")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             if let Ok(mut rd_seed) = rdrand::RdSeed::new()
                 && rd_seed.try_fill_bytes(chunk).is_ok()
             {
@@ -32,7 +32,8 @@ pub fn get_random_seed() -> [u8; 256] {
                 SystemRandom::default().fill(chunk).unwrap();
                 eprintln!("Generated a seed chunk using aws-lc");
             }
-            #[allow(unused_assignments)] {
+            #[allow(unused_assignments)]
+            {
                 seeded = true;
             }
             thread::yield_now();

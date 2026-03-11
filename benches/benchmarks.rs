@@ -10,17 +10,26 @@ use criterion_cycles_per_byte::CyclesPerByte;
 use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
+use rand_triplemix::TripleMixPrng;
+use rand_triplemix::reproducibility::NotReproducible;
+#[cfg(feature = "reproducibility_cross_platform")]
+use rand_triplemix::reproducibility::cross_platform::CrossPlatform;
+#[cfg(feature = "reproducibility_same_endianness")]
+use rand_triplemix::reproducibility::same_endianness::SameEndianness;
+use std::mem::size_of;
+use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 
 fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
+    #[cfg(feature = "reproducibility_same_endianness")]
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
+    #[cfg(feature = "reproducibility_cross_platform")]
     let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
     #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
@@ -41,12 +50,14 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
                 black_box(&*misaligned_buffer);
             })
         });
+        #[cfg(feature = "reproducibility_same_endianness")]
         group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
             b.iter(|| {
                 triple_mix_reproducible.fill_bytes(misaligned_buffer);
                 black_box(&*misaligned_buffer);
             })
         });
+        #[cfg(feature = "reproducibility_cross_platform")]
         group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
             b.iter(|| {
                 triple_mix_x_reproducible.fill_bytes(misaligned_buffer);
@@ -65,22 +76,26 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
 }
 
 fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
-    let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
-    let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
     #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
     let mut group = c.benchmark_group(formatcp!("{PLATFORM}: next_u64"));
     group.throughput(Throughput::Bytes(size_of::<u64>() as u64));
     group.bench_function("TripleMixPrng", |b| b.iter(|| triple_mix.next_u64()));
-    group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
-        b.iter(|| triple_mix_reproducible.next_u64())
-    });
-    group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
-        b.iter(|| triple_mix_x_reproducible.next_u64())
-    });
+    #[cfg(feature = "reproducibility_same_endianness")] {
+        let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
+        group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
+            b.iter(|| triple_mix_reproducible.next_u64())
+        });
+    }
+    #[cfg(feature = "reproducibility_cross_platform")] {
+        let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
+        group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
+            b.iter(|| triple_mix_x_reproducible.next_u64())
+        });
+    }
     #[cfg(feature = "bench_include_threadrng")]
     group.bench_function("ThreadRng", |b| b.iter(|| thread_rng.next_u64()));
     group.finish();
