@@ -27,7 +27,9 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
     let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
+    #[cfg(feature = "reproducibility_same_endianness")]
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
+    #[cfg(feature = "reproducibility_cross_platform")]
     let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
     #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
@@ -77,21 +79,23 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
     let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
-    let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
-    let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
     #[cfg(feature = "bench_include_threadrng")]
     let mut thread_rng = rng();
     let mut group = c.benchmark_group(formatcp!("{PLATFORM}: next_u64"));
     group.throughput(Throughput::Bytes(size_of::<u64>() as u64));
     group.bench_function("TripleMixPrng", |b| b.iter(|| triple_mix.next_u64()));
-    #[cfg(feature = "reproducibility_same_endianness")]
-    group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
-        b.iter(|| triple_mix_reproducible.next_u64())
-    });
-    #[cfg(feature = "reproducibility_cross_platform")]
-    group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
-        b.iter(|| triple_mix_x_reproducible.next_u64())
-    });
+    #[cfg(feature = "reproducibility_same_endianness")] {
+        let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
+        group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
+            b.iter(|| triple_mix_reproducible.next_u64())
+        });
+    }
+    #[cfg(feature = "reproducibility_cross_platform")] {
+        let mut triple_mix_x_reproducible = TripleMixPrng::<CrossPlatform>::from(&seed);
+        group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
+            b.iter(|| triple_mix_x_reproducible.next_u64())
+        });
+    }
     #[cfg(feature = "bench_include_threadrng")]
     group.bench_function("ThreadRng", |b| b.iter(|| thread_rng.next_u64()));
     group.finish();
