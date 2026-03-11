@@ -11,7 +11,7 @@ use rand_core::block::Generator;
     target_feature = "avx2",
     not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
 ))]
-mod avx2;
+use crate::avx2;
 
 impl TripleMixSimdCore {
     const TINYMT_MAT1: u64 = 0xdaa51b54;
