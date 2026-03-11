@@ -13,9 +13,9 @@ use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::TripleMixPrng;
 use rand_triplemix::reproducibility::NotReproducible;
 #[cfg(feature = "reproducibility_cross_platform")]
-use rand_triplemix::reproducibility::CrossPlatform;
+use rand_triplemix::reproducibility::cross_platform::CrossPlatform;
 #[cfg(feature = "reproducibility_same_endianness")]
-use rand_triplemix::reproducibility::SameEndianness;
+use rand_triplemix::reproducibility::same_endianness::SameEndianness;
 use std::mem::size_of;
 use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 use std::env::consts::{ARCH, OS};
