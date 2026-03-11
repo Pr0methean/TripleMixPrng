@@ -1,12 +1,12 @@
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rand::rngs::SysRng;
 use rand_core::TryRng;
-use rand_triplemix::SEED_SIZE;
+use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 use std::thread;
 
 pub fn get_random_seed() -> [u8; 256] {
     const OS_ENTROPY_BYTES: usize = 32;
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
         #[cfg_attr(
             not(any(all(unix, target_arch = "x86_64"), feature = "rdrand")),

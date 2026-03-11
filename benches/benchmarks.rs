@@ -1,5 +1,5 @@
 use criterion::measurement::Measurement;
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 // Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
 // option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
@@ -10,14 +10,16 @@ use criterion_cycles_per_byte::CyclesPerByte;
 use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
-use rand_triplemix::{CrossPlatform, NotReproducible, SEED_SIZE, SameEndianness, TripleMixPrng};
+use rand_triplemix::TripleMixPrng;
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
+use rand_triplemix::reproducibility::{CrossPlatform, NotReproducible, SameEndianness};
+use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 
 fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);
@@ -65,7 +67,7 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
 }
 
 fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
-    let mut seed = [0u8; SEED_SIZE];
+    let mut seed = [0u8; DEFAULT_SEED_SIZE];
     SysRng.try_fill_bytes(&mut seed).unwrap();
     let mut triple_mix = TripleMixPrng::<NotReproducible>::from(&seed);
     let mut triple_mix_reproducible = TripleMixPrng::<SameEndianness>::from(&seed);

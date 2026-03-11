@@ -18,6 +18,9 @@ zeroize = { version = "1.8", optional = true }
 once_cell = { version = "1.21.3", optional = true, default-features = false }
 
 [features]
+jump = []  # Allows advancing this PRNG by an arbitrary amount.
+reproducibility_same_endianness = []  # Lets you guarantee that two instances will generate the same sequence.
+reproducibility_cross_platform = []  # Lets you guarantee that two instances will generate the same sequence.
 zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
 no_std = ["once_cell/race", "once_cell/alloc"]
