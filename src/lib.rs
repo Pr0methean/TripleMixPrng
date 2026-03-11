@@ -10,7 +10,7 @@ mod generate;
 #[cfg(feature = "jump")]
 pub mod jump;
 pub mod reproducibility;
-mod seed;
+pub mod seed;
 #[cfg(feature = "serde")]
 mod serde;
 #[cfg(feature = "zeroize")]

@@ -35,7 +35,7 @@ macro_rules! once_kmac {
 
 pub const DEFAULT_SEED_SIZE: usize = 64 * SIMD_WIDTH;
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
-pub const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
+const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 
 pub(crate) fn get_base_kmac() -> Kmac {
     once_kmac!(SEED_DOMAIN_STRING);
@@ -267,169 +267,175 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     }
 }
 
-#[test]
-fn test_fork_independence_descendants() {
-    const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
-    const FORKS: usize = 64;
-    #[cfg(not(feature = "no_std"))]
-    let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-    #[cfg(feature = "no_std")]
-    let mut previous_outputs = core::collections::BTreeSet::new();
-    for mut prng in crate::create_rngs::<NotReproducible>() {
-        for _ in 0..FORKS {
-            for _ in 0..SAMPLES_PER_FORK {
-                let next = prng.next_u64();
-                print!("{next:016X} ");
-                assert!(previous_outputs.insert(next));
-            }
-            println!();
-            prng = prng.fork();
-        }
-        println!();
-    }
-}
+#[cfg(test)]
+mod tests {
+    use rand_core::Rng;
+    use crate::generate::{OUTPUTS_PER_STEP, SIMD_WIDTH};
 
-#[test]
-fn test_fork_independence_siblings() {
-    const SAMPLES_PER_FORK: usize = 32;
-    const FORKS: usize = 64;
-    #[cfg(not(feature = "no_std"))]
-    let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
-    #[cfg(feature = "no_std")]
-    let mut previous_outputs = core::collections::BTreeSet::new();
-    for mut parent_prng in crate::create_rngs::<NotReproducible>() {
-        for _ in 0..FORKS {
-            let mut prng = parent_prng.fork();
-            for _ in 0..SAMPLES_PER_FORK {
-                let next = prng.next_u64();
-                print!("{next:016X}");
-                assert!(previous_outputs.insert(next));
+    #[test]
+    fn test_fork_independence_descendants() {
+        const SAMPLES_PER_FORK: usize = OUTPUTS_PER_STEP * SIMD_WIDTH * 4;
+        const FORKS: usize = 64;
+        #[cfg(not(feature = "no_std"))]
+        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(feature = "no_std")]
+        let mut previous_outputs = core::collections::BTreeSet::new();
+        for mut prng in crate::create_rngs::<NotReproducible>() {
+            for _ in 0..FORKS {
+                for _ in 0..SAMPLES_PER_FORK {
+                    let next = prng.next_u64();
+                    print!("{next:016X} ");
+                    assert!(previous_outputs.insert(next));
+                }
+                println!();
+                prng = prng.fork();
             }
             println!();
         }
     }
-}
 
-#[test]
-fn test_seed_diffusion() {
-    let seed = [0u8; DEFAULT_SEED_SIZE];
-    let mut rng1 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
-    let start_val1 = rng1.try_next_u64().unwrap();
-
-    for byte_index in 0..DEFAULT_SEED_SIZE {
-        for bit_index in 0..=7 {
-            let mut seed = [0u8; DEFAULT_SEED_SIZE];
-            seed[byte_index] = 1 << bit_index;
-            let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
-            let start_val2 = rng2.try_next_u64().unwrap();
-            let flipped_bits = (start_val1 ^ start_val2).count_ones();
-            assert!(
-                flipped_bits > 1,
-                "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure."
-            );
-            assert!(
-                flipped_bits < 63,
-                "Changing byte {byte_index} bit {bit_index} of the seed just inverted the first output! Diffusion failure."
-            );
-            assert_ne!(start_val1, 0, "Output shouldn't be zero");
+    #[test]
+    fn test_fork_independence_siblings() {
+        const SAMPLES_PER_FORK: usize = 32;
+        const FORKS: usize = 64;
+        #[cfg(not(feature = "no_std"))]
+        let mut previous_outputs = std::collections::HashSet::with_capacity(SAMPLES_PER_FORK * FORKS);
+        #[cfg(feature = "no_std")]
+        let mut previous_outputs = core::collections::BTreeSet::new();
+        for mut parent_prng in crate::create_rngs::<NotReproducible>() {
+            for _ in 0..FORKS {
+                let mut prng = parent_prng.fork();
+                for _ in 0..SAMPLES_PER_FORK {
+                    let next = prng.next_u64();
+                    print!("{next:016X}");
+                    assert!(previous_outputs.insert(next));
+                }
+                println!();
+            }
         }
     }
-}
 
-#[test]
-fn test_permutation_determinism() {
-    let base = get_base_kmac();
-    let p1 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
-    let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
+    #[test]
+    fn test_seed_diffusion() {
+        let seed = [0u8; DEFAULT_SEED_SIZE];
+        let mut rng1 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
+        let start_val1 = rng1.try_next_u64().unwrap();
 
-    // Ensure same seed + same tweak = identical state
-    assert_eq!(p1.xr0.as_array(), p2.xr0.as_array());
-    assert_eq!(p1.tm1.as_array(), p2.tm1.as_array());
-}
+        for byte_index in 0..DEFAULT_SEED_SIZE {
+            for bit_index in 0..=7 {
+                let mut seed = [0u8; DEFAULT_SEED_SIZE];
+                seed[byte_index] = 1 << bit_index;
+                let mut rng2 = TripleMixPrng::<NotReproducible>::from_seed(GenericArray::from(seed));
+                let start_val2 = rng2.try_next_u64().unwrap();
+                let flipped_bits = (start_val1 ^ start_val2).count_ones();
+                assert!(
+                    flipped_bits > 1,
+                    "Changing byte {byte_index} bit {bit_index} of the seed did not affect the first output! Diffusion failure."
+                );
+                assert!(
+                    flipped_bits < 63,
+                    "Changing byte {byte_index} bit {bit_index} of the seed just inverted the first output! Diffusion failure."
+                );
+                assert_ne!(start_val1, 0, "Output shouldn't be zero");
+            }
+        }
+    }
 
-#[test]
-fn test_permutation_uniqueness_tweak() {
-    let base = get_base_kmac();
-    let p1 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
-    let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 1);
+    #[test]
+    fn test_permutation_determinism() {
+        let base = get_base_kmac();
+        let p1 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
+        let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
 
-    // Different tweaks MUST produce different states
-    assert_ne!(p1.xr0.as_array(), p2.xr0.as_array());
-}
+        // Ensure same seed + same tweak = identical state
+        assert_eq!(p1.xr0.as_array(), p2.xr0.as_array());
+        assert_eq!(p1.tm1.as_array(), p2.tm1.as_array());
+    }
 
-#[test]
-fn test_permutation_collision_resistance() {
-    let base = get_base_kmac();
-    let mut results = std::collections::HashSet::new();
+    #[test]
+    fn test_permutation_uniqueness_tweak() {
+        let base = get_base_kmac();
+        let p1 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
+        let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 1);
 
-    // Run 1000 permutations and check for any identical full states
-    // In a true permutation, collisions are mathematically impossible.
-    for i in 0..1000 {
-        let p = TripleMixPrng::<NotReproducible>::permute(&base, i);
-        let state_snapshot = (
-            p.xr0.as_array().clone(),
-            p.xr1.as_array().clone(),
-            p.tm0.as_array().clone(),
-            p.tm1.as_array().clone(),
-        );
+        // Different tweaks MUST produce different states
+        assert_ne!(p1.xr0.as_array(), p2.xr0.as_array());
+    }
+
+    #[test]
+    fn test_permutation_collision_resistance() {
+        let base = get_base_kmac();
+        let mut results = std::collections::HashSet::new();
+
+        // Run 1000 permutations and check for any identical full states
+        // In a true permutation, collisions are mathematically impossible.
+        for i in 0..1000 {
+            let p = TripleMixPrng::<NotReproducible>::permute(&base, i);
+            let state_snapshot = (
+                p.xr0.as_array().clone(),
+                p.xr1.as_array().clone(),
+                p.tm0.as_array().clone(),
+                p.tm1.as_array().clone(),
+            );
+            assert!(
+                results.insert(state_snapshot),
+                "Collision detected in Feistel permutation at tweak {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_diffusion_avalanche() {
+        let base1 = get_base_kmac();
+        let mut base2 = Kmac::v256(b"Test-Suite", &[]);
+        base2.update(b"test-seed-124"); // 1 bit difference from base1
+
+        let p1 = TripleMixPrng::<NotReproducible>::permute(&base1, 0);
+        let p2 = TripleMixPrng::<NotReproducible>::permute(&base2, 0);
+
+        // Count differing bits in xr0 across all lanes
+        let mut diff_bits = 0;
+        for i in 0..4 {
+            diff_bits += (p1.xr0.as_array()[i] ^ p2.xr0.as_array()[i]).count_ones();
+        }
+
+        // Avalanche effect: ~50% of bits should flip.
+        // For 256 bits of xr0, we expect ~128. Threshold at 80 for safety.
         assert!(
-            results.insert(state_snapshot),
-            "Collision detected in Feistel permutation at tweak {}",
-            i
+            diff_bits > 80,
+            "Poor diffusion: only {} bits flipped",
+            diff_bits
         );
     }
-}
 
-#[test]
-fn test_diffusion_avalanche() {
-    let base1 = get_base_kmac();
-    let mut base2 = Kmac::v256(b"Test-Suite", &[]);
-    base2.update(b"test-seed-124"); // 1 bit difference from base1
+    #[test]
+    fn test_invariant_fixing() {
+        let base = get_base_kmac();
+        let p = TripleMixPrng::<NotReproducible>::permute(&base, 42);
 
-    let p1 = TripleMixPrng::<NotReproducible>::permute(&base1, 0);
-    let p2 = TripleMixPrng::<NotReproducible>::permute(&base2, 0);
+        // LCG increment must be odd
+        for &inc in p.inc_lo.as_array() {
+            assert_eq!(inc % 2, 1, "LCG increment was not odd");
+        }
 
-    // Count differing bits in xr0 across all lanes
-    let mut diff_bits = 0;
-    for i in 0..4 {
-        diff_bits += (p1.xr0.as_array()[i] ^ p2.xr0.as_array()[i]).count_ones();
+        // TinyMT dead bit (MSB of tm0) must be 0
+        for &tm in p.tm0.as_array() {
+            assert!(tm <= 0x7FFFFFFFFFFFFFFF, "TinyMT dead bit was not cleared");
+        }
     }
 
-    // Avalanche effect: ~50% of bits should flip.
-    // For 256 bits of xr0, we expect ~128. Threshold at 80 for safety.
-    assert!(
-        diff_bits > 80,
-        "Poor diffusion: only {} bits flipped",
-        diff_bits
-    );
-}
+    #[test]
+    fn test_lane_swap_integrity() {
+        // This test ensures that the swap logic actually moves data between lanes 0/1 and 2/3
+        // We use a custom round function effect by checking different rounds.
+        let base = get_base_kmac();
+        let p = TripleMixPrng::<NotReproducible>::permute(&base, 7);
 
-#[test]
-fn test_invariant_fixing() {
-    let base = get_base_kmac();
-    let p = TripleMixPrng::<NotReproducible>::permute(&base, 42);
-
-    // LCG increment must be odd
-    for &inc in p.inc_lo.as_array() {
-        assert_eq!(inc % 2, 1, "LCG increment was not odd");
-    }
-
-    // TinyMT dead bit (MSB of tm0) must be 0
-    for &tm in p.tm0.as_array() {
-        assert!(tm <= 0x7FFFFFFFFFFFFFFF, "TinyMT dead bit was not cleared");
-    }
-}
-
-#[test]
-fn test_lane_swap_integrity() {
-    // This test ensures that the swap logic actually moves data between lanes 0/1 and 2/3
-    // We use a custom round function effect by checking different rounds.
-    let base = get_base_kmac();
-    let p = TripleMixPrng::<NotReproducible>::permute(&base, 7);
-
-    // Since it's a 4-round Feistel, if we started with 0,
-    // the final state should be high-entropy in all lanes.
-    for i in 0..4 {
-        assert_ne!(p.xr0.as_array()[i], 0, "Lane {} remained zero", i);
+        // Since it's a 4-round Feistel, if we started with 0,
+        // the final state should be high-entropy in all lanes.
+        for i in 0..4 {
+            assert_ne!(p.xr0.as_array()[i], 0, "Lane {} remained zero", i);
+        }
     }
 }

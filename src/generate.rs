@@ -105,12 +105,12 @@ fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
     }
 }
 
-pub const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
-pub const SIMD_WIDTH: usize = 4;
-pub const OUTPUTS_PER_STEP: usize = 2;
-pub const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
+pub(crate)  const TINYMT64_LANE_MASK: u64 = 0x7fff_ffff_ffff_ffff_u64;
+pub(crate)  const SIMD_WIDTH: usize = 4;
+pub(crate) const OUTPUTS_PER_STEP: usize = 2;
+pub(crate)  const OUTPUT_LEN: usize = OUTPUTS_PER_STEP * SIMD_WIDTH;
 
-pub type Simd64 = Simd<u64, SIMD_WIDTH>;
+pub(crate)  type Simd64 = Simd<u64, SIMD_WIDTH>;
 
 #[inline(always)]
 fn rotl(x: Simd64, k: u64) -> Simd64 {
@@ -118,7 +118,7 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 }
 
 #[inline(always)]
-pub fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
+pub(crate) fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64, i: Simd64) -> (Simd64, Simd64) {
     #[inline(always)]
     fn rotl16(d: Simd64) -> Simd64 {
         let d_transmuted: u16x16 = cast(d);
@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_second_derivative_random_inputs() {
+    fn test_second_derivative_random_inputs() {
         let mut rng = rng();
         let mut random_inputs = [0u64; 20];
         for _ in 0..5 {
