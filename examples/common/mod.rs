@@ -9,12 +9,12 @@ pub fn get_random_seed() -> [u8; 256] {
     let mut seed = [0u8; DEFAULT_SEED_SIZE];
     for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
         #[cfg_attr(
-            not(any(all(unix, target_arch = "x86_64"), feature = "rdrand")),
+            not(any(target_arch = "x86_64", target_arch = "x86")),
             allow(unused_mut)
         )]
         let mut seeded = false;
         if index >= 2 {
-            #[cfg(feature = "rdrand")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             if let Ok(mut rd_seed) = rdrand::RdSeed::new()
                 && rd_seed.try_fill_bytes(chunk).is_ok()
             {
