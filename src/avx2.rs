@@ -1,6 +1,6 @@
 use core::arch::x86_64::*;
 
-use super::Simd64;
+use crate::generate::Simd64;
 
 // ============================================================================
 // AVX2-optimized 64-bit multiplication (the ONLY operation that differs)
