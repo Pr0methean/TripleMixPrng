@@ -1,10 +1,17 @@
-use crate::{TripleMixSimdCore, avx2};
+use crate::TripleMixSimdCore;
 use bytemuck::cast;
 use core::simd::cmp::SimdPartialOrd;
 use core::simd::num::{SimdInt, SimdUint};
 use core::simd::{Simd, simd_swizzle, u8x32, u16x16, u32x8};
 use core::slice::from_mut;
 use rand_core::block::Generator;
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+))]
+mod avx2;
 
 impl TripleMixSimdCore {
     const TINYMT_MAT1: u64 = 0xdaa51b54;
