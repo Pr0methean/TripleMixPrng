@@ -47,7 +47,7 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Run benchmarks
-      run: cargo +nightly bench -- --output-format bencher | tee bench-output.txt
+      run: cargo +nightly bench --features reproducibility_cross_platform -- --output-format bencher | tee bench-output.txt
       timeout-minutes: 20
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1

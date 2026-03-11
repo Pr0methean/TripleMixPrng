@@ -11,7 +11,12 @@ use rand::rng;
 use rand::rngs::SysRng;
 use rand_core::{Rng, SeedableRng, TryRng};
 use rand_triplemix::TripleMixPrng;
-use rand_triplemix::reproducibility::{CrossPlatform, NotReproducible, SameEndianness};
+use rand_triplemix::reproducibility::NotReproducible;
+#[cfg(feature = "reproducibility_cross_platform")]
+use rand_triplemix::reproducibility::CrossPlatform;
+#[cfg(feature = "reproducibility_same_endianness")]
+use rand_triplemix::reproducibility::SameEndianness;
+use std::mem::size_of;
 use rand_triplemix::seed::DEFAULT_SEED_SIZE;
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
@@ -43,12 +48,14 @@ fn fill_bytes<T: Measurement>(c: &mut Criterion<T>) {
                 black_box(&*misaligned_buffer);
             })
         });
+        #[cfg(feature = "reproducibility_same_endianness")]
         group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
             b.iter(|| {
                 triple_mix_reproducible.fill_bytes(misaligned_buffer);
                 black_box(&*misaligned_buffer);
             })
         });
+        #[cfg(feature = "reproducibility_cross_platform")]
         group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
             b.iter(|| {
                 triple_mix_x_reproducible.fill_bytes(misaligned_buffer);
@@ -77,9 +84,11 @@ fn next_u64<T: Measurement>(c: &mut Criterion<T>) {
     let mut group = c.benchmark_group(formatcp!("{PLATFORM}: next_u64"));
     group.throughput(Throughput::Bytes(size_of::<u64>() as u64));
     group.bench_function("TripleMixPrng", |b| b.iter(|| triple_mix.next_u64()));
+    #[cfg(feature = "reproducibility_same_endianness")]
     group.bench_function("TripleMixPrng with SameEndianness reproducibility", |b| {
         b.iter(|| triple_mix_reproducible.next_u64())
     });
+    #[cfg(feature = "reproducibility_cross_platform")]
     group.bench_function("TripleMixPrng with CrossPlatform reproducibility", |b| {
         b.iter(|| triple_mix_x_reproducible.next_u64())
     });
