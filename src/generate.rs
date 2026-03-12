@@ -555,10 +555,10 @@ mod tests {
             for _ in 0..SAMPLE_COUNT {
                 let second = prng.next_u64();
                 for j in 0..=63 {
-                    let jth_bit_of_second = ((second >> j) & 1) << 1;
+                    let double_jth_bit_of_second = ((second >> j) & 1) << 1;
                     for i in 0..=63 {
-                        bins[j][i][((second >> i) & 1 | jth_bit_of_second) as usize] += 1;
-                        lagged_bins[j][i][((first >> i) & 1 | jth_bit_of_second) as usize] += 1;
+                        bins[j][i][(((second >> i) & 1) | double_jth_bit_of_second) as usize] += 1;
+                        lagged_bins[j][i][(((first >> i) & 1) | double_jth_bit_of_second) as usize] += 1;
                     }
                 }
                 first = second;
