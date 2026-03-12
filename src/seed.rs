@@ -41,13 +41,13 @@ macro_rules! once_kmac {
 /// it with any slower source the way the operating system usually does. It will always be at least
 /// 256 bytes, because TripleMixPrng's internal state contains 2040 variable bits and the extra 8
 /// bits help ensure all or nearly all valid states are possible as initial states.
-pub const LARGE_SEED_SIZE: usize = 287; // because each clone that becomes round_kmac then absorbs 128+16+1=145 bytes
+pub const LARGE_SEED_SIZE: usize = 288;
 
 /// This is the recommended seed size when instantiating TripleMixPrng from a SysRng. Windows, MacOS
 /// and Linux CSPRNGs are designed to provide only 256 bits of security, so this is the smallest
 /// size that's at least 32 bytes and provides a whole number of input blocks to the SHA3-512-KMAC.
 /// It will make the TripleMixPrng faster to create than any larger seed size.
-pub const DEFAULT_SEED_SIZE: usize = 71; // because each clone that becomes round_kmac then absorbs 128+16+1=145 bytes
+pub const DEFAULT_SEED_SIZE: usize = 72;
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
 const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 
@@ -102,9 +102,9 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut inc_lo = Simd64::splat(0);
         let mut inc_hi = Simd64::splat(0);
         for round in 0..4 {
+            let tweak = tweak.wrapping_add((round as u128) << 126);
             let mut round_kmac = base.clone();
             round_kmac.update(&R::u128_as_bytes(tweak));
-            round_kmac.update(&[round as u8]);
 
             // Update KMAC from right half
             let mut buffer = [0u64; 16];
