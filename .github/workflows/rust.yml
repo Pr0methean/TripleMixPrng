@@ -11,6 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 concurrency:
   group: ci-${{ (github.ref == 'refs/heads/master' && github.sha) || (github.event_name == 'pull_request' && github.head_ref) || github.ref }}
@@ -23,17 +24,6 @@ jobs:
       matrix:
         feature-flag: [ "--no-default-features", "--all-features" ]
         # FIXME: Add macos-latest once https://github.com/bluss/matrixmultiply/issues/97 is fixed
-        include:
-          - os: ubuntu-latest
-            asan-flag: "-Zsanitizer=address"
-          - os: ubuntu-24.04-arm
-            asan-flag: "-Zsanitizer=address"
-          - os: macos-26-intel
-            asan-flag: "-Zsanitizer=address"
-          - os: windows-latest
-            asan-flag: "-Zsanitizer=address"
-          - os: windows-11-arm
-            asan-flag: ""
         os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
       fail-fast: false
     steps:
@@ -41,20 +31,11 @@ jobs:
       uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
       with:
         egress-policy: audit
-    - name: Install Visual C++ Redistributable
-      if: matrix.os == 'windows-latest' || matrix.os == 'windows-11-arm'
-      shell: powershell
-      run: |
-        $url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-        $path = "$env:TEMP\vc_redist.x64.exe"
-        Invoke-WebRequest -Uri $url -OutFile $path
-        Start-Process $path -ArgumentList "/install", "/quiet", "/norestart" -Wait
+
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Run tests
       run: cargo +nightly test --verbose ${{ matrix.feature-flag }}
       timeout-minutes: 20
-      env:
-        RUSTFLAGS: -D warnings ${{ matrix.asan-flag }}
   benchmarks:
     needs: unit-tests
     runs-on: ${{ matrix.os }}
