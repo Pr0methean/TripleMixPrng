@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
 use generic_array::GenericArray;
+use rand::RngExt;
 use rand_core::block::BlockRng;
 use rand_core::{Rng, SeedableRng};
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
@@ -205,8 +206,13 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         };
         let mut padding = [0u64; 4]; // 32 bytes + 256-byte core state = 288 bytes = 4 blocks
         let remaining = self.block_core.remaining_results();
-        padding[0] = remaining.len() as u64;
-        padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
+        let remaining_len = remaining.len();
+        if remaining_len > 0 {
+            padding[0] = remaining_len as u64;
+            padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
+        } else {
+            self.fill(&mut padding);
+        }
         fork_kmac.update(self.block_core.core.as_bytes());
         fork_kmac.update(R::cast_u64_slice_as_u8(&padding).as_ref());
         self.block_core.reset_and_skip(0);
