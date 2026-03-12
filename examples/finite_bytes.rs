@@ -23,12 +23,12 @@ fn main() {
         let mut seed = [0u8; LARGE_SEED_SIZE];
         seed[0..(LARGE_SEED_SIZE.min(decoded_seed.len()))].copy_from_slice(&decoded_seed);
         eprintln!("Seed: {}", seed.map(|b| format!("{:02X}", b)).join(""));
-        prng = TripleMixPrng::from_seed(seed.into());
+        prng = TripleMixPrng::from(seed);
     } else if args.get(1) == Some(&OsString::from_str("z").unwrap()) {
         prng = TripleMixPrng::almost_all_zeroes_state();
     } else {
         let seed = get_random_seed();
-        prng = TripleMixPrng::from_seed(seed.into());
+        prng = TripleMixPrng::from(seed);
     }
     let mut output_so_far = 0;
     loop {
