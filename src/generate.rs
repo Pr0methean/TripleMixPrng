@@ -547,34 +547,35 @@ mod tests {
     #[test]
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
+        const CHUNK_SIZE: usize = 1 << 11;
+        const CHUNK_COUNT: usize = SAMPLE_COUNT / CHUNK_SIZE;
         const P_THRESHOLD: f64 = 1e-6;
-
         for prng in crate::create_rngs::<NotReproducible>() {
             // Flatten to 2D for better cache locality
             let mut bins = [[0u32; 4]; 64*64];
             let mut lagged_bins = [[0u32; 4]; 64*64];
-
+            let mut local_prng = prng.clone();
             // Process in a cache-friendly order
-            for i in 0..64 {
+            let mut chunk = [0u64; CHUNK_SIZE + 1];
+            chunk[0] = local_prng.next_u64();
+            for _ in 0..CHUNK_COUNT {
+                local_prng.fill(&mut chunk[1..]);
+                for i in 0..64 {
+                    for j in 0..64 {
+                        let row_index = j * 64 + i;
+                        let nonlagged_row = &mut bins[row_index];
+                        let lagged_row = &mut lagged_bins[row_index];
+                        for [first, second] in chunk.array_windows().copied() {
+                            let double_ith_bit_of_second = ((second >> i) & 1) << 1;
+                            let nonlagged_bin = (((second >> j) & 1) | double_ith_bit_of_second) as usize;
+                            let lagged_bin = (((first >> j) & 1) | double_ith_bit_of_second) as usize;
 
-                for j in 0..64 {
-                    let mut local_prng = prng.clone();
-                    let row_index = j * 64 + i;
-                    let nonlagged_row = &mut bins[row_index];
-                    let lagged_row = &mut lagged_bins[row_index];
-
-                    let mut first = local_prng.next_u64();
-                    for _ in 0..SAMPLE_COUNT {
-                        let second = local_prng.next_u64();
-                        let double_ith_bit_of_second = ((second >> i) & 1) << 1;
-                        let nonlagged_bin = (((second >> j) & 1) | double_ith_bit_of_second) as usize;
-                        let lagged_bin = (((first >> j) & 1) | double_ith_bit_of_second) as usize;
-
-                        nonlagged_row[nonlagged_bin] += 1;
-                        lagged_row[lagged_bin] += 1;
-                        first = second;
+                            nonlagged_row[nonlagged_bin] += 1;
+                            lagged_row[lagged_bin] += 1;
+                        }
                     }
                 }
+                chunk[0] = chunk[CHUNK_SIZE - 1];
             }
 
             // Testing phase - convert back to 3D view for readability
