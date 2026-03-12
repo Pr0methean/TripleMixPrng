@@ -558,7 +558,7 @@ mod tests {
             let mut chunk = [0u64; CHUNK_SIZE + 1];
             chunk[0] = prng.next_u64();
             for _ in 0..CHUNK_COUNT {
-                prng.fill(&mut chunk[1..]);
+                prng.fill_bytes(cast_slice_mut(&mut chunk[1..]));
                 for i in 0..64 {
                     for j in 0..64 {
                         let row_index = j * 64 + i;
@@ -969,7 +969,7 @@ mod tests {
 
             for _ in 0..10000 {
                 let mut matrix = [0u64; 64];
-                rng.fill(&mut matrix);
+             rng.fill_bytes(cast_slice_mut(&mut matrix));
                 let rank = gf2_rank(matrix);
                 assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
                 if rank == 60 {
@@ -989,7 +989,7 @@ mod tests {
             const N: usize = 1 << 21;
 
             let mut x = vec![0u64; N];
-            rng.fill(x.as_mut_slice());
+         rng.fill_bytes(cast_slice_mut(&mut x));
 
             // first difference
             for i in 0..N - 1 {
