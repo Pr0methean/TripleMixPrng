@@ -16,6 +16,7 @@ mod serde;
 #[cfg(feature = "zeroize")]
 mod zeroize;
 
+use crate::reproducibility::DefaultReproducibility;
 use const_format::formatcp;
 use core::convert::Infallible;
 use core::marker::PhantomData;
@@ -23,7 +24,6 @@ use generate::Simd64;
 use rand_core::TryRng;
 use rand_core::block::BlockRng;
 use reproducibility::Reproducibility;
-use crate::reproducibility::DefaultReproducibility;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -101,10 +101,10 @@ impl<R: Reproducibility> TryRng for TripleMixPrng<R> {
 
 #[cfg(test)]
 pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
+    use crate::seed::DEFAULT_SEED_SIZE;
     use core::simd::Simd;
     use rand::rngs::SysRng;
-    use crate::seed::DEFAULT_SEED_SIZE;
-    
+
     const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
     const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
     const LARGEST_DISTINCT_ODD: Simd64 =
