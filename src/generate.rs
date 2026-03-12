@@ -558,8 +558,9 @@ mod tests {
                 let second = sample_pair[1];
                 for i in 0..=63 {
                     for j in 0..=63 {
-                        bins[i][j][((second >> i) & 1 | (((second >> j) & 1) << 1)) as usize] += 1;
-                        lagged_bins[i][j][((first >> i) & 1 | (((second >> j) & 1) << 1)) as usize] += 1;
+                        let jth_bit_of_second = ((second >> j) & 1) << 1;
+                        bins[i][j][((second >> i) & 1 | jth_bit_of_second) as usize] += 1;
+                        lagged_bins[i][j][((first >> i) & 1 | jth_bit_of_second) as usize] += 1;
                     }
                 }
             }
