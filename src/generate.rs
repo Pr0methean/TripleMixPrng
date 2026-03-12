@@ -26,8 +26,6 @@ impl TripleMixSimdCore {
         0x0082_efa9_8ec4_e6c8,
     ]);
 
-    // 31319 8A2E0 37073 44A40 93822 299F3 1D008 2EFA9 8EC4E 6C894 52821 E638D 01377 BE546 6CF34 E90C6 CC0AC
-
     pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
         const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 6, 7];
