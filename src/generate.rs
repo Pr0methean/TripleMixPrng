@@ -557,8 +557,8 @@ mod tests {
                 for j in 0..=63 {
                     let jth_bit_of_second = ((second >> j) & 1) << 1;
                     for i in 0..=63 {
-                        bins[i][j][((second >> i) & 1 | jth_bit_of_second) as usize] += 1;
-                        lagged_bins[i][j][((first >> i) & 1 | jth_bit_of_second) as usize] += 1;
+                        bins[j][i][((second >> i) & 1 | jth_bit_of_second) as usize] += 1;
+                        lagged_bins[j][i][((first >> i) & 1 | jth_bit_of_second) as usize] += 1;
                     }
                 }
                 first = second;
@@ -567,7 +567,7 @@ mod tests {
                 for j in 0..=63 {
                     if j > i {
                         let p = goodness_of_fit(
-                            bins[i][j].map(|bin| bin as f64),
+                            bins[j][i].map(|bin| bin as f64),
                             [SAMPLE_COUNT as f64 * 0.25; 4],
                             P_THRESHOLD,
                         )
@@ -576,11 +576,11 @@ mod tests {
                         assert!(
                             p >= P_THRESHOLD,
                             "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
-                            bins[i][j]
+                            bins[j][i]
                         );
                     }
                     let p = goodness_of_fit(
-                        lagged_bins[i][j].map(|bin| bin as f64),
+                        lagged_bins[j][i].map(|bin| bin as f64),
                         [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
                         P_THRESHOLD,
                     )
@@ -589,7 +589,7 @@ mod tests {
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
-                        lagged_bins[i][j]
+                        lagged_bins[j][i]
                     );
                 }
             }
