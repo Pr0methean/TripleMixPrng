@@ -1,8 +1,6 @@
 use criterion::measurement::Measurement;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-// Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
-// option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
 use const_format::formatcp;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
@@ -20,6 +18,7 @@ use rand_triplemix::seed::{DEFAULT_SEED_SIZE, LARGE_SEED_SIZE};
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
 use std::mem::size_of;
+use core::time::Duration;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 
@@ -131,7 +130,17 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     let seed_4096 = [0u8; 512];
 
     // Benchmark from_seed with various sizes
-    for size in [8, 16, 32, 64, DEFAULT_SEED_SIZE, 128, 256, LARGE_SEED_SIZE, 512] {
+    for size in [
+        8,
+        16,
+        32,
+        64,
+        DEFAULT_SEED_SIZE,
+        128,
+        256,
+        LARGE_SEED_SIZE,
+        512,
+    ] {
         let input_seed = &seed_4096[..size];
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::new("from_seed", size), input_seed, move |b, s| {
@@ -152,12 +161,17 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     group.finish();
 }
 
+// Using criterion_cycles_per_byte on aarch64 requires a custom Linux kernel module, so it's not an
+// option on GitHub Actions hosted runners; and aarch64 on other OSs isn't currently supported.
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 criterion_group!(
     name = benches;
-    config = Criterion::default().with_measurement(CyclesPerByte);
+    config = Criterion::default().with_measurement(CyclesPerByte).warm_up_time(Duration::from_secs(10));
     targets = fill_bytes, next_u64, init
 );
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-criterion_group!(name = benches; config = Criterion::default(); targets = fill_bytes, next_u64, init);
+criterion_group!(
+    name = benches;
+    config = Criterion::default().warm_up_time(Duration::from_secs(10));
+    targets = fill_bytes, next_u64, init);
 criterion_main!(benches);

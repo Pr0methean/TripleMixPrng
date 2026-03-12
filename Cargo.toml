@@ -26,7 +26,7 @@ reproducibility_same_endianness = []  # Lets you guarantee that two instances wi
 reproducibility_cross_platform = []  # Lets you guarantee that two instances will generate the same sequence.
 zeroize = ["zeroize/zeroize_derive"]
 serde = ["serde/serde_derive"]
-no_std = ["once_cell/race", "once_cell/alloc"]
+no_std = ["once_cell/race", "once_cell/alloc", "serde/alloc"]
 bench_include_threadrng = []
 
 [lib]

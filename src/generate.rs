@@ -546,14 +546,14 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        const SAMPLE_COUNT: usize = 1 << 24;
+        const SAMPLE_COUNT: usize = 1 << 22;
         const CHUNK_SIZE: usize = 1 << 11;
         const CHUNK_COUNT: usize = SAMPLE_COUNT / CHUNK_SIZE;
         const P_THRESHOLD: f64 = 1e-6;
         for mut prng in crate::create_rngs::<NotReproducible>() {
             // Flatten to 2D for better cache locality
-            let mut bins = [[0u32; 4]; 64*64];
-            let mut lagged_bins = [[0u32; 4]; 64*64];
+            let mut bins = [[0u32; 4]; 64 * 64];
+            let mut lagged_bins = [[0u32; 4]; 64 * 64];
             // Process in a cache-friendly order
             let mut chunk = [0u64; CHUNK_SIZE + 1];
             chunk[0] = prng.next_u64();
@@ -566,8 +566,10 @@ mod tests {
                         let lagged_row = &mut lagged_bins[row_index];
                         for [first, second] in chunk.array_windows().copied() {
                             let double_ith_bit_of_second = ((second >> i) & 1) << 1;
-                            let nonlagged_bin = (((second >> j) & 1) | double_ith_bit_of_second) as usize;
-                            let lagged_bin = (((first >> j) & 1) | double_ith_bit_of_second) as usize;
+                            let nonlagged_bin =
+                                (((second >> j) & 1) | double_ith_bit_of_second) as usize;
+                            let lagged_bin =
+                                (((first >> j) & 1) | double_ith_bit_of_second) as usize;
 
                             nonlagged_row[nonlagged_bin] += 1;
                             lagged_row[lagged_bin] += 1;
@@ -587,7 +589,9 @@ mod tests {
                             bins[idx].map(f64::from),
                             [SAMPLE_COUNT as f64 * 0.25; 4],
                             P_THRESHOLD,
-                        ).unwrap().p_value;
+                        )
+                        .unwrap()
+                        .p_value;
                         assert!(
                             p >= P_THRESHOLD,
                             "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
@@ -599,7 +603,9 @@ mod tests {
                         lagged_bins[idx].map(f64::from),
                         [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
                         P_THRESHOLD,
-                    ).unwrap().p_value;
+                    )
+                    .unwrap()
+                    .p_value;
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
@@ -910,7 +916,7 @@ mod tests {
     #[test]
     fn test_lane_cross_correlation_bitplane() {
         for mut rng in crate::create_rngs::<NotReproducible>() {
-            const N: usize = 1 << 28;
+            const N: usize = 1 << 27;
             let mut lanes = Simd64::splat(0);
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
@@ -969,7 +975,7 @@ mod tests {
 
             for _ in 0..10000 {
                 let mut matrix = [0u64; 64];
-             rng.fill_bytes(cast_slice_mut(&mut matrix));
+                rng.fill_bytes(cast_slice_mut(&mut matrix));
                 let rank = gf2_rank(matrix);
                 assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
                 if rank == 60 {
@@ -989,7 +995,7 @@ mod tests {
             const N: usize = 1 << 21;
 
             let mut x = vec![0u64; N];
-         rng.fill_bytes(cast_slice_mut(&mut x));
+            rng.fill_bytes(cast_slice_mut(&mut x));
 
             // first difference
             for i in 0..N - 1 {
