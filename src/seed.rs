@@ -1,4 +1,4 @@
-use crate::generate::{SIMD_WIDTH, Simd64, TINYMT64_LANE_MASK};
+use crate::generate::{Simd64, TINYMT64_LANE_MASK};
 use crate::{Reproducibility, VERSION_OID};
 use crate::{TripleMixPrng, TripleMixSimdCore};
 use const_format::formatcp;
