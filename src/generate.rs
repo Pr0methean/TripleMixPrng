@@ -18,9 +18,10 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
-    // These are the hexadecimal expansion of pi - 2, including the leading 1.
+    // These are the hexadecimal expansion of pi (including the leading 3).
+    // The LCG multiplier for each lane i is effectively (LANE_CONSTANTS[i] as u128) << 64 + 1.
     pub(crate) const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-        0x1243_f6a8_885a_308d,
+        0x3243_f6a8_885a_308d,
         0x3131_98a2_e037_0734,
         0x4a40_9382_2299_f31d,
         0x0082_efa9_8ec4_e6c8,
@@ -276,6 +277,7 @@ mod tests {
     use core::simd::Simd;
     use core::simd::cmp::SimdPartialEq;
     use core::simd::num::SimdUint;
+    use fsum::FSum;
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
@@ -1245,25 +1247,54 @@ mod tests {
     }
 
     #[test]
-    fn test_3_step_matrix_rank_with_random_base() {
+    fn test_3_step_matrix_rank_distribution() {
         let mut rng = rng();
+        let mut ranks = Vec::new();
+        let iterations = 1000;
 
-        for test_idx in 0..10 {
-            // Create a random valid state
-            let base_state = TripleMixPrng::<NotReproducible>::from_rng(&mut rng)
-                .block_core
-                .core;
-
+        for _ in 0..iterations {
+            let base_state = TripleMixPrng::<NotReproducible>::from_rng(&mut rng).block_core.core;
             let config = MatrixConfig {
                 steps: 3,
                 include_increment: false,
                 base_state,
             };
 
-            let (matrix, _) = build_transition_matrix(&config);
-            println!("Test {}:", test_idx);
-            analyze_matrix_rank(&matrix, 1532);
+            let (mut matrix, _) = build_transition_matrix(&config);
+            let echelon = matrix.to_echelon_form();
+            let rank = echelon.count_ones();
+            ranks.push(rank);
         }
+        ranks.sort_unstable();
+        // Calculate statistics
+        let mean_rank = ranks.iter().sum::<usize>() as f64 / iterations as f64;
+        let variance = FSum::with_all(ranks.iter()
+            .map(|&r| (r as f64 - mean_rank).powi(2))).value()
+            / ((iterations - 1) as f64);
+        let std_dev = variance.sqrt();
+
+        println!("Rank distribution over {} trials:", iterations);
+        println!("  Mean: {:.2}", mean_rank);
+        println!("  Std dev: {:.2}", std_dev);
+        println!("  Min: {}", ranks.iter().min().unwrap());
+        println!("  Max: {}", ranks.iter().max().unwrap());
+
+        // Create histogram
+        let mut hist = std::collections::HashMap::new();
+        for &rank in &ranks {
+            *hist.entry(rank).or_insert(0) += 1;
+        }
+
+        let mut hist_vec: Vec<_> = hist.into_iter().collect();
+        hist_vec.sort();
+        for (rank, count) in hist_vec {
+            println!("  Rank {}: {} trials ({:.1}%)",
+                     rank, count, 100.0 * count as f64 / iterations as f64);
+        }
+
+        // The vast majority should be 1532, with a few 1531
+        assert!(mean_rank >= 1531.9, "Mean rank too low: {:.2}", mean_rank);
+        assert!(std_dev <= 0.3, "Too much variation: {:.2}", std_dev);
     }
 
     #[test]
