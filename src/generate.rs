@@ -911,11 +911,11 @@ mod tests {
     fn test_lane_cross_correlation_bitplane() {
         for mut rng in crate::create_rngs::<NotReproducible>() {
             const N: usize = 1 << 28;
-            let mut lanes = [0u64; SIMD_WIDTH];
+            let mut lanes = Simd64::splat(0);
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
                 for _ in 0..N {
-                    rng.fill(&mut lanes);
+                    rng.fill_bytes(cast_slice_mut(lanes.as_mut_array()));
                     for (bit, sum) in sums.iter_mut().enumerate() {
                         let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
                         let b = if (lanes[target_lane] >> bit) & 1 == 1 {
