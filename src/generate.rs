@@ -517,7 +517,7 @@ mod tests {
             let chi_square = goodness_of_fit(
                 frequencies.map(f64::from),
                 std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
-                0.01,
+                0.005,
             )
             .unwrap();
             println!("{:?}", chi_square);
@@ -536,7 +536,7 @@ mod tests {
             let chi_square = goodness_of_fit(
                 frequencies.into_iter().map(f64::from),
                 std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1),
-                0.01,
+                0.005,
             )
             .unwrap();
             println!("{:?}", chi_square);

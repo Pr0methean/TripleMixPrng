@@ -7,8 +7,9 @@ use core::marker::PhantomData;
 use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
 use generic_array::GenericArray;
+use rand::RngExt;
 use rand_core::block::BlockRng;
-use rand_core::{Rng, SeedableRng};
+use rand_core::SeedableRng;
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
 use typenum::U;
 
@@ -29,11 +30,25 @@ macro_rules! once_kmac {
         use core::ops::Deref;
         static INSTANCE: std::sync::LazyLock<Kmac> =
             std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
+            std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
         return INSTANCE.deref().clone();
     };
 }
 
-pub const DEFAULT_SEED_SIZE: usize = 64 * SIMD_WIDTH;
+// These seed sizes are chosen so that the input to SHA3-512 will be a whole number of blocks.
+
+/// This is the recommended seed size when instantiating TripleMixPrng from a fast hardware entropy
+/// source such as RDSEED on x86-64 or RNDRRS on aarch64, if you trust that source enough not to mix
+/// it with any slower source the way the operating system usually does. It will always be at least
+/// 256 bytes, because TripleMixPrng's internal state contains 2040 variable bits and the extra 8
+/// bits help ensure all or nearly all valid states are possible as initial states.
+pub const LARGE_SEED_SIZE: usize = 288;
+
+/// This is the recommended seed size when instantiating TripleMixPrng from a SysRng. Windows, MacOS
+/// and Linux CSPRNGs are designed to provide only 256 bits of security, so this is the smallest
+/// size that's at least 32 bytes and provides a whole number of input blocks to the SHA3-512-KMAC.
+/// It will make the TripleMixPrng faster to create than any larger seed size.
+pub const DEFAULT_SEED_SIZE: usize = 72;
 const SEED_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Seed").as_bytes();
 const FORK_DOMAIN_STRING: &[u8] = formatcp!("{VERSION_OID}::Fork").as_bytes();
 
@@ -48,8 +63,17 @@ pub(crate) fn get_base_fork_kmac() -> Kmac {
 impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
     #[inline(always)]
     fn from(raw_seed: T) -> Self {
+        const KMAC_BLOCK_SIZE: usize = 72;
         let mut base_kmac = get_base_kmac();
-        base_kmac.update(raw_seed.as_ref());
+        let raw_len = raw_seed.as_ref().len();
+        let padded_len = KMAC_BLOCK_SIZE * ((raw_len + KMAC_BLOCK_SIZE - 1) / KMAC_BLOCK_SIZE);
+        if padded_len == raw_len {
+            base_kmac.update(raw_seed.as_ref());
+        } else {
+            let mut padded_seed = vec![0u8; padded_len];
+            padded_seed[..raw_len].copy_from_slice(raw_seed.as_ref());
+            base_kmac.update(&padded_seed);
+        }
         let mut attempt = 0u128;
         loop {
             let core = Self::permute(&base_kmac, attempt);
@@ -88,9 +112,9 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut inc_lo = Simd64::splat(0);
         let mut inc_hi = Simd64::splat(0);
         for round in 0..4 {
+            let tweak = tweak.wrapping_add((round as u128) << 126);
             let mut round_kmac = base.clone();
             round_kmac.update(&R::u128_as_bytes(tweak));
-            round_kmac.update(&[round as u8]);
 
             // Update KMAC from right half
             let mut buffer = [0u64; 16];
@@ -180,11 +204,17 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        fork_kmac.update(&R::u64_as_bytes(
-            self.block_core.remaining_results().len() as u64
-        ));
-        fork_kmac.update(&R::u64_as_bytes(self.next_u64()));
+        let mut padding = [0u64; 4]; // 32 bytes + 256-byte core state = 288 bytes = 4 blocks
+        let remaining = self.block_core.remaining_results();
+        let remaining_len = remaining.len();
+        if remaining_len > 0 {
+            padding[0] = remaining_len as u64;
+            padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
+        } else {
+            self.fill(&mut padding);
+        }
         fork_kmac.update(self.block_core.core.as_bytes());
+        fork_kmac.update(R::cast_u64_slice_as_u8(&padding).as_ref());
         self.block_core.reset_and_skip(0);
         let mut attempt = 0u128;
         loop {
@@ -269,12 +299,14 @@ impl<R: Reproducibility> TripleMixPrng<R> {
 
 #[cfg(test)]
 mod tests {
+    use core::hint::black_box;
     use crate::TripleMixPrng;
     use crate::generate::{OUTPUTS_PER_STEP, SIMD_WIDTH};
-    use crate::reproducibility::NotReproducible;
+    use crate::reproducibility::{DefaultReproducibility, NotReproducible};
     use crate::seed::{DEFAULT_SEED_SIZE, get_base_kmac};
     use generic_array::GenericArray;
-    use rand_core::{Rng, SeedableRng};
+    use rand::rngs::SysRng;
+    use rand_core::{Rng, SeedableRng, UnwrapErr};
     use tiny_keccak::{Hasher, Kmac};
 
     #[cfg(feature = "no_std")]
@@ -448,5 +480,10 @@ mod tests {
         for i in 0..4 {
             assert_ne!(p.xr0.as_array()[i], 0, "Lane {} remained zero", i);
         }
+    }
+
+    #[test]
+    fn test_from_rng() {
+        black_box(TripleMixPrng::<DefaultReproducibility>::from_rng(&mut UnwrapErr(SysRng)).next_u64());
     }
 }
