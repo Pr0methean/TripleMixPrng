@@ -9,7 +9,7 @@ use core::simd::cmp::SimdPartialEq;
 use generic_array::GenericArray;
 use rand::RngExt;
 use rand_core::block::BlockRng;
-use rand_core::{Rng, SeedableRng};
+use rand_core::SeedableRng;
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
 use typenum::U;
 
