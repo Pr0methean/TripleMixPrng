@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773346364298,
+  "lastUpdate": 1773346380582,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -33120,6 +33120,198 @@ window.BENCHMARK_DATA = {
             "value": 11943,
             "range": "± 941",
             "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fac6b6d7603a033ce89c848b4a7c15ac13cf2fc2",
+          "message": "Refactor test_bit_correlations_and_transitions to use a single pass (#57)\n\n* Refactor test_bit_correlations_and_transitions to use a single pass\n\n* Fix: output only relevant row of `bins` on failure\n\n* Fix: incorrect condition for checking non-lagged bins\n\n* Factor out `jth_bit_of_second`\n\n* Refactor: pull `jth_bit_of_second` out of one bit-index loop\n\n* Fix whitespace\n\n* Refactor: don't need to hold all samples in memory at once\n\n* Fix: was still allocating and iterating vector\n\n* Fix: access bins in row-major order\n\n* Clarifying parentheses and use more accurate variable name\n\n* Further optimizations via DeepSeek: flatten bins to 2D array and shorten to u32",
+          "timestamp": "2026-03-12T19:46:52Z",
+          "tree_id": "756b14b5ea01b51b8ea8587b18dc07829d42ea7f",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/fac6b6d7603a033ce89c848b4a7c15ac13cf2fc2"
+        },
+        "date": 1773346373983,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 474576,
+            "range": "± 16102",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 464367,
+            "range": "± 12245",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 474967,
+            "range": "± 9361",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 463832,
+            "range": "± 8564",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 475150,
+            "range": "± 46217",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 463028,
+            "range": "± 672",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 474482,
+            "range": "± 23689",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 465306,
+            "range": "± 6720",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 474590,
+            "range": "± 6326",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 464197,
+            "range": "± 14397",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 474770,
+            "range": "± 8079",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 463858,
+            "range": "± 16304",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 474668,
+            "range": "± 756",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 463372,
+            "range": "± 723",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 477912,
+            "range": "± 65047",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 463640,
+            "range": "± 6461",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: next_u64/TripleMixPrng",
+            "value": 3,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 3,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/8",
+            "value": 2316,
+            "range": "± 36",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/16",
+            "value": 2316,
+            "range": "± 106",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/32",
+            "value": 2315,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/64",
+            "value": 2315,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/72",
+            "value": 2287,
+            "range": "± 132",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/128",
+            "value": 2578,
+            "range": "± 61",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/256",
+            "value": 2860,
+            "range": "± 49",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/288",
+            "value": 2816,
+            "range": "± 70",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/512",
+            "value": 3379,
+            "range": "± 60",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/fork",
+            "value": 2865,
+            "range": "± 58",
+            "unit": "ns/iter"
           }
         ]
       }
