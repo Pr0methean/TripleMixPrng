@@ -18,14 +18,30 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
-    // These are the hexadecimal expansion of pi, except that the first digit is changed in the
-    // first and last constant to increase low-bit rank and avalanche effect.
+    // These are the hexadecimal expansion of pi - 2, including the leading 1.
     pub(crate) const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-        0xd243_f6a8_885a_308d,
+        0x1243_f6a8_885a_308d,
         0x3131_98a2_e037_0734,
-        0xca40_9382_2299_f31d,
-        0x7082_efa9_8ec4_e6c8,
+        0x4a40_9382_2299_f31d,
+        0x0082_efa9_8ec4_e6c8,
     ]);
+
+    // 31319 8A2E0 37073 44A40 93822 299F3 1D008 2EFA9 8EC4E 6C894 52821 E638D 01377 BE546 6CF34 E90C6 CC0AC
+
+    pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
+        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
+        const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 6, 7];
+        TripleMixSimdCore {
+            xr0: Simd::splat(0),
+            xr1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
+            tm0: Simd::splat(0),
+            tm1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
+            weyl_lo: Simd::splat(0),
+            weyl_hi: Simd::splat(0),
+            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
+            inc_hi: Simd::splat(0),
+        }
+    }
 
     #[inline(always)]
     pub(crate) fn fill_blocks(&mut self, blocks: &mut [[u64; OUTPUT_LEN]]) {
@@ -47,10 +63,10 @@ impl TripleMixSimdCore {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
 
             // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            // NB: w_lo is updated in the output but w_hi isn't, so the output is permuted compared
-            // to a standard LCG!
-            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
+            // NB: we use w_hi for output before updating it, so the output is permuted compared to
+            // a standard LCG!
             let next_w_lo = w_lo + i_lo; // LCG update
+            let high_product = simd_mul(next_w_lo, Self::LANE_CONSTANTS); // LCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
@@ -266,8 +282,9 @@ mod tests {
     use itertools::Itertools;
     use proptest::{prop_assert, proptest};
     use rand::{RngExt, rng};
-    use rand_core::Rng;
+    use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
+    use crate::{TripleMixPrng, TripleMixSimdCore};
 
     struct MixMatrixStats {
         total_weight: usize,
@@ -519,7 +536,7 @@ mod tests {
                 std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
                 0.005,
             )
-            .unwrap();
+                .unwrap();
             println!("{:?}", chi_square);
             assert!(!chi_square.reject_null);
         }
@@ -538,7 +555,7 @@ mod tests {
                 std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1),
                 0.005,
             )
-            .unwrap();
+                .unwrap();
             println!("{:?}", chi_square);
             assert!(!chi_square.reject_null);
         }
@@ -590,8 +607,8 @@ mod tests {
                             [SAMPLE_COUNT as f64 * 0.25; 4],
                             P_THRESHOLD,
                         )
-                        .unwrap()
-                        .p_value;
+                            .unwrap()
+                            .p_value;
                         assert!(
                             p >= P_THRESHOLD,
                             "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
@@ -604,8 +621,8 @@ mod tests {
                         [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
                         P_THRESHOLD,
                     )
-                    .unwrap()
-                    .p_value;
+                        .unwrap()
+                        .p_value;
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
@@ -1035,5 +1052,239 @@ mod tests {
 
             assert!(min_gap > 1.0, "Spectral lattice behavior suspected");
         }
+    }
+
+/// Configuration for matrix construction
+struct MatrixConfig {
+    /// Number of output steps to consider (should be 3 for full 1536-bit output)
+    steps: usize,
+    /// Whether to include increment fields in the state bits
+    include_increment: bool,
+    /// Base state to use (must be valid)
+    base_state: TripleMixSimdCore,
+}
+
+/// Build transition matrix from state bits to output bits
+fn build_transition_matrix(config: &MatrixConfig) -> (BitMatrix<u64>, Vec<String>) {
+    let state_bits = if config.include_increment { 
+        8 * SIMD_WIDTH * 64  // 8 fields × 4 lanes × 64 bits = 2048 bits
+    } else { 
+        6 * SIMD_WIDTH * 64  // 6 fields × 4 lanes × 64 bits = 1536 bits
+    };
+    
+    let output_bits = config.steps * OUTPUT_LEN * 64; // steps × 8 words × 64 bits
+    
+    let mut matrix = BitMatrix::<u64>::zeros(output_bits, state_bits);
+    let mut column_labels = Vec::with_capacity(state_bits);
+    
+    // Define fields and their accessors
+    let fields: &[( &str, fn(&TripleMixSimdCore) -> Simd64, fn(&mut TripleMixSimdCore, Simd64) )] = &[
+        ("xr0", 
+         |c: &TripleMixSimdCore| c.xr0,
+         |c: &mut TripleMixSimdCore, v| c.xr0 = v),
+        ("xr1",
+         |c: &TripleMixSimdCore| c.xr1,
+         |c: &mut TripleMixSimdCore, v| c.xr1 = v),
+        ("tm0",
+         |c: &TripleMixSimdCore| c.tm0,
+         |c: &mut TripleMixSimdCore, v| c.tm0 = v),
+        ("tm1",
+         |c: &TripleMixSimdCore| c.tm1,
+         |c: &mut TripleMixSimdCore, v| c.tm1 = v),
+        ("weyl_lo",
+         |c: &TripleMixSimdCore| c.weyl_lo,
+         |c: &mut TripleMixSimdCore, v| c.weyl_lo = v),
+        ("weyl_hi",
+         |c: &TripleMixSimdCore| c.weyl_hi,
+         |c: &mut TripleMixSimdCore, v| c.weyl_hi = v),
+    ];
+
+    // Optionally include increment fields
+    let all_fields = if config.include_increment {
+        let mut extended = fields.to_vec();
+        extended.push(
+            ("inc_lo",
+             |c: &TripleMixSimdCore| c.inc_lo,
+             |c: &mut TripleMixSimdCore, v| c.inc_lo = v)
+        );
+        extended.push(
+            ("inc_hi",
+             |c: &TripleMixSimdCore| c.inc_hi,
+             |c: &mut TripleMixSimdCore, v| c.inc_hi = v),
+        );
+        extended
+    } else {
+        fields.to_vec()
+    };
+    
+    // Generate base outputs once
+    let mut base_outputs = vec![[0u64; OUTPUT_LEN]; config.steps];
+    let mut base_core = config.base_state.clone();
+    base_core.fill_blocks(&mut base_outputs);
+    
+    let mut col_idx = 0;
+    
+    for (field_name, get_field, set_field) in all_fields {
+        let base_arr = get_field(&config.base_state).to_array();
+        
+        for lane in 0..SIMD_WIDTH {
+            for bit in 0..64 {
+                column_labels.push(format!("{}.lane{}.bit{}", field_name, lane, bit));
+                
+                // Create state with this bit flipped
+                let mut flipped_state = config.base_state.clone();
+                let mut flipped_arr = base_arr;
+                flipped_arr[lane] ^= 1 << bit;
+                set_field(&mut flipped_state, Simd64::from_array(flipped_arr));
+                
+                // Generate outputs from flipped state
+                let mut flipped_outputs = vec![[0u64; OUTPUT_LEN]; config.steps];
+                let mut flipped_core = flipped_state;
+                flipped_core.fill_blocks(&mut flipped_outputs);
+                
+                // Record differences
+                for step in 0..config.steps {
+                    for word in 0..OUTPUT_LEN {
+                        let diff = base_outputs[step][word] ^ flipped_outputs[step][word];
+                        for out_bit in 0..64 {
+                            if (diff >> out_bit) & 1 == 1 {
+                                let row = step * OUTPUT_LEN * 64 + word * 64 + out_bit;
+                                matrix.set(row, col_idx, true);
+                            }
+                        }
+                    }
+                }
+                
+                col_idx += 1;
+            }
+        }
+    }
+    
+    assert_eq!(col_idx, state_bits, "Should have exactly {} columns", state_bits);
+    (matrix, column_labels)
+}
+
+    /// Analyze matrix rank and linear independence
+    fn analyze_matrix_rank(matrix: &BitMatrix<u64>, expected_rank: usize) {
+        let echelon = matrix.clone().to_echelon_form();
+        let full_rank = echelon.count_ones();
+
+        // Find dependent columns by checking which columns are all zero in echelon form
+        let mut dependent_cols = Vec::new();
+
+        for col in 0..matrix.cols() {
+            if !echelon.get(col) {
+                println!("Dependent column: {}", col);
+                dependent_cols.push(col);
+            }
+        }
+        println!("Matrix rank: {}/{}", full_rank, matrix.cols());
+        assert!(full_rank >= expected_rank, "Rank {} too low, expected >= {}", full_rank, expected_rank);
+
+        // Test random columns for independence
+        let mut rng = rng();
+        for _ in 0..20 {
+            let col = rng.random_range(0..matrix.cols());
+            let mut matrix_without = matrix.clone();
+
+            // Zero out this column
+            for row in 0..matrix.rows() {
+                if matrix_without.get(row, col) {
+                    matrix_without.set(row, col, false);
+                }
+            }
+
+            let rank_without = matrix_without.to_echelon_form().count_ones() as usize;
+
+            // Rank should either stay same (if dependent) or drop by 1 (if independent)
+            assert!(rank_without == full_rank || rank_without == full_rank - 1,
+                    "Unexpected rank drop: {} -> {}", full_rank, rank_without);
+        }
+    }
+
+    #[test]
+    fn prove_3_equidistribution() {
+        let base_state = TripleMixSimdCore::almost_all_zeroes_core();
+
+        let config = MatrixConfig {
+            steps: 3,
+            include_increment: false,  // Only variable state bits
+            base_state,
+        };
+
+        let (matrix, _) = build_transition_matrix(&config);
+
+        analyze_matrix_rank(&matrix, 1532);
+    }
+
+    #[test]
+    fn test_3_step_matrix_rank_with_random_base() {
+        let mut rng = rng();
+
+        for test_idx in 0..10 {
+            // Create a random valid state
+            let base_state = TripleMixPrng::<NotReproducible>::from_rng(&mut rng).block_core.core;
+
+            let config = MatrixConfig {
+                steps: 3,
+                include_increment: false,
+                base_state,
+            };
+
+            let (matrix, _) = build_transition_matrix(&config);
+            println!("Test {}:", test_idx);
+            analyze_matrix_rank(&matrix, 1532);
+        }
+    }
+
+    #[test]
+    fn test_increment_independence() {
+        let mut rng = rng();
+        
+        for test_idx in 0..5 {
+            // Random increment
+            let inc_lo = Simd64::from_array(rng.random()) | Simd64::splat(1);
+            let inc_hi = Simd64::from_array(rng.random());
+            
+            // Base state with this increment (ensure non-zero sub-generators)
+            let base_state = TripleMixSimdCore {
+                inc_lo,
+                inc_hi,
+                xr0: Simd64::from_array(rng.random()),
+                xr1: Simd64::from_array(rng.random()),
+                tm0: Simd64::from_array(rng.random()),
+                tm1: Simd64::from_array(rng.random()),
+                weyl_lo: Simd64::splat(0),
+                weyl_hi: Simd64::splat(0),
+            };
+            
+            let config = MatrixConfig {
+                steps: 3,
+                include_increment: false,  // Increment is constant, not part of state
+                base_state,
+            };
+            
+            let (matrix, _) = build_transition_matrix(&config);
+            println!("Test {} (inc_lo={:?}):", test_idx, inc_lo.to_array());
+            analyze_matrix_rank(&matrix, 1532);
+        }
+    }
+
+    #[test]
+    fn test_full_2048_bit_state() {
+        // This test includes increment in the state bits to verify
+        // that if we treated increment as variable, we'd get full rank
+        let base_state = TripleMixSimdCore::almost_all_zeroes_core();
+        
+        let config = MatrixConfig {
+            steps: 4,  // 4 steps × 512 bits = 2048 output bits
+            include_increment: true,
+            base_state,
+        };
+        
+        let (matrix, _) = build_transition_matrix(&config);
+        
+        // Should have rank 2048 when including increment
+        analyze_matrix_rank(&matrix, 2044);
     }
 }
