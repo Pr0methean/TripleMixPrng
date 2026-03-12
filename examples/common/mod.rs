@@ -4,7 +4,7 @@ use rand_core::TryRng;
 use rand_triplemix::seed::LARGE_SEED_SIZE;
 use std::thread;
 
-pub fn get_random_seed() -> [u8; 256] {
+pub fn get_random_seed() -> [u8; LARGE_SEED_SIZE] {
     const OS_ENTROPY_BYTES: usize = 32;
     let mut seed = [0u8; LARGE_SEED_SIZE];
     for (index, chunk) in seed.chunks_mut(OS_ENTROPY_BYTES).enumerate() {
