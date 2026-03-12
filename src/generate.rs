@@ -547,49 +547,63 @@ mod tests {
     #[test]
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
-        const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
+        const P_THRESHOLD: f64 = 1e-6;
+
         for mut prng in crate::create_rngs::<NotReproducible>() {
-            let mut lagged_bins = [[[0u64; 4]; 64]; 64];
-            let mut bins = [[[0u64; 4]; 64]; 64];
+            // Flatten to 2D for better cache locality
+            let mut bins = [[0u32; 4]; 64*64];
+            let mut lagged_bins = [[0u32; 4]; 64*64];
+
             let mut first = prng.next_u64();
+
             for _ in 0..SAMPLE_COUNT {
                 let second = prng.next_u64();
-                for j in 0..=63 {
-                    let double_jth_bit_of_second = ((second >> j) & 1) << 1;
-                    for i in 0..=63 {
-                        bins[j][i][(((second >> i) & 1) | double_jth_bit_of_second) as usize] += 1;
-                        lagged_bins[j][i][(((first >> i) & 1) | double_jth_bit_of_second) as usize] += 1;
+
+                // Process in a cache-friendly order
+                for i in 0..64 {
+                    let double_ith_bit_of_second = ((second >> i) & 1) << 1;
+
+                    for j in 0..64 {
+                        let bin_index = j * 64 + i;
+
+                        let nonlagged_bin = (((second >> j) & 1) | double_ith_bit_of_second) as usize;
+                        let lagged_bin = (((first >> j) & 1) | double_ith_bit_of_second) as usize;
+
+                        bins[bin_index][nonlagged_bin] += 1;
+                        lagged_bins[bin_index][lagged_bin] += 1;
                     }
                 }
+
                 first = second;
             }
-            for i in 0..=63 {
-                for j in 0..=63 {
+
+            // Testing phase - convert back to 3D view for readability
+            for i in 0..64 {
+                for j in 0..64 {
+                    let idx = j * 64 + i;
+
                     if j > i {
                         let p = goodness_of_fit(
-                            bins[j][i].map(|bin| bin as f64),
+                            bins[idx].map(f64::from),
                             [SAMPLE_COUNT as f64 * 0.25; 4],
                             P_THRESHOLD,
-                        )
-                            .unwrap()
-                            .p_value;
+                        ).unwrap().p_value;
                         assert!(
                             p >= P_THRESHOLD,
                             "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
-                            bins[j][i]
+                            bins[idx]
                         );
                     }
+
                     let p = goodness_of_fit(
-                        lagged_bins[j][i].map(|bin| bin as f64),
+                        lagged_bins[idx].map(f64::from),
                         [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
                         P_THRESHOLD,
-                    )
-                        .unwrap()
-                        .p_value;
+                    ).unwrap().p_value;
                     assert!(
                         p >= P_THRESHOLD,
                         "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
-                        lagged_bins[j][i]
+                        lagged_bins[idx]
                     );
                 }
             }
