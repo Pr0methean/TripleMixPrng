@@ -208,6 +208,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         ));
         fork_kmac.update(&R::u64_as_bytes(self.next_u64()));
         fork_kmac.update(self.block_core.core.as_bytes());
+        fork_kmac.update(&FORK_DOMAIN_STRING[0..16]); // pad out to 288 bytes = 4 blocks
         self.block_core.reset_and_skip(0);
         let mut attempt = 0u128;
         loop {
