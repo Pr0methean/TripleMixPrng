@@ -550,16 +550,15 @@ mod tests {
         const CHUNK_SIZE: usize = 1 << 11;
         const CHUNK_COUNT: usize = SAMPLE_COUNT / CHUNK_SIZE;
         const P_THRESHOLD: f64 = 1e-6;
-        for prng in crate::create_rngs::<NotReproducible>() {
+        for mut prng in crate::create_rngs::<NotReproducible>() {
             // Flatten to 2D for better cache locality
             let mut bins = [[0u32; 4]; 64*64];
             let mut lagged_bins = [[0u32; 4]; 64*64];
-            let mut local_prng = prng.clone();
             // Process in a cache-friendly order
             let mut chunk = [0u64; CHUNK_SIZE + 1];
-            chunk[0] = local_prng.next_u64();
+            chunk[0] = prng.next_u64();
             for _ in 0..CHUNK_COUNT {
-                local_prng.fill(&mut chunk[1..]);
+                prng.fill(&mut chunk[1..]);
                 for i in 0..64 {
                     for j in 0..64 {
                         let row_index = j * 64 + i;
