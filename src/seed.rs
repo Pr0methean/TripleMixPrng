@@ -203,12 +203,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        fork_kmac.update(&R::u64_as_bytes(
-            self.block_core.remaining_results().len() as u64
-        ));
-        fork_kmac.update(&R::u64_as_bytes(self.next_u64()));
+        let mut padding = [0u64; 4]; // 32 bytes + 256-byte core state = 288 bytes = 4 blocks
+        let remaining = self.block_core.remaining_results();
+        padding[0] = remaining.len() as u64;
+        padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
         fork_kmac.update(self.block_core.core.as_bytes());
-        fork_kmac.update(&FORK_DOMAIN_STRING[0..16]); // pad out to 288 bytes = 4 blocks
+        fork_kmac.update(R::cast_u64_slice_as_u8(&padding).as_ref());
         self.block_core.reset_and_skip(0);
         let mut attempt = 0u128;
         loop {
