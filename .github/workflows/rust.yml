@@ -22,8 +22,20 @@ jobs:
     strategy:
       matrix:
         feature-flag: [ "--no-default-features", "--all-features" ]
-        # FIXME: Add macos-latest once https://github.com/rust-lang/rust/issues/153397 is fixed
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
+
+        include:
+          - os: ubuntu-latest
+            toolchain: nightly
+          - os: ubuntu-24.04-arm
+            toolchain: nightly
+          - os: macos-26-intel
+            toolchain: nightly
+          - os: macos-latest
+            toolchain: nightly-2026-01-28  # FIXME: Unpin once https://github.com/rust-lang/rust/issues/153397 is fixed
+          - os: windows-latest
+            toolchain: nightly
+          - os: windows-11-arm
+            toolchain: nightly
       fail-fast: false
     steps:
     - name: Harden the runner (Audit all outbound calls)
@@ -33,7 +45,7 @@ jobs:
 
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Run tests
-      run: cargo +nightly test --verbose ${{ matrix.feature-flag }}
+      run: cargo +${{ matrix.toolchain }} test --verbose ${{ matrix.feature-flag }}
       timeout-minutes: 20
   benchmarks:
     needs: unit-tests
