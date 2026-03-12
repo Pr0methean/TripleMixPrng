@@ -14,7 +14,7 @@ use rand_triplemix::reproducibility::NotReproducible;
 use rand_triplemix::reproducibility::cross_platform::CrossPlatform;
 #[cfg(feature = "reproducibility_same_endianness")]
 use rand_triplemix::reproducibility::same_endianness::SameEndianness;
-use rand_triplemix::seed::DEFAULT_SEED_SIZE;
+use rand_triplemix::seed::{DEFAULT_SEED_SIZE, LARGE_SEED_SIZE};
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
 use std::mem::size_of;
@@ -109,7 +109,7 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
     let seed_4096 = [0u8; 512];
 
     // Benchmark from_seed with various sizes
-    for size in [8, 16, 32, 64, 128, 256, 512] {
+    for size in [8, 16, 32, 64, DEFAULT_SEED_SIZE, 128, 256, LARGE_SEED_SIZE, 512] {
         let input_seed = &seed_4096[..size];
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::new("from_seed", size), input_seed, |b, s| {

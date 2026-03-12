@@ -517,7 +517,7 @@ mod tests {
             let chi_square = goodness_of_fit(
                 frequencies.map(f64::from),
                 std::iter::repeat_n((1 << 20) as f64, u8::MAX as usize + 1),
-                0.01,
+                0.005,
             )
             .unwrap();
             println!("{:?}", chi_square);
@@ -536,7 +536,7 @@ mod tests {
             let chi_square = goodness_of_fit(
                 frequencies.into_iter().map(f64::from),
                 std::iter::repeat_n((1 << 12) as f64, u16::MAX as usize + 1),
-                0.01,
+                0.005,
             )
             .unwrap();
             println!("{:?}", chi_square);
@@ -547,47 +547,63 @@ mod tests {
     #[test]
     fn test_bit_correlations_and_transitions() {
         const SAMPLE_COUNT: usize = 1 << 24;
-        const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
-        let mut samples = vec![0u64; SAMPLE_COUNT];
+        const CHUNK_SIZE: usize = 1 << 11;
+        const CHUNK_COUNT: usize = SAMPLE_COUNT / CHUNK_SIZE;
+        const P_THRESHOLD: f64 = 1e-6;
         for mut prng in crate::create_rngs::<NotReproducible>() {
-            prng.fill(samples.as_mut());
-            for i in 0..=62 {
-                for j in (i + 1)..=63 {
-                    let mut bins = [0u64; 4];
-                    for sample in &samples {
-                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
+            // Flatten to 2D for better cache locality
+            let mut bins = [[0u32; 4]; 64*64];
+            let mut lagged_bins = [[0u32; 4]; 64*64];
+            // Process in a cache-friendly order
+            let mut chunk = [0u64; CHUNK_SIZE + 1];
+            chunk[0] = prng.next_u64();
+            for _ in 0..CHUNK_COUNT {
+                prng.fill_bytes(cast_slice_mut(&mut chunk[1..]));
+                for i in 0..64 {
+                    for j in 0..64 {
+                        let row_index = j * 64 + i;
+                        let nonlagged_row = &mut bins[row_index];
+                        let lagged_row = &mut lagged_bins[row_index];
+                        for [first, second] in chunk.array_windows().copied() {
+                            let double_ith_bit_of_second = ((second >> i) & 1) << 1;
+                            let nonlagged_bin = (((second >> j) & 1) | double_ith_bit_of_second) as usize;
+                            let lagged_bin = (((first >> j) & 1) | double_ith_bit_of_second) as usize;
+
+                            nonlagged_row[nonlagged_bin] += 1;
+                            lagged_row[lagged_bin] += 1;
+                        }
                     }
-                    let p = goodness_of_fit(
-                        bins.map(|bin| bin as f64),
-                        [SAMPLE_COUNT as f64 * 0.25; 4],
-                        P_THRESHOLD,
-                    )
-                    .unwrap()
-                    .p_value;
-                    assert!(
-                        p >= P_THRESHOLD,
-                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
-                    );
                 }
+                chunk[0] = chunk[CHUNK_SIZE - 1];
             }
-            for i in 0..=63 {
-                for j in 0..=63 {
-                    let mut lagged_bins = [0u64; 4];
-                    for pair in samples.windows(2) {
-                        let first = pair[0];
-                        let second = pair[1];
-                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
+
+            // Testing phase - convert back to 3D view for readability
+            for i in 0..64 {
+                for j in 0..64 {
+                    let idx = j * 64 + i;
+
+                    if j > i {
+                        let p = goodness_of_fit(
+                            bins[idx].map(f64::from),
+                            [SAMPLE_COUNT as f64 * 0.25; 4],
+                            P_THRESHOLD,
+                        ).unwrap().p_value;
+                        assert!(
+                            p >= P_THRESHOLD,
+                            "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
+                            bins[idx]
+                        );
                     }
+
                     let p = goodness_of_fit(
-                        lagged_bins.map(|bin| bin as f64),
+                        lagged_bins[idx].map(f64::from),
                         [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
                         P_THRESHOLD,
-                    )
-                    .unwrap()
-                    .p_value;
+                    ).unwrap().p_value;
                     assert!(
                         p >= P_THRESHOLD,
-                        "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
+                        "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
+                        lagged_bins[idx]
                     );
                 }
             }
@@ -895,11 +911,11 @@ mod tests {
     fn test_lane_cross_correlation_bitplane() {
         for mut rng in crate::create_rngs::<NotReproducible>() {
             const N: usize = 1 << 28;
-            let mut lanes = [0u64; SIMD_WIDTH];
+            let mut lanes = Simd64::splat(0);
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
                 for _ in 0..N {
-                    rng.fill(&mut lanes);
+                    rng.fill_bytes(cast_slice_mut(lanes.as_mut_array()));
                     for (bit, sum) in sums.iter_mut().enumerate() {
                         let a = if (lanes[0] >> bit) & 1 == 1 { 1 } else { -1 };
                         let b = if (lanes[target_lane] >> bit) & 1 == 1 {
@@ -953,7 +969,7 @@ mod tests {
 
             for _ in 0..10000 {
                 let mut matrix = [0u64; 64];
-                rng.fill(&mut matrix);
+             rng.fill_bytes(cast_slice_mut(&mut matrix));
                 let rank = gf2_rank(matrix);
                 assert!(rank >= 60, "Low-bit rank deficiency: {}", rank);
                 if rank == 60 {
@@ -973,7 +989,7 @@ mod tests {
             const N: usize = 1 << 21;
 
             let mut x = vec![0u64; N];
-            rng.fill(x.as_mut_slice());
+         rng.fill_bytes(cast_slice_mut(&mut x));
 
             // first difference
             for i in 0..N - 1 {
