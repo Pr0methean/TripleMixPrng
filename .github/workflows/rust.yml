@@ -35,6 +35,8 @@ jobs:
     - name: Run tests
       run: cargo +nightly test --verbose ${{ matrix.feature-flag }}
       timeout-minutes: 20
+      env:
+        RUSTFLAGS: '-D warnings -Zsanitizer=address'
   benchmarks:
     needs: unit-tests
     runs-on: ${{ matrix.os }}

@@ -38,6 +38,7 @@ codegen-units = 1
 
 [profile.test]
 opt-level = 3
+overflow-checks = true
 
 [dev-dependencies]
 hypors = "0.3.0"
