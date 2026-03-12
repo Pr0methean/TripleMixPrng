@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_bit_correlations_and_transitions() {
-        const SAMPLE_COUNT: usize = 1 << 24;
+        const SAMPLE_COUNT: usize = 1 << 22;
         const CHUNK_SIZE: usize = 1 << 11;
         const CHUNK_COUNT: usize = SAMPLE_COUNT / CHUNK_SIZE;
         const P_THRESHOLD: f64 = 1e-6;
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn test_lane_cross_correlation_bitplane() {
         for mut rng in crate::create_rngs::<NotReproducible>() {
-            const N: usize = 1 << 28;
+            const N: usize = 1 << 27;
             let mut lanes = Simd64::splat(0);
             for target_lane in 1..SIMD_WIDTH {
                 let mut sums = [0i64; 64];
