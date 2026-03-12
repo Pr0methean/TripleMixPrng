@@ -574,7 +574,8 @@ mod tests {
                         .p_value;
                     assert!(
                         p >= P_THRESHOLD,
-                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
+                        "Chi-square test failed for bins: ({:?}, p={p:.10}) for i={i},j={j}",
+                        bins[i][j]
                     );
                     if j > i {
                         let p = goodness_of_fit(
@@ -586,7 +587,8 @@ mod tests {
                             .p_value;
                         assert!(
                             p >= P_THRESHOLD,
-                            "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
+                            "Chi-square test failed for lagged bins: ({:?}, p={p:.10}) for i={i},j={j}",
+                            lagged_bins[i][j]
                         );
                     }
                 }
