@@ -25,14 +25,19 @@ jobs:
         # FIXME: Add macos-latest once https://github.com/bluss/matrixmultiply/issues/97 is fixed
         include:
           - os: ubuntu-latest
-            asan-flag: "-Zsanitizer=address"
+            target: x86_64-unknown-linux-gnu
+            asan-flag: "-Zsanitizer=address -Zbuild-std"
           - os: ubuntu-24.04-arm
-            asan-flag: "-Zsanitizer=address"
+            target: aarch64-unknown-linux-gnu
+            asan-flag: "-Zsanitizer=address -Zbuild-std"
           - os: macos-26-intel
-            asan-flag: "-Zsanitizer=address"
+            target: x86_64-apple-darwin
+            asan-flag: "-Zsanitizer=address -Zbuild-std"
           - os: windows-latest
-            asan-flag: "-Zsanitizer=address"
+            target: x86_64-pc-windows-msvc
+            asan-flag: "-Zsanitizer=address -Zbuild-std"
           - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
             asan-flag: ""
         os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
       fail-fast: false
@@ -51,7 +56,7 @@ jobs:
         Start-Process $path -ArgumentList "/install", "/quiet", "/norestart" -Wait
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Run tests
-      run: cargo +nightly test --verbose ${{ matrix.feature-flag }}
+      run: cargo +nightly test --verbose ${{ matrix.feature-flag }} --target ${{ matrix.target }}
       timeout-minutes: 20
       env:
         RUSTFLAGS: -D warnings ${{ matrix.asan-flag }}
