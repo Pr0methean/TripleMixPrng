@@ -551,50 +551,50 @@ mod tests {
         let mut samples = vec![0u64; SAMPLE_COUNT];
         for mut prng in crate::create_rngs::<NotReproducible>() {
             prng.fill(samples.as_mut());
-            for i in 0..=62 {
-                for j in (i + 1)..=63 {
-                    let mut bins = [0u64; 4];
-                    for sample in &samples {
-                        bins[((sample >> i) & 1 | ((sample >> j) & 1) << 1) as usize] += 1;
+            let mut lagged_bins = [[[0u64; 4]; 64]; 64];
+            let mut bins = [[[0u64; 4]; 64]; 64];
+            for sample_pair in samples.windows(2) {
+                let first = sample_pair[0];
+                let second = sample_pair[1];
+                for i in 0..=63 {
+                    for j in 0..=63 {
+                        bins[i][j][((second >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
+                        lagged_bins[i][j][((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
                     }
-                    let p = goodness_of_fit(
-                        bins.map(|bin| bin as f64),
-                        [SAMPLE_COUNT as f64 * 0.25; 4],
-                        P_THRESHOLD,
-                    )
-                    .unwrap()
-                    .p_value;
-                    assert!(
-                        p >= P_THRESHOLD,
-                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
-                    );
                 }
             }
             for i in 0..=63 {
                 for j in 0..=63 {
-                    let mut lagged_bins = [0u64; 4];
-                    for pair in samples.windows(2) {
-                        let first = pair[0];
-                        let second = pair[1];
-                        lagged_bins[((first >> i) & 1 | ((second >> j) & 1) << 1) as usize] += 1;
-                    }
                     let p = goodness_of_fit(
-                        lagged_bins.map(|bin| bin as f64),
-                        [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
+                        bins[i][j].map(|bin| bin as f64),
+                        [SAMPLE_COUNT as f64 * 0.25; 4],
                         P_THRESHOLD,
                     )
-                    .unwrap()
-                    .p_value;
+                        .unwrap()
+                        .p_value;
                     assert!(
                         p >= P_THRESHOLD,
-                        "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
+                        "Chi-square test failed for bins: ({bins:?}, p={p:.10}) for i={i},j={j}"
                     );
+                    if j > i {
+                        let p = goodness_of_fit(
+                            lagged_bins[i][j].map(|bin| bin as f64),
+                            [(SAMPLE_COUNT - 1) as f64 * 0.25; 4],
+                            P_THRESHOLD,
+                        )
+                            .unwrap()
+                            .p_value;
+                        assert!(
+                            p >= P_THRESHOLD,
+                            "Chi-square test failed for lagged bins: ({lagged_bins:?}, p={p:.10}) for i={i},j={j}"
+                        );
+                    }
                 }
             }
         }
     }
 
-    #[test]
+#[test]
     fn test_avalanche() {
         const LOW_AVALANCHE_THRESHOLD: u64 = 28 * OUTPUT_LEN as u64;
         let mut total_low_avalanche_checks = 0;
