@@ -1,6 +1,6 @@
 use crate::common::get_random_seed;
 use aws_lc_rs::test::from_hex;
-use rand_core::{Rng, SeedableRng};
+use rand_core::Rng;
 use rand_triplemix::TripleMixPrng;
 use rand_triplemix::reproducibility::NotReproducible;
 use rand_triplemix::seed::LARGE_SEED_SIZE;
