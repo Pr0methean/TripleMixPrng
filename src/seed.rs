@@ -66,7 +66,7 @@ impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
         const KMAC_BLOCK_SIZE: usize = 72;
         let mut base_kmac = get_base_kmac();
         let raw_len = raw_seed.as_ref().len();
-        let padded_len = KMAC_BLOCK_SIZE * ((raw_len + KMAC_BLOCK_SIZE - 1) / KMAC_BLOCK_SIZE);
+        let padded_len = KMAC_BLOCK_SIZE * raw_len.div_ceil(KMAC_BLOCK_SIZE);
         if padded_len == raw_len {
             base_kmac.update(raw_seed.as_ref());
         } else {
