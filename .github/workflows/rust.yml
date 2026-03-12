@@ -22,23 +22,31 @@ jobs:
     strategy:
       matrix:
         feature-flag: [ "--no-default-features", "--all-features" ]
-        # FIXME: Add macos-latest once https://github.com/bluss/matrixmultiply/issues/97 is fixed
         include:
           - os: ubuntu-latest
+            toolchain: nightly
             target: x86_64-unknown-linux-gnu
             asan-flag: "-Zsanitizer=address"
           - os: ubuntu-24.04-arm
+            toolchain: nightly
             target: aarch64-unknown-linux-gnu
             asan-flag: "-Zsanitizer=address"
           - os: macos-26-intel
+            toolchain: nightly
             target: x86_64-apple-darwin
             asan-flag: "-Zsanitizer=address"
           - os: windows-latest
+            toolchain: nightly
             target: x86_64-pc-windows-msvc
             asan-flag: "-Zsanitizer=address"
           - os: windows-11-arm
+            toolchain: nightly
             target: aarch64-pc-windows-msvc
             asan-flag: ""
+          - os: macos-latest
+            toolchain: nightly-2026-01-28 # FIXME: Unpin once https://github.com/rust-lang/rust/issues/153397 is fixed
+            target: aarch64-apple-darwin
+            asan-flag: "-Zsanitizer=address"
         os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, windows-latest, windows-11-arm ]
       fail-fast: false
     steps:
