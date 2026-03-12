@@ -550,12 +550,11 @@ mod tests {
         const P_THRESHOLD: f64 = 1e-6; // 6112 total tests per prng
         let mut samples = vec![0u64; SAMPLE_COUNT];
         for mut prng in crate::create_rngs::<NotReproducible>() {
-            prng.fill(samples.as_mut());
             let mut lagged_bins = [[[0u64; 4]; 64]; 64];
             let mut bins = [[[0u64; 4]; 64]; 64];
+            let mut first = prng.next_u64();
             for sample_pair in samples.windows(2) {
-                let first = sample_pair[0];
-                let second = sample_pair[1];
+                let second = prng.next_u64();
                 for j in 0..=63 {
                     let jth_bit_of_second = ((second >> j) & 1) << 1;
                     for i in 0..=63 {
@@ -563,6 +562,7 @@ mod tests {
                         lagged_bins[i][j][((first >> i) & 1 | jth_bit_of_second) as usize] += 1;
                     }
                 }
+                first = second;
             }
             for i in 0..=63 {
                 for j in 0..=63 {
