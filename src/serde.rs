@@ -74,3 +74,26 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::reproducibility::DefaultReproducibility;
+    use crate::{TripleMixPrng, create_rngs};
+
+    #[test]
+    fn test_round_trip() -> Result<(), serde_json::Error> {
+        for prng in create_rngs::<DefaultReproducibility>() {
+            let json = serde_json::to_string(&prng)?;
+            let prng_copy: TripleMixPrng<DefaultReproducibility> = serde_json::from_str(&json)?;
+            assert_eq!(
+                prng.block_core.core.as_bytes(),
+                prng_copy.block_core.core.as_bytes()
+            );
+            assert_eq!(
+                prng.block_core.remaining_results(),
+                prng_copy.block_core.remaining_results()
+            );
+        }
+        Ok(())
+    }
+}
