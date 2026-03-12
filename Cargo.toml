@@ -18,6 +18,7 @@ typenum = { version = "1.19", features = ["const-generics"] }
 serde = { version = "1.0", optional = true }
 zeroize = { version = "1.8", optional = true }
 once_cell = { version = "1.21.3", optional = true, default-features = false }
+rand = { workspace = true }
 
 [features]
 jump = []  # Allows advancing this PRNG by an arbitrary amount.
