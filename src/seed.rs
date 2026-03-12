@@ -8,8 +8,8 @@ use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
 use generic_array::GenericArray;
 use rand::RngExt;
-use rand_core::block::BlockRng;
 use rand_core::SeedableRng;
+use rand_core::block::BlockRng;
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
 use typenum::U;
 
@@ -30,7 +30,7 @@ macro_rules! once_kmac {
         use core::ops::Deref;
         static INSTANCE: std::sync::LazyLock<Kmac> =
             std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
-            std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
+        std::sync::LazyLock::new(|| Kmac::v256($domain, &[]));
         return INSTANCE.deref().clone();
     };
 }
@@ -66,7 +66,7 @@ impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
         const KMAC_BLOCK_SIZE: usize = 72;
         let mut base_kmac = get_base_kmac();
         let raw_len = raw_seed.as_ref().len();
-        let padded_len = KMAC_BLOCK_SIZE * ((raw_len + KMAC_BLOCK_SIZE - 1) / KMAC_BLOCK_SIZE);
+        let padded_len = KMAC_BLOCK_SIZE * raw_len.div_ceil(KMAC_BLOCK_SIZE);
         if padded_len == raw_len {
             base_kmac.update(raw_seed.as_ref());
         } else {
@@ -299,11 +299,11 @@ impl<R: Reproducibility> TripleMixPrng<R> {
 
 #[cfg(test)]
 mod tests {
-    use core::hint::black_box;
     use crate::TripleMixPrng;
     use crate::generate::{OUTPUTS_PER_STEP, SIMD_WIDTH};
     use crate::reproducibility::{DefaultReproducibility, NotReproducible};
     use crate::seed::{DEFAULT_SEED_SIZE, get_base_kmac};
+    use core::hint::black_box;
     use generic_array::GenericArray;
     use rand::rngs::SysRng;
     use rand_core::{Rng, SeedableRng, UnwrapErr};
@@ -484,6 +484,8 @@ mod tests {
 
     #[test]
     fn test_from_rng() {
-        black_box(TripleMixPrng::<DefaultReproducibility>::from_rng(&mut UnwrapErr(SysRng)).next_u64());
+        black_box(
+            TripleMixPrng::<DefaultReproducibility>::from_rng(&mut UnwrapErr(SysRng)).next_u64(),
+        );
     }
 }
