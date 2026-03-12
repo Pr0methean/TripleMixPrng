@@ -62,8 +62,17 @@ pub(crate) fn get_base_fork_kmac() -> Kmac {
 impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
     #[inline(always)]
     fn from(raw_seed: T) -> Self {
+        const KMAC_BLOCK_SIZE: usize = 72;
         let mut base_kmac = get_base_kmac();
-        base_kmac.update(raw_seed.as_ref());
+        let raw_len = raw_seed.as_ref().len();
+        let padded_len = KMAC_BLOCK_SIZE * ((raw_len + KMAC_BLOCK_SIZE - 1) / KMAC_BLOCK_SIZE);
+        if padded_len == raw_len {
+            base_kmac.update(raw_seed.as_ref());
+        } else {
+            let mut padded_seed = vec![0u8; padded_len];
+            padded_seed[..raw_len].copy_from_slice(raw_seed.as_ref());
+            base_kmac.update(&padded_seed);
+        }
         let mut attempt = 0u128;
         loop {
             let core = Self::permute(&base_kmac, attempt);
