@@ -51,11 +51,7 @@ jobs:
       uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
       with:
         egress-policy: audit
-
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-    - name: Install libtss2-dev (Ubuntu x86)
-      if: matrix.os == 'ubuntu-latest'
-      run: sudo apt-get update && sudo apt-get install libtss2-dev
     - name: Run benchmarks
       run: cargo +nightly bench --features reproducibility_cross_platform -- --output-format bencher | tee bench-output.txt
       timeout-minutes: 20
