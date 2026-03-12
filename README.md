@@ -27,11 +27,11 @@ The PRNG has the following properties:
   lanes even when those lanes have a similar internal state.
 * Runs in 0.6 cycles per byte on Ubuntu with AVX2, faster than ChaCha12Rng.
 * Byte-sequence entropy measurements (based on 16 GiB from an instance produced by 
-  `TripleMixPrng::<NotReproducible>::almost_all_zeroes_state()` on an AVX2 CPU, calculated using 
+  `TripleMixPrng::<NotReproducible>::almost_all_zeroes_state()` on version 0.2.0 on an AVX2 CPU, calculated using 
   https://github.com/Pr0methean/EntroPy) are:
   | Entropy measure   | Value (bits/byte)     |
   |-------------------|-----------------------|
-  | 0th-order H0      | 7.999 999 989 499 129 |
-  | 1st-order H1\|0   | 7.999 997 311 401 072 |
-  | 2nd-order H2\|1,0 | 7.999 298 213 959 470 |
+  | 0th-order H0      | 7.999 999 990 448 534 |
+  | 1st-order H1\|0   | 7.999 997 258 530 427 |
+  | 2nd-order H2\|1,0 | 7.999 298 766 204 508 |
 * Passes PractRand 0.96 for at least 32 TiB (tested with 10 seeds).
