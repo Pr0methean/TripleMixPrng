@@ -597,7 +597,7 @@ mod tests {
         }
     }
 
-#[test]
+    #[test]
     fn test_avalanche() {
         const LOW_AVALANCHE_THRESHOLD: u64 = 28 * OUTPUT_LEN as u64;
         let mut total_low_avalanche_checks = 0;
