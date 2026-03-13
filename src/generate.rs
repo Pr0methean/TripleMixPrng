@@ -325,7 +325,7 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl(b, 7);
 
-    // Half of a 3rd ChaCha round
+    // 3rd ChaCha round
     a += b;
     d ^= a;
     d = rotl16(d);
@@ -584,7 +584,7 @@ mod tests {
                 evaluate_mix_matrix(mix_input);
             prop_assert!(min_col_weight >= 160);
             prop_assert!(min_row_weight >= 384);
-            let expected = 512 * 1280 / 2;
+            let expected = 512 * 1024 / 2;
             let deviation = (total_weight as isize - expected as isize).abs();
             prop_assert!(deviation <= 8192); // ≈1.25% bias
         }
