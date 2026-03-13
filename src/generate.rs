@@ -322,12 +322,12 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl(b, 7);
 
-    // Simplified ChaCha half-round
+    // vaguely ChaCha-like half-round
     a += b;
-    let ar = rotl16(a + b);
+    let ar = rotl16(b + d);
     c += d;
+    let cr = rotl(c ^ a, 11);
     d ^= ar;
-    let cr = rotl(c ^ d, 11);
     b ^= cr;
 
     let mut x = a + c;
