@@ -116,7 +116,7 @@ pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
         xr1: LARGEST_DISTINCT,
         tm0: Simd::splat(u64::MAX),
         tm1: LARGEST_DISTINCT,
-        mwc_state: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1),
+        mwc_state: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(2),
         mwc_carry: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1),
     });
     let mut seed = [0u8; DEFAULT_SEED_SIZE];
