@@ -1,6 +1,5 @@
 use crate::generate::{SIMD_WIDTH, Simd64};
 use core::simd::{cmp::SimdPartialOrd, num::SimdUint, num::SimdInt, SimdCast};
-use bytemuck::cast;
 use crate::reproducibility::Reproducibility;
 use crate::{TripleMixPrng, TripleMixSimdCore};
 
@@ -53,7 +52,6 @@ impl TripleMixSimdCore {
     pub fn mwc_jump(
         state: Simd64,
         carry: Simd64,
-        _multiplier: Simd64,
         steps: u128,
         k: u64,
     ) -> (Simd64, Simd64) {
@@ -135,7 +133,7 @@ impl TripleMixSimdCore {
         if steps == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, TripleMixSimdCore::MCG_MULTIPLIERS, steps, 0);
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, steps, 0);
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
         self.mcg_state = new_mcg_state;
@@ -148,7 +146,7 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, TripleMixSimdCore::MCG_MULTIPLIERS, multiples, 1);
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 1);
         // 2^128 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
@@ -162,7 +160,7 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, TripleMixSimdCore::MCG_MULTIPLIERS, multiples, 2);
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 2);
         // 2^256 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
