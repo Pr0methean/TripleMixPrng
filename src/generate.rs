@@ -89,7 +89,7 @@ impl TripleMixSimdCore {
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
-            let (out0, out1) = mix(mwc_carry, x_out, t_out, next_state);
+            let (out0, out1) = mix(mwc_carry, x_out, t_out, mwc_state);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
             let borrow = mwc_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
