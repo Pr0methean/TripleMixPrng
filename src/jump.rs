@@ -1,3 +1,4 @@
+use num_bigint::BigUint;
 use crate::generate::{SIMD_WIDTH, Simd64};
 use crate::reproducibility::Reproducibility;
 use crate::{TripleMixPrng, TripleMixSimdCore};
@@ -42,70 +43,87 @@ impl TripleMixSimdCore {
     // 2^256 == 2^2 mod (2^127 - 1)
     const TINYMT_JUMP_256_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
 
+/// Jump ahead by steps = x * 2^(128*k)
+/// x: u128, k: u64
+/// state_lo/state_hi: current state vectors
+/// a: multiplier (per lane)
+/// returns new (state_lo, state_hi)
+fn mwc_jump(
+    state_lo: Simd64,
+    state_hi: Simd64,
+    x: u128,
+    k: u64,
+) -> (Simd64, Simd64) {
+    let a = TripleMixSimdCore::MCG_MULTIPLIERS;
+    // compute exponent: steps = x * 2^(128*k)
+    let mut exp = BigUint::from(x);
+    exp <<= 128 * k; // note: may overflow if k is large; can use repeated squaring
+
+    // initialize result = current state
+    let mut result_lo = state_lo;
+    let mut result_hi = state_hi;
+
+    // repeated squaring exponentiation
+    let mut base_lo = state_lo;
+    let mut base_hi = state_hi;
+
+    while exp > BigUint::ZERO {
+        if exp.bit(0) {
+            // multiply result by base mod m
+            let (new_lo, new_hi) = Self::mwc_mul_mod(result_lo, result_hi, a);
+            result_lo = new_lo;
+            result_hi = new_hi;
+        }
+        // square base
+        let (new_lo, new_hi) = Self::mwc_mul_mod(base_lo, base_hi, a);
+        base_lo = new_lo;
+        base_hi = new_hi;
+
+        exp >>= 1;
+    }
+
+    (result_lo, result_hi)
+}
+
+/// Multiply MWC state by multiplier modulo m = a*2^64-1
+/// Implement using your small-k trick for SIMD
+fn mwc_mul_mod(
+    state_lo: Simd64,
+    state_hi: Simd64,
+    a: Simd64,
+) -> (Simd64, Simd64) {
+    // reconstruct 128-bit state as u128 per lane
+    let state_u128: [u128; 4] = [
+        ((state_hi[0] as u128) << 64) | (state_lo[0] as u128),
+        ((state_hi[1] as u128) << 64) | (state_lo[1] as u128),
+        ((state_hi[2] as u128) << 64) | (state_lo[2] as u128),
+        ((state_hi[3] as u128) << 64) | (state_lo[3] as u128),
+    ];
+
+    let mut res_lo = Simd64::splat(0);
+    let mut res_hi = Simd64::splat(0);
+
+    for lane in 0..4 {
+        let m = (a[lane] as u128 - 1) << 64 | 0xffff_ffff_ffff_ffffu128; // a*2^64 - 1 = (a-1)*2^64 + (2^64 - 1)
+        let prod = (state_u128[lane].wrapping_mul(a[lane] as u128)) % m;
+        res_lo[lane] = prod as u64;
+        res_hi[lane] = (prod >> 64) as u64;
+    }
+
+    (res_lo, res_hi)
+}
+    
     #[inline]
     pub(crate) fn advance(&mut self, steps: u128) {
         if steps == 0 {
             return;
         }
-
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, steps, 0);
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
-
+        self.mcg_state = new_mcg_state;
+        self.mcg_carry = new_mcg_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
-
-        let mut weyl_lo_arr = self.weyl_lo.to_array();
-        let mut weyl_hi_arr = self.weyl_hi.to_array();
-
-        for i in 0..SIMD_WIDTH {
-            let w_lo = weyl_lo_arr[i];
-            let w_hi = weyl_hi_arr[i];
-            let init_state = ((w_hi as u128) << 64) | (w_lo as u128);
-            let i_lo = self.inc_lo.as_array()[i];
-            let i_hi = self.inc_hi.as_array()[i];
-            let l = Self::LANE_CONSTANTS.as_array()[i];
-
-            // M = (l << 64) + 1
-            let m = (l as u128) << 64 | 1;
-            // C = (i_hi << 64) | i_lo
-            let c = (i_hi as u128) << 64 | (i_lo as u128);
-
-            let mut acc_m = 1u128;
-            let mut acc_c = 0u128;
-            let mut cur_m = m;
-            let mut cur_c = c;
-            let mut remaining = steps;
-
-            while remaining > 0 {
-                if remaining & 1 != 0 {
-                    // acc = acc ∘ cur
-                    // new_acc_m = acc_m * cur_m
-                    // new_acc_c = acc_c * cur_m + cur_c
-                    let new_acc_m = acc_m.wrapping_mul(cur_m);
-                    let new_acc_c = acc_c.wrapping_mul(cur_m).wrapping_add(cur_c);
-                    acc_m = new_acc_m;
-                    acc_c = new_acc_c;
-                }
-
-                // cur = cur ∘ cur  (square the transformation)
-                // new_cur_m = cur_m * cur_m
-                // new_cur_c = cur_c * cur_m + cur_c
-                let new_cur_m = cur_m.wrapping_mul(cur_m);
-                let new_cur_c = cur_c.wrapping_mul(cur_m).wrapping_add(cur_c);
-                cur_m = new_cur_m;
-                cur_c = new_cur_c;
-
-                remaining >>= 1;
-            }
-
-            // Apply the accumulated transformation
-            let new_state = acc_m.wrapping_mul(init_state).wrapping_add(acc_c);
-
-            weyl_lo_arr[i] = new_state as u64;
-            weyl_hi_arr[i] = (new_state >> 64) as u64;
-        }
-
-        self.weyl_lo = Simd64::from_array(weyl_lo_arr);
-        self.weyl_hi = Simd64::from_array(weyl_hi_arr);
     }
 
     #[inline]
@@ -113,12 +131,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 1);
         // 2^128 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
-        // LCG returns exactly to its same state after 2^128 steps
-
+        self.mcg_state = new_mcg_state;
+        self.mcg_carry = new_mcg_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 
@@ -127,10 +145,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
+        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 2);
         // 2^256 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
-
+        self.mcg_state = new_mcg_state;
+        self.mcg_carry = new_mcg_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 

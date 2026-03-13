@@ -1,9 +1,10 @@
 use crate::TripleMixSimdCore;
 use bytemuck::cast;
 use core::simd::cmp::SimdPartialOrd;
-use core::simd::num::{SimdInt, SimdUint};
-use core::simd::{Simd, simd_swizzle, u8x32, u16x16, u32x8};
+use core::simd::num::SimdUint;
+use core::simd::{Simd, simd_swizzle, u8x32, u16x16};
 use core::slice::from_mut;
+use core::simd::num::SimdInt;
 use rand_core::block::Generator;
 
 #[cfg(all(
@@ -18,28 +19,33 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
-    // The MCG multiplier for each lane i is effectively (LANE_CONSTANTS[i] as u128) << 64 + 1.
-    // To maximize the period, (LANE_CONSTANTS[i] as u128) << 64 - 1 and
-    // ((LANE_CONSTANTS[i] as u128) << 63 - 1 should both be prime.
-    pub(crate) const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-        u64::MAX - 741,
-        u64::MAX - 5571,
-        u64::MAX - 1431,
-        u64::MAX - 1107,
+    // The MCG multiplier for each lane i is (1u128 << 64) - LANE_CONSTANTS[i];
+    pub(crate) const MULTIPLIER_COMPLEMENT_0: u64 = 742;
+    pub(crate) const MULTIPLIER_COMPLEMENT_1: u64 = 5572;
+    pub(crate) const MULTIPLIER_COMPLEMENT_2: u64 = 1432;
+    pub(crate) const MULTIPLIER_COMPLEMENT_3: u64 = 1108;
+    pub(crate) const MCG_MULTIPLIER_COMPLEMENTS: Simd64 = Simd64::from_array([
+        Self::MULTIPLIER_COMPLEMENT_0,
+        Self::MULTIPLIER_COMPLEMENT_1,
+        Self::MULTIPLIER_COMPLEMENT_2,
+        Self::MULTIPLIER_COMPLEMENT_3,
+    ]);
+    pub(crate) const MCG_MULTIPLIERS: Simd64 = Simd64::from_array([
+        u64::MAX - Self::MULTIPLIER_COMPLEMENT_0 + 1,
+        u64::MAX - Self::MULTIPLIER_COMPLEMENT_1 + 1,
+        u64::MAX - Self::MULTIPLIER_COMPLEMENT_2 + 1,
+        u64::MAX - Self::MULTIPLIER_COMPLEMENT_3 + 1,
     ]);
 
     pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
-        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
         const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 6, 7];
         TripleMixSimdCore {
             xr0: Simd::splat(0),
             xr1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
             tm0: Simd::splat(0),
             tm1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
-            weyl_lo: Simd::splat(0),
-            weyl_hi: Simd::splat(0),
-            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0),
+            mcg_state: Simd::splat(0),
+            mcg_carry: Simd::splat(0),
         }
     }
 
@@ -53,11 +59,8 @@ impl TripleMixSimdCore {
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
         let mut tm1 = self.tm1;
-        let mut w_lo = self.weyl_lo;
-        let mut w_hi = self.weyl_hi;
-        let i_lo = self.inc_lo;
-        let i_hi = self.inc_hi;
-        let i_mixed = i_lo + i_hi;
+        let mut mcg_state = self.mcg_state;
+        let mut mcg_carry = self.mcg_carry;
 
         for block in blocks {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
@@ -69,9 +72,7 @@ impl TripleMixSimdCore {
             // This differs from an LCG in two ways:
             // (1) high_product is computed from w_lo, not next_w_lo
             // (2) w_hi is updated after output, but next_w_lo is output already updated
-            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
-
-            let next_w_lo = w_lo + i_lo; // LCG update
+            let (kx_lo, kx_hi) = simd_mulsmall(mcg_state, Self::MCG_MULTIPLIER_COMPLEMENTS); // MCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
@@ -87,41 +88,41 @@ impl TripleMixSimdCore {
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
-            let (out0, out1) = mix(next_w_lo, x_out, t_out, w_hi, i_mixed);
+            let (out0, out1) = mix(kx_lo, x_out, t_out, kx_hi);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
+            let borrow = mcg_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
             let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
             let t = xr0 ^ xr1; // Xoroshiro++ update
-            let carry: Simd64 = next_w_lo.simd_lt(w_lo).to_simd().cast(); // LCG update
+            let next_state = mcg_carry - kx_lo; // MCG update
             tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
+            let next_carry = mcg_state - kx_hi + borrow; // MCG update: adding u64::MAX == subtracting 1
             tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
             xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16)); // Xoroshiro++ update
-            w_hi += high_product + i_hi; // LCG update
-
-            w_lo = next_w_lo; // LCG update
+            mcg_state = next_state; // MCG update
             xr1 = rotl(t, 37); // Xoroshiro++ update
-            w_hi -= carry; // LCG update: subtracting u64::MAX = adding 1
+            mcg_carry = next_carry; // MCG update
         }
 
         self.xr0 = xr0;
         self.xr1 = xr1;
         self.tm0 = tm0;
         self.tm1 = tm1;
-        self.weyl_lo = w_lo;
-        self.weyl_hi = w_hi;
+        self.mcg_state = mcg_state;
+        self.mcg_carry = mcg_carry;
     }
 }
 
 /// SIMD multiply: uses AVX2 mullo (in-register) or portable * (scalarized).
 #[inline(always)]
-fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
+fn simd_wrapping_mul(a: Simd64, b: Simd64) -> Simd64 {
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
         not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
     ))]
     {
-        avx2::mullo(a, b)
+        avx2::wrapping_mul(a, b)
     }
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -130,6 +131,43 @@ fn simd_mul(a: Simd64, b: Simd64) -> Simd64 {
     )))]
     {
         a * b
+    }
+}
+
+/// Multiplies two vectors. Requires that all elements of b be less than 2^32. Returns (low, hi)
+/// halves of result.
+#[inline(always)]
+fn simd_mulsmall(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
+    debug_assert!(b.simd_lt(Simd::splat(1 << 32)).all());
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    ))]
+    {
+        avx2::mul_small(a, b)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
+    )))]
+    {
+        let x_lo = x & Simd64::splat(0xffffffff);
+        let x_hi = x >> 32;
+
+        let p0 = x_lo * kvec;
+        let p1 = x_hi * kvec;
+
+        let lo =
+            (p0 & Simd64::splat(0xffffffff)) |
+            (p1 << 32);
+
+        let hi =
+            (p0 >> 32) +
+            (p1 >> 32);
+
+        (lo, hi)
     }
 }
 
@@ -151,7 +189,6 @@ pub(crate) fn mix(
     x_in: Simd64,
     t: Simd64,
     w_hi: Simd64,
-    i: Simd64,
 ) -> (Simd64, Simd64) {
     #[inline(always)]
     fn rotl16(d: Simd64) -> Simd64 {
@@ -186,9 +223,6 @@ pub(crate) fn mix(
         ))
     }
 
-    let i_transmuted: u32x8 = cast(i);
-    let rotated_i: Simd64 = cast(simd_swizzle!(i_transmuted, [1, 0, 3, 2, 5, 4, 7, 6]));
-
     // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
     static FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
         0x9E3779B97F4A7C15,
@@ -203,14 +237,22 @@ pub(crate) fn mix(
         0x85839d6effbd7dc6,
         0xbbf73c790d94f79d,
     ]);
-
-    let i_mix_0 = FEISTEL_CONSTANT_2 ^ i;
-    let i_mix_1 = FEISTEL_CONSTANT_1 + rotated_i;
-
-    let mut a = w_lo;
-    let mut b = t + i_mix_0;
-    let mut c = x_in ^ i_mix_1;
-    let mut d = w_hi;
+    static AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
+        0xd6e8feb86659fd93,
+        0x9e3779b97f4a7c15,
+        0xbf58476d1ce4e5b9,
+        0x94d049bb133111eb,
+    ]);
+    static AVALANCHE_MULTIPLIERS_2: Simd64 = Simd::from_array([
+        0xd1342543de82ef95,
+        0xa24baed4963ee407,
+        0x9fb21c651e98df25,
+        0xc2b2ae3d27d4eb4f,
+    ]);
+    let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
+    let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
+    let mut b = t + FEISTEL_CONSTANT_1;
+    let mut c = x_in + FEISTEL_CONSTANT_2;
 
     // This mixing function is a modified ChaCha20 double-round that uses 64-bit rather than 32-bit
     // words and adds the multiplication. Instead of permuting between rounds, we mix the
@@ -239,23 +281,25 @@ pub(crate) fn mix(
     a += b;
     d ^= a;
     d = rotl16(d); // 1st quarter of 2nd ChaCha round
-    b ^= cr;
+
+    a += rotl(c, 21);
+    d ^= rotl(b, 37);
+    b ^= rotl(cr,17);
     c += dr;
-    d += ar;
+    d += rotl(ar,29);
+
     c += d;
     b ^= c;
     b = rotl24(b); // 2nd quarter of 2nd ChaCha round
-    let m = simd_mul(a + b, c + d);
+
     a += b;
     d ^= a;
     d = rotl8(d); // 3rd quarter of 2nd ChaCha round
-    c ^= m;
-    a += rotl(m, 33);
-    b += m;
-    d ^= rotl(m, 27);
+
     c += d;
     b ^= c;
     b = rotl(b, 7); // 4th quarter of 2nd ChaCha round
+
     let mut x = a + c;
     let mut y = b + d;
 
@@ -298,11 +342,11 @@ mod tests {
         min_col_weight: usize,
     }
 
-    fn evaluate_mix_matrix(mix_input: [u64; 20]) -> MixMatrixStats {
+    fn evaluate_mix_matrix(mix_input: [u64; 16]) -> MixMatrixStats {
         let (base_input, base_out0, base_out1) = mix_from_flat_array(mix_input);
-        let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1280);
+        let mut xor_matrix = BitMatrix::<u64>::zeros(512, 1024);
         let mut i = 0;
-        for variable_idx in 0..5 {
+        for variable_idx in 0..4 {
             for lane_idx in 0..SIMD_WIDTH {
                 for bit_idx in 0..64 {
                     let mut modified_input = base_input.clone();
@@ -312,7 +356,6 @@ mod tests {
                         modified_input[1],
                         modified_input[2],
                         modified_input[3],
-                        modified_input[4],
                     );
                     let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
                     let mut j = 0;
@@ -336,7 +379,7 @@ mod tests {
             .collect::<Vec<_>>();
         let min_row_weight = row_weights.iter().copied().min().unwrap();
         let max_row_weight = row_weights.iter().copied().max().unwrap();
-        let col_weights = (0..1280)
+        let col_weights = (0..1024)
             .map(|col| xor_matrix.col(col).count_ones())
             .collect::<Vec<_>>();
         let min_col_weight = col_weights.iter().copied().min().unwrap();
@@ -360,20 +403,18 @@ mod tests {
         }
     }
 
-    fn mix_from_flat_array(mix_input: [u64; 20]) -> ([Simd64; 5], Simd64, Simd64) {
+    fn mix_from_flat_array(mix_input: [u64; 16]) -> ([Simd64; 4], Simd64, Simd64) {
         let base_input = [
             Simd::from_array(mix_input[0..4].try_into().unwrap()),
             Simd::from_array(mix_input[4..8].try_into().unwrap()),
             Simd::from_array(mix_input[8..12].try_into().unwrap()),
             Simd::from_array(mix_input[12..16].try_into().unwrap()),
-            Simd::from_array(mix_input[16..20].try_into().unwrap()),
         ];
         let (base_out0, base_out1) = mix(
             base_input[0],
             base_input[1],
             base_input[2],
             base_input[3],
-            base_input[4],
         );
         (base_input, base_out0, base_out1)
     }
@@ -385,11 +426,11 @@ mod tests {
         stdev: f64,
     }
 
-    fn evaluate_second_order_derivatives(mix_input: [u64; 20]) -> SecondDerivativeStats {
+    fn evaluate_second_order_derivatives(mix_input: [u64; 16]) -> SecondDerivativeStats {
         let (base_input, base_out0, base_out1) = mix_from_flat_array(mix_input);
         let mut weights = Vec::new();
-        for var_idx_1 in 0..5 {
-            for var_idx_2 in var_idx_1..5 {
+        for var_idx_1 in 0..4 {
+            for var_idx_2 in var_idx_1..4 {
                 for lane_idx_1 in 0..SIMD_WIDTH {
                     for lane_idx_2 in lane_idx_1..SIMD_WIDTH {
                         if lane_idx_1 == lane_idx_2 && var_idx_1 == var_idx_2 {
@@ -402,8 +443,7 @@ mod tests {
                                         modified_input[0],
                                         modified_input[1],
                                         modified_input[2],
-                                        modified_input[3],
-                                        modified_input[4],
+                                        modified_input[3]
                                     );
                                     let (out_xor_0, out_xor_1) =
                                         (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
@@ -423,7 +463,6 @@ mod tests {
                                     modified_input[1],
                                     modified_input[2],
                                     modified_input[3],
-                                    modified_input[4],
                                 );
                                 let (out_xor_0, out_xor_1) =
                                     (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
@@ -461,8 +500,8 @@ mod tests {
     #[test]
     fn test_mix_matrix_random_inputs() {
         let mut rng = rng();
-        let mut mix_input = [0u64; 20];
-        let sigma = ((512 * 1280) as f64 * 0.25).sqrt();
+        let mut mix_input = [0u64; 16];
+        let sigma = ((512 * 1024) as f64 * 0.25).sqrt();
         for _ in 0..5 {
             rng.fill(&mut mix_input);
             let MixMatrixStats {
@@ -470,13 +509,13 @@ mod tests {
                 min_row_weight,
                 min_col_weight,
             } = evaluate_mix_matrix(mix_input);
-            let z = (total_weight as f64 - (0.5 * 512.0 * 1280.0)) / sigma;
+            let z = (total_weight as f64 - (0.5 * 512.0 * 1024.0)) / sigma;
             assert!(
                 min_col_weight >= 160,
                 "Min column weight {min_col_weight} too low"
             );
             assert!(
-                min_row_weight >= 384,
+                min_row_weight >= 320,
                 "Min row weight {min_row_weight} too low"
             );
             assert!(z >= -3.0, "Total weight {total_weight} (z={z}) too low");
@@ -487,7 +526,7 @@ mod tests {
     #[test]
     fn test_second_derivative_random_inputs() {
         let mut rng = rng();
-        let mut random_inputs = [0u64; 20];
+        let mut random_inputs = [0u64; 16];
         for _ in 0..5 {
             rng.fill(&mut random_inputs);
             let SecondDerivativeStats {
@@ -507,7 +546,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_mix_matrix_proptest(mix_input: [u64; 20]) {
+        fn test_mix_matrix_proptest(mix_input: [u64; 16]) {
             let MixMatrixStats { total_weight, min_row_weight, min_col_weight } =
                 evaluate_mix_matrix(mix_input);
             prop_assert!(min_col_weight >= 160);
@@ -518,7 +557,7 @@ mod tests {
         }
 
         #[test]
-        fn test_second_derivative_proptest(mix_input: [u64; 20]) {
+        fn test_second_derivative_proptest(mix_input: [u64; 16]) {
             let SecondDerivativeStats { min, max, mean, stdev } = evaluate_second_order_derivatives(mix_input);
             assert!(min >= 140, "Min weight {min} too low");
             assert!(max <= 372, "Max weight {max} too high");
@@ -655,7 +694,7 @@ mod tests {
             let mut max_flips = 0;
             let mut total_flips: u64 = 0;
             let mut count: u64 = 0;
-            let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 8];
+            let mut flips_per_bit = [[[0; 64]; SIMD_WIDTH]; 6];
             let mut core1 = core;
             let mut output1 = [[Simd64::splat(0); OUTPUTS_PER_STEP]; ITERATIONS];
             core1.fill_blocks(cast_slice_mut(&mut output1));
@@ -703,28 +742,16 @@ mod tests {
                                 core2.tm1 = Simd64::from_array(arr);
                             }
                             4 => {
-                                let x = core2.weyl_lo;
+                                let x = core2.mcg_state;
                                 let mut arr = x.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_lo = Simd64::from_array(arr);
+                                core2.mcg_state = Simd64::from_array(arr);
                             }
                             5 => {
-                                let x = core2.weyl_hi;
+                                let x = core2.mcg_carry;
                                 let mut arr = x.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.weyl_hi = Simd64::from_array(arr);
-                            }
-                            6 => {
-                                let x = core2.inc_lo;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_lo = Simd64::from_array(arr);
-                            }
-                            7 => {
-                                let x = core2.inc_hi;
-                                let mut arr = x.to_array();
-                                arr[lane_idx] ^= 1 << bit_idx;
-                                core2.inc_hi = Simd64::from_array(arr);
+                                core2.mcg_carry = Simd64::from_array(arr);
                             }
                             _ => unreachable!(),
                         }
@@ -1064,19 +1091,13 @@ mod tests {
     struct MatrixConfig {
         /// Number of output steps to consider (should be 3 for full 1536-bit output)
         steps: usize,
-        /// Whether to include increment fields in the state bits
-        include_increment: bool,
         /// Base state to use (must be valid)
         base_state: TripleMixSimdCore,
     }
 
     /// Build transition matrix from state bits to output bits
     fn build_transition_matrix(config: &MatrixConfig) -> (BitMatrix<u64>, Vec<String>) {
-        let state_bits = if config.include_increment {
-            8 * SIMD_WIDTH * 64 // 8 fields × 4 lanes × 64 bits = 2048 bits
-        } else {
-            6 * SIMD_WIDTH * 64 // 6 fields × 4 lanes × 64 bits = 1536 bits
-        };
+        let state_bits = 6 * SIMD_WIDTH * 64; // 6 fields × 4 lanes × 64 bits = 1536 bits
 
         let output_bits = config.steps * OUTPUT_LEN * 64; // steps × 8 words × 64 bits
 
@@ -1111,33 +1132,15 @@ mod tests {
             ),
             (
                 "weyl_lo",
-                |c: &TripleMixSimdCore| c.weyl_lo,
-                |c: &mut TripleMixSimdCore, v| c.weyl_lo = v,
+                |c: &TripleMixSimdCore| c.mcg_state,
+                |c: &mut TripleMixSimdCore, v| c.mcg_state = v,
             ),
             (
                 "weyl_hi",
-                |c: &TripleMixSimdCore| c.weyl_hi,
-                |c: &mut TripleMixSimdCore, v| c.weyl_hi = v,
+                |c: &TripleMixSimdCore| c.mcg_carry,
+                |c: &mut TripleMixSimdCore, v| c.mcg_carry = v,
             ),
         ];
-
-        // Optionally include increment fields
-        let all_fields = if config.include_increment {
-            let mut extended = fields.to_vec();
-            extended.push((
-                "inc_lo",
-                |c: &TripleMixSimdCore| c.inc_lo,
-                |c: &mut TripleMixSimdCore, v| c.inc_lo = v,
-            ));
-            extended.push((
-                "inc_hi",
-                |c: &TripleMixSimdCore| c.inc_hi,
-                |c: &mut TripleMixSimdCore, v| c.inc_hi = v,
-            ));
-            extended
-        } else {
-            fields.to_vec()
-        };
 
         // Generate base outputs once
         let mut base_outputs = vec![[0u64; OUTPUT_LEN]; config.steps];
@@ -1146,7 +1149,7 @@ mod tests {
 
         let mut col_idx = 0;
 
-        for (field_name, get_field, set_field) in all_fields {
+        for (field_name, get_field, set_field) in fields {
             let base_arr = get_field(&config.base_state).to_array();
 
             for lane in 0..SIMD_WIDTH {
@@ -1190,67 +1193,6 @@ mod tests {
         (matrix, column_labels)
     }
 
-    /// Analyze matrix rank and linear independence
-    fn analyze_matrix_rank(matrix: &BitMatrix<u64>, expected_rank: usize) {
-        let echelon = matrix.clone().to_echelon_form();
-        let full_rank = echelon.count_ones();
-
-        // Find dependent columns by checking which columns are all zero in echelon form
-        let mut dependent_cols = Vec::new();
-
-        for col in 0..matrix.cols() {
-            if !echelon.get(col) {
-                dependent_cols.push(col);
-            }
-        }
-        println!("Matrix rank: {}/{}", full_rank, matrix.cols());
-        assert!(
-            full_rank >= expected_rank,
-            "Rank {} too low, expected >= {}",
-            full_rank,
-            expected_rank
-        );
-
-        // Test random columns for independence
-        let mut rng = rng();
-        for _ in 0..20 {
-            let col = rng.random_range(0..matrix.cols());
-            let mut matrix_without = matrix.clone();
-
-            // Zero out this column
-            for row in 0..matrix.rows() {
-                if matrix_without.get(row, col) {
-                    matrix_without.set(row, col, false);
-                }
-            }
-
-            let rank_without = matrix_without.to_echelon_form().count_ones() as usize;
-
-            // Rank should either stay same (if dependent) or drop by 1 (if independent)
-            assert!(
-                rank_without == full_rank || rank_without == full_rank - 1,
-                "Unexpected rank drop: {} -> {}",
-                full_rank,
-                rank_without
-            );
-        }
-    }
-
-    #[test]
-    fn prove_3_equidistribution() {
-        let base_state = TripleMixSimdCore::almost_all_zeroes_core();
-
-        let config = MatrixConfig {
-            steps: 3,
-            include_increment: false, // Only variable state bits
-            base_state,
-        };
-
-        let (matrix, _) = build_transition_matrix(&config);
-
-        analyze_matrix_rank(&matrix, 1532);
-    }
-
     #[test]
     fn test_3_step_matrix_rank_distribution() {
         let mut rng = rng();
@@ -1263,7 +1205,6 @@ mod tests {
                 .core;
             let config = MatrixConfig {
                 steps: 3,
-                include_increment: false,
                 base_state,
             };
 
@@ -1303,105 +1244,7 @@ mod tests {
             );
         }
 
-        // The vast majority should be 1532, with a few 1531
-        assert!(mean_rank >= 1531.9, "Mean rank too low: {:.2}", mean_rank);
-        assert!(std_dev <= 0.3, "Too much variation: {:.2}", std_dev);
-    }
-
-    #[test]
-    fn test_increment_independence_statistical() {
-        let mut rng = rng();
-        let mut ranks = Vec::new();
-        let iterations = 1000;
-        let expected_mean = 1531.0; // Your observed mean
-        let expected_std = 0.3; // Your observed std deviation
-
-        for _ in 0..iterations {
-            // Random valid increment (odd)
-            let inc_lo = Simd64::from_array(rng.random()) | Simd64::splat(1);
-            let inc_hi = Simd64::from_array(rng.random());
-
-            let base_state = TripleMixSimdCore {
-                inc_lo,
-                inc_hi,
-                xr0: Simd64::from_array(rng.random()),
-                xr1: Simd64::from_array(rng.random()),
-                tm0: Simd64::from_array(rng.random()),
-                tm1: Simd64::from_array(rng.random()),
-                weyl_lo: Simd64::splat(0),
-                weyl_hi: Simd64::splat(0),
-            };
-
-            let config = MatrixConfig {
-                steps: 3,
-                include_increment: false,
-                base_state,
-            };
-
-            let (mut matrix, _) = build_transition_matrix(&config);
-            let echelon = matrix.to_echelon_form();
-
-            for col in 0..matrix.cols() {
-                if !echelon.get(col) {
-                    println!("Dependent column: {}", col);
-                }
-            }
-            let rank = echelon.count_ones();
-            ranks.push(rank);
-        }
-
-        // Calculate statistics
-        let mean = ranks.iter().sum::<usize>() as f64 / iterations as f64;
-        let variance = FSum::with_all(ranks.iter().map(|&r| (r as f64 - mean).powi(2))).value()
-            / (iterations - 1) as f64;
-        let std_dev = variance.sqrt();
-
-        println!("Rank distribution over {} trials:", iterations);
-        println!("  Mean: {:.3} (expected ~{:.3})", mean, expected_mean);
-        println!("  Std dev: {:.3} (expected ~{:.3})", std_dev, expected_std);
-
-        // Create histogram
-        let mut hist = std::collections::HashMap::new();
-        for &rank in &ranks {
-            *hist.entry(rank).or_insert(0) += 1;
-        }
-
-        let mut hist_vec: Vec<_> = hist.into_iter().collect();
-        hist_vec.sort();
-        for (rank, count) in hist_vec {
-            println!(
-                "  Rank {}: {} trials ({:.1}%)",
-                rank,
-                count,
-                100.0 * count as f64 / iterations as f64
-            );
-        }
-
-        // Statistical assertions (not hard equality)
-        assert!(mean >= 1531.0);
-        assert!(
-            std_dev <= 0.3,
-            "Std dev {} too far from expected {}",
-            std_dev,
-            expected_std
-        );
-    }
-
-    #[test]
-    fn test_full_2048_bit_state() {
-        // This test includes increment in the state bits to verify
-        // that if we treated increment as variable, we'd get full rank
-        let base_state = TripleMixSimdCore::almost_all_zeroes_core();
-
-        let config = MatrixConfig {
-            steps: 4, // 4 steps × 512 bits = 2048 output bits
-            include_increment: true,
-            base_state,
-        };
-
-        let (matrix, _) = build_transition_matrix(&config);
-
-        // Should have rank 2048 when including increment
-        analyze_matrix_rank(&matrix, 2044);
+        assert!(mean_rank >= 1528.0, "Mean rank too low: {:.2}", mean_rank);
+        assert!(std_dev <= 2.0, "Too much variation: {:.2}", std_dev);
     }
 }

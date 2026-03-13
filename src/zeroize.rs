@@ -8,11 +8,8 @@ impl zeroize::Zeroize for TripleMixSimdCore {
         self.xr1 = Simd::splat(0);
         self.tm0 = Simd::splat(0);
         self.tm1 = Simd::splat(0);
-        self.weyl_lo = Simd::splat(0);
-        self.weyl_hi = Simd::splat(0);
-        self.inc_lo = Simd::splat(0);
-        self.inc_hi = Simd::splat(0);
-
+        self.mcg_state = Simd::splat(0);
+        self.mcg_carry = Simd::splat(0);
         // Prevent dead-write elimination
         core::hint::black_box(&*self);
     }
@@ -53,10 +50,8 @@ mod tests {
             xr1: Simd64::splat(0),
             tm0: Simd64::splat(0),
             tm1: Simd64::splat(0),
-            weyl_lo: Simd64::splat(0),
-            weyl_hi: Simd64::splat(0),
-            inc_lo: Simd64::splat(0),
-            inc_hi: Simd64::splat(0),
+            mcg_state: Simd64::splat(0),
+            mcg_carry: Simd64::splat(0),
         };
         let mut expected_output = [0u8; OUTPUT_LEN * size_of::<u64>() * 2];
         TripleMixPrng::<DefaultReproducibility>::from_core(zero_core)

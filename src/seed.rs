@@ -6,6 +6,7 @@ use core::hint::cold_path;
 use core::marker::PhantomData;
 use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
+use std::simd::cmp::SimdPartialOrd;
 use generic_array::GenericArray;
 use rand::RngExt;
 use rand_core::SeedableRng;
@@ -107,8 +108,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut xr1 = Simd64::splat(0);
         let mut tm0 = Simd64::splat(0);
         let mut tm1 = Simd64::splat(0);
-        let mut weyl_lo = Simd64::splat(0);
-        let mut weyl_hi = Simd64::splat(0);
+        let mut mcg_state = Simd64::splat(0);
+        let mut mcg_carry = Simd64::splat(0);
         let mut inc_lo = Simd64::splat(0);
         let mut inc_hi = Simd64::splat(0);
         for round in 0..4 {
@@ -125,8 +126,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             buffer[2..4].copy_from_slice(&xr1.as_array()[2..4]);
             buffer[4..6].copy_from_slice(&tm0.as_array()[2..4]);
             buffer[6..8].copy_from_slice(&tm1.as_array()[2..4]);
-            buffer[8..10].copy_from_slice(&weyl_lo.as_array()[2..4]);
-            buffer[10..12].copy_from_slice(&weyl_hi.as_array()[2..4]);
+            buffer[8..10].copy_from_slice(&mcg_state.as_array()[2..4]);
+            buffer[10..12].copy_from_slice(&mcg_carry.as_array()[2..4]);
             buffer[12..14].copy_from_slice(&inc_lo.as_array()[2..4]);
             buffer[14..16].copy_from_slice(&inc_hi.as_array()[2..4]);
             round_kmac.update(R::cast_u64_slice_as_u8(&buffer).as_ref());
@@ -149,8 +150,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             tm0 ^= d1 & mask;
             tm1 ^= d1.rotate_elements_left::<2>() & mask;
 
-            weyl_lo ^= d2 & mask;
-            weyl_hi ^= d2.rotate_elements_left::<2>() & mask;
+            mcg_state ^= d2 & mask;
+            mcg_carry ^= d2.rotate_elements_left::<2>() & mask;
 
             inc_lo ^= d3 & mask;
             inc_hi ^= d3.rotate_elements_left::<2>() & mask;
@@ -160,8 +161,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             xr1 = xr1.rotate_elements_left::<2>();
             tm0 = tm0.rotate_elements_left::<2>();
             tm1 = tm1.rotate_elements_left::<2>();
-            weyl_lo = weyl_lo.rotate_elements_left::<2>();
-            weyl_hi = weyl_hi.rotate_elements_left::<2>();
+            mcg_state = mcg_state.rotate_elements_left::<2>();
+            mcg_carry = mcg_carry.rotate_elements_left::<2>();
             inc_lo = inc_lo.rotate_elements_left::<2>();
             inc_hi = inc_hi.rotate_elements_left::<2>();
         }
@@ -173,10 +174,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             xr1,
             tm0,
             tm1,
-            weyl_lo,
-            weyl_hi,
-            inc_lo,
-            inc_hi,
+            mcg_state,
+            mcg_carry,
         }
     }
 
@@ -185,8 +184,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         // Simple distinctness check: Child state != Parent state in any lane combination
         !((a.xr0.simd_eq(b.xr0) & a.xr1.simd_eq(b.xr1))
             | (a.tm0.simd_eq(b.tm0) & a.tm1.simd_eq(b.tm1))
-            | (a.weyl_lo.simd_eq(b.weyl_lo) & a.weyl_hi.simd_eq(b.weyl_hi))
-            | (a.inc_lo.simd_eq(b.inc_lo) & a.inc_hi.simd_eq(b.inc_hi)))
+            | (a.mcg_state.simd_eq(b.mcg_state) & a.mcg_carry.simd_eq(b.mcg_carry)))
         .any()
     }
 
@@ -231,7 +229,11 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     #[inline(always)]
     pub(crate) fn is_valid(c: &TripleMixSimdCore) -> bool {
         // Dead-state check
-        if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0)) | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))).any()
+        if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0))
+            | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))
+            | c.mcg_state.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
+            | c.mcg_carry.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
+        ).any()
         {
             cold_path();
             return false;
@@ -246,13 +248,13 @@ impl<R: Reproducibility> TripleMixPrng<R> {
                     | (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
                 let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>())
                     | (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
-                let diff_lcg = (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
-                    | (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
+                let diff_mcg = (c.mcg_state ^ c.mcg_state.rotate_elements_left::<$shift>())
+                    | (c.mcg_carry ^ c.mcg_carry.rotate_elements_left::<$shift>());
 
                 // A lane is similar if ANY sub-generator matches the rotated version
                 if (diff_xr.simd_eq(Simd::splat(0))
                     | diff_tm.simd_eq(Simd::splat(0))
-                    | diff_lcg.simd_eq(Simd::splat(0)))
+                    | diff_mcg.simd_eq(Simd::splat(0)))
                 .any()
                 {
                     cold_path();
@@ -445,11 +447,6 @@ mod tests {
     fn test_invariant_fixing() {
         let base = get_base_kmac();
         let p = TripleMixPrng::<NotReproducible>::permute(&base, 42);
-
-        // LCG increment must be odd
-        for &inc in p.inc_lo.as_array() {
-            assert_eq!(inc % 2, 1, "LCG increment was not odd");
-        }
 
         // TinyMT dead bit (MSB of tm0) must be 0
         for &tm in p.tm0.as_array() {
