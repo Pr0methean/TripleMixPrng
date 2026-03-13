@@ -239,6 +239,7 @@ impl TripleMixSimdCore {
             | (self.mwc_state | self.mwc_carry).simd_eq(Simd::splat(0))
             | self.mwc_state.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
             | self.mwc_carry.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
+            | (self.mwc_state & self.mwc_carry).simd_eq(TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1))
         ).any()
         {
             cold_path();

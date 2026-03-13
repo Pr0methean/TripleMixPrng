@@ -10,7 +10,7 @@ Requires the `portable_simd` feature, which is currently nightly-only.
 The PRNG has the following properties:
 
 * The output block size is 64 bytes (8 u64's).
-* The state size is 192 bytes, including only 4 bits of overhead.
+* The state size is 192 bytes, of which only 4 bits is overhead.
 * The period is greater than 2<sup>763</sup> - 2<sup>712</sup> - 2<sup>710</sup> blocks, which is the product of the subgenerators' coprime periods:
   * Xoroshiro++: 2<sup>128</sup> - 1
   * TinyMT64: 2<sup>127</sup> - 1
