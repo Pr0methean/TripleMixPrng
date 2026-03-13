@@ -43,7 +43,7 @@ macro_rules! once_kmac {
 /// it with any slower source the way the operating system usually does. It will always be at least
 /// 256 bytes, because TripleMixPrng's internal state contains 2040 variable bits and the extra 8
 /// bits help ensure all or nearly all valid states are possible as initial states.
-pub const LARGE_SEED_SIZE: usize = 288;
+pub const LARGE_SEED_SIZE: usize = 216;
 
 /// This is the recommended seed size when instantiating TripleMixPrng from a SysRng. Windows, MacOS
 /// and Linux CSPRNGs are designed to provide only 256 bits of security, so this is the smallest
@@ -110,15 +110,13 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut tm1 = Simd64::splat(0);
         let mut mcg_state = Simd64::splat(0);
         let mut mcg_carry = Simd64::splat(0);
-        let mut inc_lo = Simd64::splat(0);
-        let mut inc_hi = Simd64::splat(0);
         for round in 0..4 {
-            let tweak = tweak.wrapping_add((round as u128) << 126);
             let mut round_kmac = base.clone();
             round_kmac.update(&R::u128_as_bytes(tweak));
+            round_kmac.update(&R::u64_as_bytes(round));
 
             // Update KMAC from right half
-            let mut buffer = [0u64; 16];
+            let mut buffer = [0u64; 12];
             // This loop looks scalar, but modern LLVM will see
             // the fixed 128-bit extract pattern and emit VEXTRACTI128
             // or VPERM2I128 directly into the buffer.
@@ -128,12 +126,10 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             buffer[6..8].copy_from_slice(&tm1.as_array()[2..4]);
             buffer[8..10].copy_from_slice(&mcg_state.as_array()[2..4]);
             buffer[10..12].copy_from_slice(&mcg_carry.as_array()[2..4]);
-            buffer[12..14].copy_from_slice(&inc_lo.as_array()[2..4]);
-            buffer[14..16].copy_from_slice(&inc_hi.as_array()[2..4]);
             round_kmac.update(R::cast_u64_slice_as_u8(&buffer).as_ref());
 
             let mut reader = round_kmac.into_xof();
-            let mut f_out = [0u8; 128];
+            let mut f_out = [0u8; 96];
             reader.squeeze(&mut f_out);
 
             // Xor into left half
@@ -142,7 +138,6 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             let d0 = Simd::from_slice(&data.as_ref()[0..4]); // words 0,1,2,3
             let d1 = Simd::from_slice(&data.as_ref()[4..8]); // words 4,5,6,7
             let d2 = Simd::from_slice(&data.as_ref()[8..12]); // words 8,9,10,11
-            let d3 = Simd::from_slice(&data.as_ref()[12..16]); // words 12,13,14,15
             xr0 ^= d0 & mask;
             // Use a swizzle to get words 2,3 into lanes 0,1
             xr1 ^= d0.rotate_elements_left::<2>() & mask;
@@ -153,9 +148,6 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             mcg_state ^= d2 & mask;
             mcg_carry ^= d2.rotate_elements_left::<2>() & mask;
 
-            inc_lo ^= d3 & mask;
-            inc_hi ^= d3.rotate_elements_left::<2>() & mask;
-
             // Swap: Lanes 0,1 <-> Lanes 2,3
             xr0 = xr0.rotate_elements_left::<2>();
             xr1 = xr1.rotate_elements_left::<2>();
@@ -163,11 +155,8 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             tm1 = tm1.rotate_elements_left::<2>();
             mcg_state = mcg_state.rotate_elements_left::<2>();
             mcg_carry = mcg_carry.rotate_elements_left::<2>();
-            inc_lo = inc_lo.rotate_elements_left::<2>();
-            inc_hi = inc_hi.rotate_elements_left::<2>();
         }
 
-        inc_lo |= Simd::splat(1);
         tm0 &= Simd::splat(TINYMT64_LANE_MASK);
         TripleMixSimdCore {
             xr0,
@@ -202,12 +191,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        let mut padding = [0u64; 4]; // 32 bytes + 256-byte core state = 288 bytes = 4 blocks
+        let mut padding = [0u64; 3]; // 24 bytes + 192-byte core state = 216 bytes = 3 blocks
         let remaining = self.block_core.remaining_results();
         let remaining_len = remaining.len();
         if remaining_len > 0 {
             padding[0] = remaining_len as u64;
-            padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
+            padding[1..(remaining.len() + 1).min(3)].copy_from_slice(remaining);
         } else {
             self.fill(&mut padding);
         }
@@ -231,6 +220,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         // Dead-state check
         if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0))
             | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))
+            | (c.mcg_state | c.mcg_carry).simd_eq(Simd::splat(0))
             | c.mcg_state.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
             | c.mcg_carry.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
         ).any()

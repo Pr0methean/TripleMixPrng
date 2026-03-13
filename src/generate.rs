@@ -44,7 +44,7 @@ impl TripleMixSimdCore {
             xr1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
             tm0: Simd::splat(0),
             tm1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
-            mcg_state: Simd::splat(0),
+            mcg_state: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
             mcg_carry: Simd::splat(0),
         }
     }
@@ -74,6 +74,7 @@ impl TripleMixSimdCore {
             // (2) w_hi is updated after output, but next_w_lo is output already updated
             let (kx_lo, kx_hi) = simd_mulsmall(mcg_state, Self::MCG_MULTIPLIER_COMPLEMENTS); // MCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
+            let next_state = mcg_carry - kx_lo; // MCG update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
             let mut ty = tm0 + tm1; // TinyMT64 update
@@ -88,19 +89,20 @@ impl TripleMixSimdCore {
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
-            let (out0, out1) = mix(kx_lo, x_out, t_out, kx_hi);
+            let (out0, out1) = mix(mcg_carry, x_out, t_out, next_state);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
             let borrow = mcg_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
             let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
             let t = xr0 ^ xr1; // Xoroshiro++ update
-            let next_state = mcg_carry - kx_lo; // MCG update
+            let next_carry_part = mcg_state - kx_hi; // MCG update
             tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
-            let next_carry = mcg_state - kx_hi + borrow; // MCG update: adding u64::MAX == subtracting 1
+            xr0 = rotl(xr0, 24); // Xoroshiro++ update
+            let next_carry = next_carry_part - borrow; // MCG update: adding u64::MAX == subtracting 1
             tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
-            xr0 = rotl(xr0, 24) ^ t ^ (t << Simd::splat(16)); // Xoroshiro++ update
-            mcg_state = next_state; // MCG update
             xr1 = rotl(t, 37); // Xoroshiro++ update
+            mcg_state = next_state; // MCG update
+            xr0 ^= t ^ (t << Simd::splat(16)); // Xoroshiro++ update
             mcg_carry = next_carry; // MCG update
         }
 
@@ -258,19 +260,31 @@ pub(crate) fn mix(
     // words and adds the multiplication. Instead of permuting between rounds, we mix the
     // permutation in during the second round, thus hiding simd_swizzle's latency.
 
-    // First ChaCha round
+    // 1st half of 1st ChaCha round
     a += b;
     d ^= a;
-    d = rotl16(d);
+    d = rotl24(d);
     c += d;
     b ^= c;
-    b = rotl24(b);
+    b = rotl16(b);
+
+    // Cross-mixing
+    a += rotl(d, 43);
+    d ^= rotl(c, 23);
+
+    // 3rd quarter of 1st ChaCha round
     a += b;
     d ^= a;
-    d = rotl8(d);
+    d = rotl(d, 52);
+
+    // Cross-mixing
+    b ^= rotl(a, 13);
+    c -= rotl(b, 33);
+
+    // 4th quarter of 1st ChaCha round
     c += d;
     b ^= c;
-    b = rotl(b, 53);
+    b = rotl8(b);
 
     // This permutation is based on the `diagonalize` method in `c2-chacha`:
     // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
@@ -278,27 +292,46 @@ pub(crate) fn mix(
     let dr = d.rotate_elements_right::<2>();
     let ar = a.rotate_elements_right::<1>();
 
+    // 1st quarter of 2nd ChaCha round
     a += b;
     d ^= a;
-    d = rotl16(d); // 1st quarter of 2nd ChaCha round
+    d = rotl8(d);
 
-    a += rotl(c, 21);
-    d ^= rotl(b, 37);
+    // Inject swizzled copies
     b ^= rotl(cr,17);
     c += dr;
     d += rotl(ar,29);
 
+    // 2nd quarter of 2nd ChaCha round
     c += d;
     b ^= c;
-    b = rotl24(b); // 2nd quarter of 2nd ChaCha round
+    b = rotl24(b);
 
+    // Cross-mixing
+    a -= rotl(c, 19);
+    d ^= rotl(b, 37);
+
+    // 3rd quarter of 2nd ChaCha round
     a += b;
     d ^= a;
-    d = rotl8(d); // 3rd quarter of 2nd ChaCha round
+    d = rotl16(d);
 
+    // Cross-mixing
+    c ^= rotl(a, 39);
+    b += rotl(d, 21);
+
+    // 4th quarter of 2nd ChaCha round
     c += d;
     b ^= c;
-    b = rotl(b, 7); // 4th quarter of 2nd ChaCha round
+    b = rotl(b, 7);
+
+    // Half of a 3rd ChaCha round
+    a += b;
+    d ^= a;
+    d = rotl16(d);
+    c += d;
+    b ^= c;
+    b = rotl(b, 11);
 
     let mut x = a + c;
     let mut y = b + d;

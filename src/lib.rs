@@ -109,7 +109,7 @@ pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
         tm0: Simd::splat(0),
         tm1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
         mcg_state: Simd::splat(0),
-        mcg_carry: Simd::splat(0),
+        mcg_carry: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
     });
     let rng3 = TripleMixPrng::from_core(TripleMixSimdCore {
         xr0: Simd::splat(u64::MAX),
