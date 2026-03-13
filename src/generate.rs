@@ -266,28 +266,28 @@ pub(crate) fn mix(
     b = rotl16(b);
 
     // Cross-mixing
-    a += rotl(d, 43);
-    d ^= rotl(c, 23);
+    let axc = a + rotl(c, 23);
+    let bxd = b ^ rotl(d, 43);
 
     // 3rd quarter of 1st ChaCha round
-    a += b;
-    d ^= a;
+    d ^= axc;
+    a += bxd;
     d = rotl(d, 52);
 
     // Cross-mixing
-    b ^= rotl(a, 13);
-    c -= rotl(b, 33);
+    let cxa = c ^ rotl(a, 13);
+    let dxb = d - rotl(b, 33);
 
     // 4th quarter of 1st ChaCha round
-    c += d;
-    b ^= c;
+    b ^= cxa;
+    c += dxb;
     b = rotl8(b);
 
     // This permutation is based on the `diagonalize` method in `c2-chacha`:
     // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
-    let cr = c.rotate_elements_left::<1>();
+    let cr = rotl(c.rotate_elements_left::<1>(), 17);
     let dr = d.rotate_elements_right::<2>();
-    let ar = a.rotate_elements_right::<1>();
+    let ar = rotl(a.rotate_elements_right::<1>(), 29);
 
     // 1st quarter of 2nd ChaCha round
     a += b;
@@ -295,9 +295,9 @@ pub(crate) fn mix(
     d = rotl8(d);
 
     // Inject swizzled copies
-    b ^= rotl(cr,17);
+    b ^= cr;
     c += dr;
-    d += rotl(ar,29);
+    d += ar;
 
     // 2nd quarter of 2nd ChaCha round
     c += d;
@@ -305,15 +305,15 @@ pub(crate) fn mix(
     b = rotl24(b);
 
     // Cross-mixing
-    a -= rotl(c, 19);
-    d ^= rotl(b, 37);
+    let bxc = b - rotl(c, 19);
+    let axb = a ^ rotl(b, 37);
 
     // 3rd quarter of 2nd ChaCha round
-    a += b;
-    d ^= a;
+    a ^= bxc;
+    d += axb;
     d = rotl16(d);
 
-    // Cross-mixing
+    // Cross-mixing (no lag)
     c ^= rotl(a, 39);
     b += rotl(d, 21);
 
@@ -322,13 +322,10 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl(b, 7);
 
-    // 3rd ChaCha round
+    // 1st quarter of incomplete third ChaCha round
     a += b;
     d ^= a;
     d = rotl16(d);
-    c += d;
-    b ^= c;
-    b = rotl(b, 11);
 
     let mut x = a + c;
     let mut y = b + d;
