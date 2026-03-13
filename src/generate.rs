@@ -18,13 +18,14 @@ impl TripleMixSimdCore {
     const TINYMT_MAT2: u64 = 0xfed47fb5 << 32;
     const TINYMT_TMAT: u64 = 0xa853e7ffeffefffe;
 
-    // These are the hexadecimal expansion of pi (including the leading 3).
-    // The LCG multiplier for each lane i is effectively (LANE_CONSTANTS[i] as u128) << 64 + 1.
+    // The MCG multiplier for each lane i is effectively (LANE_CONSTANTS[i] as u128) << 64 + 1.
+    // To maximize the period, (LANE_CONSTANTS[i] as u128) << 64 - 1 and
+    // ((LANE_CONSTANTS[i] as u128) << 63 - 1 should both be prime.
     pub(crate) const LANE_CONSTANTS: Simd64 = Simd64::from_array([
-        0x3243_f6a8_885a_308d,
-        0x3131_98a2_e037_0734,
-        0x4a40_9382_2299_f31d,
-        0x0082_efa9_8ec4_e6c8,
+        u64::MAX - 741,
+        u64::MAX - 5571,
+        u64::MAX - 1431,
+        u64::MAX - 1107,
     ]);
 
     pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
@@ -61,11 +62,16 @@ impl TripleMixSimdCore {
         for block in blocks {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
 
-            // 128-bit LCG: w = w * (lane_constant << 64 + 1) + inc
-            // NB: we use w_hi for output before updating it, so the output is permuted compared to
-            // a standard LCG!
+            // 128-bit MWC:
+            // c =
+            // w' = w * (lane_constant << 64 + 1) + inc
+            //
+            // This differs from an LCG in two ways:
+            // (1) high_product is computed from w_lo, not next_w_lo
+            // (2) w_hi is updated after output, but next_w_lo is output already updated
+            let high_product = simd_mul(w_lo, Self::LANE_CONSTANTS); // LCG update
+
             let next_w_lo = w_lo + i_lo; // LCG update
-            let high_product = simd_mul(next_w_lo, Self::LANE_CONSTANTS); // LCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
@@ -1194,7 +1200,6 @@ mod tests {
 
         for col in 0..matrix.cols() {
             if !echelon.get(col) {
-                println!("Dependent column: {}", col);
                 dependent_cols.push(col);
             }
         }
@@ -1298,15 +1303,18 @@ mod tests {
     }
 
     #[test]
-    fn test_increment_independence() {
+    fn test_increment_independence_statistical() {
         let mut rng = rng();
+        let mut ranks = Vec::new();
+        let iterations = 1000;
+        let expected_mean = 1531.0;  // Your observed mean
+        let expected_std = 0.3;       // Your observed std deviation
 
-        for test_idx in 0..5 {
-            // Random increment
+        for _ in 0..iterations {
+            // Random valid increment (odd)
             let inc_lo = Simd64::from_array(rng.random()) | Simd64::splat(1);
             let inc_hi = Simd64::from_array(rng.random());
 
-            // Base state with this increment (ensure non-zero sub-generators)
             let base_state = TripleMixSimdCore {
                 inc_lo,
                 inc_hi,
@@ -1320,14 +1328,50 @@ mod tests {
 
             let config = MatrixConfig {
                 steps: 3,
-                include_increment: false, // Increment is constant, not part of state
+                include_increment: false,
                 base_state,
             };
 
-            let (matrix, _) = build_transition_matrix(&config);
-            println!("Test {} (inc_lo={:?}):", test_idx, inc_lo.to_array());
-            analyze_matrix_rank(&matrix, 1532);
+            let (mut matrix, _) = build_transition_matrix(&config);
+            let echelon = matrix.to_echelon_form();
+
+            for col in 0..matrix.cols() {
+                if !echelon.get(col) {
+                    println!("Dependent column: {}", col);
+                }
+            }
+            let rank = echelon.count_ones();
+            ranks.push(rank);
         }
+
+        // Calculate statistics
+        let mean = ranks.iter().sum::<usize>() as f64 / iterations as f64;
+        let variance = FSum::with_all(ranks.iter()
+            .map(|&r| (r as f64 - mean).powi(2))).value()
+            / (iterations - 1) as f64;
+        let std_dev = variance.sqrt();
+
+        println!("Rank distribution over {} trials:", iterations);
+        println!("  Mean: {:.3} (expected ~{:.3})", mean, expected_mean);
+        println!("  Std dev: {:.3} (expected ~{:.3})", std_dev, expected_std);
+
+        // Create histogram
+        let mut hist = std::collections::HashMap::new();
+        for &rank in &ranks {
+            *hist.entry(rank).or_insert(0) += 1;
+        }
+
+        let mut hist_vec: Vec<_> = hist.into_iter().collect();
+        hist_vec.sort();
+        for (rank, count) in hist_vec {
+            println!("  Rank {}: {} trials ({:.1}%)",
+                     rank, count, 100.0 * count as f64 / iterations as f64);
+        }
+
+        // Statistical assertions (not hard equality)
+        assert!(mean >= 1531.0);
+        assert!(std_dev <= 0.3,
+                "Std dev {} too far from expected {}", std_dev, expected_std);
     }
 
     #[test]

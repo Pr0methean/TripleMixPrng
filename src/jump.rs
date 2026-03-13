@@ -51,10 +51,6 @@ impl TripleMixSimdCore {
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
 
-        let n = steps % (1 << 64);
-        let n_u64 = n as u64;
-        let periods = (steps >> 64) as u64;
-
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
 
         let mut weyl_lo_arr = self.weyl_lo.to_array();
@@ -63,44 +59,49 @@ impl TripleMixSimdCore {
         for i in 0..SIMD_WIDTH {
             let w_lo = weyl_lo_arr[i];
             let w_hi = weyl_hi_arr[i];
+            let init_state = ((w_hi as u128) << 64) | (w_lo as u128);
             let i_lo = self.inc_lo.as_array()[i];
             let i_hi = self.inc_hi.as_array()[i];
             let l = Self::LANE_CONSTANTS.as_array()[i];
 
-            let w_lo_n = w_lo.wrapping_add(n_u64.wrapping_mul(i_lo));
+            // M = (l << 64) + 1
+            let m = (l as u128) << 64 | 1;
+            // C = (i_hi << 64) | i_lo
+            let c = (i_hi as u128) << 64 | (i_lo as u128);
 
-            // Sum_{j=0}^{n-1} w_lo_j = n * w_lo + n(n-1)/2 * i_lo mod 2^64
-            let sum_w_lo = n
-                .wrapping_mul(w_lo as u128)
-                .wrapping_add(if n.is_multiple_of(2) {
-                    (n / 2)
-                        .wrapping_mul(n.wrapping_sub(1))
-                        .wrapping_mul(i_lo as u128)
-                } else {
-                    n.wrapping_mul(n.wrapping_sub(1) / 2)
-                        .wrapping_mul(i_lo as u128)
-                }) as u64;
+            let mut acc_m = 1u128;
+            let mut acc_c = 0u128;
+            let mut cur_m = m;
+            let mut cur_c = c;
+            let mut remaining = steps;
 
-            // Carry sum = how many times w_lo wrapped around 2^64
-            let carry_sum =
-                ((w_lo as u128).wrapping_add(n.wrapping_mul(i_lo as u128)) >> 64) as u64;
+            while remaining > 0 {
+                if remaining & 1 != 0 {
+                    // acc = acc ∘ cur
+                    // new_acc_m = acc_m * cur_m
+                    // new_acc_c = acc_c * cur_m + cur_c
+                    let new_acc_m = acc_m.wrapping_mul(cur_m);
+                    let new_acc_c = acc_c.wrapping_mul(cur_m).wrapping_add(cur_c);
+                    acc_m = new_acc_m;
+                    acc_c = new_acc_c;
+                }
 
-            let delta_hi = n_u64
-                .wrapping_mul(i_hi)
-                .wrapping_add(sum_w_lo.wrapping_mul(l))
-                .wrapping_add(carry_sum);
+                // cur = cur ∘ cur  (square the transformation)
+                // new_cur_m = cur_m * cur_m
+                // new_cur_c = cur_c * cur_m + cur_c
+                let new_cur_m = cur_m.wrapping_mul(cur_m);
+                let new_cur_c = cur_c.wrapping_mul(cur_m).wrapping_add(cur_c);
+                cur_m = new_cur_m;
+                cur_c = new_cur_c;
 
-            // Over a full 2^64 period:
-            // Delta W_lo = 0
-            // Sum_{j=0}^{2^64-1} w_lo_j = 2^63 * i_lo = 2^63 mod 2^64
-            // Carry Sum = i_lo
-            // Delta W_hi = L * 2^63 + i_lo
-            let period_delta = l.wrapping_mul(1u64 << 63).wrapping_add(i_lo);
+                remaining >>= 1;
+            }
 
-            weyl_lo_arr[i] = w_lo_n;
-            weyl_hi_arr[i] = w_hi
-                .wrapping_add(delta_hi)
-                .wrapping_add(periods.wrapping_mul(period_delta));
+            // Apply the accumulated transformation
+            let new_state = acc_m.wrapping_mul(init_state).wrapping_add(acc_c);
+
+            weyl_lo_arr[i] = new_state as u64;
+            weyl_hi_arr[i] = (new_state >> 64) as u64;
         }
 
         self.weyl_lo = Simd64::from_array(weyl_lo_arr);
@@ -284,6 +285,9 @@ mod tests {
     #[test]
     fn test_jump_ahead() {
         for mut prng in crate::create_rngs::<NotReproducible>() {
+            let prng_large_jmp = prng.clone();
+            let mut prng_jmp = prng.clone();
+
             // Advance sequential by 12 steps (meaning 12 * 8 = 96 next_u64 calls)
             for _ in 0..12 {
                 for _ in 0..OUTPUT_LEN {
@@ -291,17 +295,21 @@ mod tests {
                 }
             }
 
-            let mut prng_jmp = prng.clone();
             // Advance jumping by 12 steps
             prng_jmp.advance(12);
-            for _ in 0..12 {
-                for _ in 0..OUTPUT_LEN {
-                    prng.next_u64();
-                }
-            }
+            prng.block_core.reset_and_skip(0);
+        prng_jmp.block_core.reset_and_skip(0);
+            println!("prng={:?}", prng.block_core.core);
+            println!("prng_jmp={:?}", prng_jmp.block_core.core);
+            println!("prng buffer remaining: {:?}",
+                     prng.block_core.remaining_results());
+            println!("prng_jmp buffer remaining: {:?}",
+                     prng_jmp.block_core.remaining_results());
             for _ in 0..OUTPUT_LEN {
                 assert_eq!(prng.next_u64(), prng_jmp.next_u64());
             }
+
+            let prng = prng_large_jmp.clone();
 
             // Test advance_2_128 and advance consistency
             let mut base_a_for_2_128 = prng.clone();
@@ -313,6 +321,10 @@ mod tests {
 
             let mut prng_2_128 = prng.clone();
             prng_2_128.advance_2_128(1);
+
+            println!("base_a_for_2_128={:?}", base_a_for_2_128);
+            println!("base_b_for_2_128={:?}", base_b_for_2_128);
+            println!("prng_2_128={:?}", prng_2_128);
 
             for _ in 0..10_000 {
                 // Ensure internal state logic lines up perfectly equivalent.
