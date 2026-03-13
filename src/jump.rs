@@ -1,5 +1,4 @@
 use crate::generate::{SIMD_WIDTH, Simd64};
-use core::simd::{cmp::SimdPartialOrd, num::SimdUint, num::SimdInt, SimdCast};
 use crate::reproducibility::Reproducibility;
 use crate::{TripleMixPrng, TripleMixSimdCore};
 

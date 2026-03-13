@@ -55,7 +55,7 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
             mwc_state: Simd64::from_array(state.mwc_state),
             mwc_carry: Simd64::from_array(state.mwc_carry),
         };
-        if !Self::is_valid(&core) {
+        if !core.is_valid() {
             cold_path();
             Err(D::Error::custom("invalid core state"))
         } else if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
