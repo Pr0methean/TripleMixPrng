@@ -161,13 +161,10 @@ fn simd_mulsmall(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
         let p0 = a_lo * b;
         let p1 = a_hi * b;
 
-        let lo =
-            (p0 & Simd64::splat(0xffffffff)) |
-            (p1 << 32);
-
-        let hi =
-            (p0 >> 32) +
-            (p1 >> 32);
+        let lo = (p1 << 32) + p0;
+        let mask = lo.simd_lt(p0);
+        let carry = mask.to_simd().cast::<u64>();
+        let hi = (p1 >> 32) - carry;
 
         (lo, hi)
     }
