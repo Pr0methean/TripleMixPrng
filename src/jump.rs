@@ -298,13 +298,17 @@ mod tests {
             // Advance jumping by 12 steps
             prng_jmp.advance(12);
             prng.block_core.reset_and_skip(0);
-        prng_jmp.block_core.reset_and_skip(0);
+            prng_jmp.block_core.reset_and_skip(0);
             println!("prng={:?}", prng.block_core.core);
             println!("prng_jmp={:?}", prng_jmp.block_core.core);
-            println!("prng buffer remaining: {:?}",
-                     prng.block_core.remaining_results());
-            println!("prng_jmp buffer remaining: {:?}",
-                     prng_jmp.block_core.remaining_results());
+            println!(
+                "prng buffer remaining: {:?}",
+                prng.block_core.remaining_results()
+            );
+            println!(
+                "prng_jmp buffer remaining: {:?}",
+                prng_jmp.block_core.remaining_results()
+            );
             for _ in 0..OUTPUT_LEN {
                 assert_eq!(prng.next_u64(), prng_jmp.next_u64());
             }

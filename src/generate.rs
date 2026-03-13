@@ -1258,7 +1258,9 @@ mod tests {
         let iterations = 1000;
 
         for _ in 0..iterations {
-            let base_state = TripleMixPrng::<NotReproducible>::from_rng(&mut rng).block_core.core;
+            let base_state = TripleMixPrng::<NotReproducible>::from_rng(&mut rng)
+                .block_core
+                .core;
             let config = MatrixConfig {
                 steps: 3,
                 include_increment: false,
@@ -1273,8 +1275,8 @@ mod tests {
         ranks.sort_unstable();
         // Calculate statistics
         let mean_rank = ranks.iter().sum::<usize>() as f64 / iterations as f64;
-        let variance = FSum::with_all(ranks.iter()
-            .map(|&r| (r as f64 - mean_rank).powi(2))).value()
+        let variance = FSum::with_all(ranks.iter().map(|&r| (r as f64 - mean_rank).powi(2)))
+            .value()
             / ((iterations - 1) as f64);
         let std_dev = variance.sqrt();
 
@@ -1293,8 +1295,12 @@ mod tests {
         let mut hist_vec: Vec<_> = hist.into_iter().collect();
         hist_vec.sort();
         for (rank, count) in hist_vec {
-            println!("  Rank {}: {} trials ({:.1}%)",
-                     rank, count, 100.0 * count as f64 / iterations as f64);
+            println!(
+                "  Rank {}: {} trials ({:.1}%)",
+                rank,
+                count,
+                100.0 * count as f64 / iterations as f64
+            );
         }
 
         // The vast majority should be 1532, with a few 1531
@@ -1307,8 +1313,8 @@ mod tests {
         let mut rng = rng();
         let mut ranks = Vec::new();
         let iterations = 1000;
-        let expected_mean = 1531.0;  // Your observed mean
-        let expected_std = 0.3;       // Your observed std deviation
+        let expected_mean = 1531.0; // Your observed mean
+        let expected_std = 0.3; // Your observed std deviation
 
         for _ in 0..iterations {
             // Random valid increment (odd)
@@ -1346,8 +1352,7 @@ mod tests {
 
         // Calculate statistics
         let mean = ranks.iter().sum::<usize>() as f64 / iterations as f64;
-        let variance = FSum::with_all(ranks.iter()
-            .map(|&r| (r as f64 - mean).powi(2))).value()
+        let variance = FSum::with_all(ranks.iter().map(|&r| (r as f64 - mean).powi(2))).value()
             / (iterations - 1) as f64;
         let std_dev = variance.sqrt();
 
@@ -1364,14 +1369,22 @@ mod tests {
         let mut hist_vec: Vec<_> = hist.into_iter().collect();
         hist_vec.sort();
         for (rank, count) in hist_vec {
-            println!("  Rank {}: {} trials ({:.1}%)",
-                     rank, count, 100.0 * count as f64 / iterations as f64);
+            println!(
+                "  Rank {}: {} trials ({:.1}%)",
+                rank,
+                count,
+                100.0 * count as f64 / iterations as f64
+            );
         }
 
         // Statistical assertions (not hard equality)
         assert!(mean >= 1531.0);
-        assert!(std_dev <= 0.3,
-                "Std dev {} too far from expected {}", std_dev, expected_std);
+        assert!(
+            std_dev <= 0.3,
+            "Std dev {} too far from expected {}",
+            std_dev,
+            expected_std
+        );
     }
 
     #[test]
