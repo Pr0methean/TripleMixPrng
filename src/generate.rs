@@ -313,19 +313,26 @@ pub(crate) fn mix(
     d += axb;
     d = rotl16(d);
 
-    // Cross-mixing (no lag)
-    c ^= rotl(a, 39);
-    b += rotl(d, 21);
+    // Cross-mixing
+    let dxa = d + rotl(a, 39);
 
     // 4th quarter of 2nd ChaCha round
-    c += d;
     b ^= c;
+    c += dxa;
     b = rotl(b, 7);
 
-    // 1st quarter of incomplete third ChaCha round
+    // 1st quarter of 3rd ChaCha round
     a += b;
     d ^= a;
     d = rotl16(d);
+
+    // Cross-mixing
+    let cxd = c ^ rotl(d, 21);
+
+    // 2st quarter of 3rd ChaCha round
+    c += d;
+    b ^= cxd;
+    b = rotl(b, 11);
 
     let mut x = a + c;
     let mut y = b + d;
