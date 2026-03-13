@@ -133,11 +133,11 @@ impl TripleMixSimdCore {
         if steps == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, steps, 0);
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, steps, 0);
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
-        self.mcg_state = new_mcg_state;
-        self.mcg_carry = new_mcg_carry;
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 
@@ -146,12 +146,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 1);
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 1);
         // 2^128 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
-        self.mcg_state = new_mcg_state;
-        self.mcg_carry = new_mcg_carry;
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 
@@ -160,12 +160,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mcg_state, new_mcg_carry) = Self::mwc_jump(self.mcg_state, self.mcg_carry, multiples, 2);
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 2);
         // 2^256 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
-        self.mcg_state = new_mcg_state;
-        self.mcg_carry = new_mcg_carry;
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 

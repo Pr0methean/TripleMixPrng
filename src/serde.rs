@@ -8,8 +8,8 @@ pub(crate) struct CoreState {
     xr1: [u64; 4],
     tm0: [u64; 4],
     tm1: [u64; 4],
-    mcg_state: [u64; 4],
-    mcg_carry: [u64; 4],
+    mwc_state: [u64; 4],
+    mwc_carry: [u64; 4],
     remaining_results: Box<[u64]>,
 }
 
@@ -24,8 +24,8 @@ impl<R: Reproducibility> serde::Serialize for TripleMixPrng<R> {
             xr1: core.xr1.to_array(),
             tm0: core.tm0.to_array(),
             tm1: core.tm1.to_array(),
-            mcg_state: core.mcg_state.to_array(),
-            mcg_carry: core.mcg_carry.to_array(),
+            mwc_state: core.mwc_state.to_array(),
+            mwc_carry: core.mwc_carry.to_array(),
             remaining_results: self
                 .block_core
                 .remaining_results()
@@ -52,8 +52,8 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
             xr1: Simd64::from_array(state.xr1),
             tm0: Simd64::from_array(state.tm0),
             tm1: Simd64::from_array(state.tm1),
-            mcg_state: Simd64::from_array(state.mcg_state),
-            mcg_carry: Simd64::from_array(state.mcg_carry),
+            mwc_state: Simd64::from_array(state.mwc_state),
+            mwc_carry: Simd64::from_array(state.mwc_carry),
         };
         if !Self::is_valid(&core) {
             cold_path();

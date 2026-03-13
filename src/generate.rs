@@ -44,8 +44,8 @@ impl TripleMixSimdCore {
             xr1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
             tm0: Simd::splat(0),
             tm1: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
-            mcg_state: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
-            mcg_carry: Simd::splat(0),
+            mwc_state: Simd64::from_array(SMALLEST_2BIT_POSITIVE),
+            mwc_carry: Simd::splat(0),
         }
     }
 
@@ -59,8 +59,8 @@ impl TripleMixSimdCore {
         let mut xr1 = self.xr1;
         let mut tm0 = self.tm0;
         let mut tm1 = self.tm1;
-        let mut mcg_state = self.mcg_state;
-        let mut mcg_carry = self.mcg_carry;
+        let mut mwc_state = self.mwc_state;
+        let mut mwc_carry = self.mwc_carry;
 
         for block in blocks {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
@@ -72,9 +72,9 @@ impl TripleMixSimdCore {
             // This differs from an LCG in two ways:
             // (1) high_product is computed from w_lo, not next_w_lo
             // (2) w_hi is updated after output, but next_w_lo is output already updated
-            let (kx_lo, kx_hi) = simd_mulsmall(mcg_state, Self::MCG_MULTIPLIER_COMPLEMENTS); // MCG update
+            let (kx_lo, kx_hi) = simd_mulsmall(mwc_state, Self::MCG_MULTIPLIER_COMPLEMENTS); // MCG update
             let mut x = tm0 ^ tm1; // TinyMT64 update
-            let next_state = mcg_carry - kx_lo; // MCG update
+            let next_state = mwc_carry - kx_lo; // MCG update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
             let x_out = rotl(xr0 + xr1, 17) + xr0; // Xoroshiro128++ output tempering
             let mut ty = tm0 + tm1; // TinyMT64 update
@@ -89,29 +89,29 @@ impl TripleMixSimdCore {
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
             // Mixing
-            let (out0, out1) = mix(mcg_carry, x_out, t_out, next_state);
+            let (out0, out1) = mix(mwc_carry, x_out, t_out, next_state);
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
-            let borrow = mcg_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
+            let borrow = mwc_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
             let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
             let t = xr0 ^ xr1; // Xoroshiro++ update
-            let next_carry_part = mcg_state - kx_hi; // MCG update
+            let next_carry_part = mwc_state - kx_hi; // MCG update
             tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
             xr0 = rotl(xr0, 24); // Xoroshiro++ update
             let next_carry = next_carry_part + borrow; // MCG update: adding u64::MAX == subtracting 1
             tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
             xr1 = rotl(t, 37); // Xoroshiro++ update
-            mcg_state = next_state; // MCG update
+            mwc_state = next_state; // MCG update
             xr0 ^= t ^ (t << Simd::splat(16)); // Xoroshiro++ update
-            mcg_carry = next_carry; // MCG update
+            mwc_carry = next_carry; // MCG update
         }
 
         self.xr0 = xr0;
         self.xr1 = xr1;
         self.tm0 = tm0;
         self.tm1 = tm1;
-        self.mcg_state = mcg_state;
-        self.mcg_carry = mcg_carry;
+        self.mwc_state = mwc_state;
+        self.mwc_carry = mwc_carry;
     }
 }
 
@@ -775,18 +775,21 @@ mod tests {
                                 core2.tm1 = Simd64::from_array(arr);
                             }
                             4 => {
-                                let x = core2.mcg_state;
+                                let x = core2.mwc_state;
                                 let mut arr = x.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.mcg_state = Simd64::from_array(arr);
+                                core2.mwc_state = Simd64::from_array(arr);
                             }
                             5 => {
-                                let x = core2.mcg_carry;
+                                let x = core2.mwc_carry;
                                 let mut arr = x.to_array();
                                 arr[lane_idx] ^= 1 << bit_idx;
-                                core2.mcg_carry = Simd64::from_array(arr);
+                                core2.mwc_carry = Simd64::from_array(arr);
                             }
                             _ => unreachable!(),
+                        }
+                        if !core2.is_valid() {
+                            continue;
                         }
                         let mut output2 = [[Simd64::splat(0); OUTPUTS_PER_STEP]; ITERATIONS];
                         core2.fill_blocks(cast_slice_mut(&mut output2));
@@ -1164,14 +1167,14 @@ mod tests {
                 |c: &mut TripleMixSimdCore, v| c.tm1 = v,
             ),
             (
-                "weyl_lo",
-                |c: &TripleMixSimdCore| c.mcg_state,
-                |c: &mut TripleMixSimdCore, v| c.mcg_state = v,
+                "mwc_state",
+                |c: &TripleMixSimdCore| c.mwc_state,
+                |c: &mut TripleMixSimdCore, v| c.mwc_state = v,
             ),
             (
-                "weyl_hi",
-                |c: &TripleMixSimdCore| c.mcg_carry,
-                |c: &mut TripleMixSimdCore, v| c.mcg_carry = v,
+                "mwc_carry",
+                |c: &TripleMixSimdCore| c.mwc_carry,
+                |c: &mut TripleMixSimdCore, v| c.mwc_carry = v,
             ),
         ];
 
