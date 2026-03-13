@@ -155,11 +155,11 @@ fn simd_mulsmall(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
         not(all(target_feature = "avx512dq", target_feature = "avx512vl"))
     )))]
     {
-        let x_lo = x & Simd64::splat(0xffffffff);
-        let x_hi = x >> 32;
+        let a_lo = a & Simd64::splat(0xffffffff);
+        let a_hi = a >> 32;
 
-        let p0 = x_lo * kvec;
-        let p1 = x_hi * kvec;
+        let p0 = a_lo * b;
+        let p1 = a_hi * b;
 
         let lo =
             (p0 & Simd64::splat(0xffffffff)) |
