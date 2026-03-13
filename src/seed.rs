@@ -277,21 +277,6 @@ impl TripleMixSimdCore {
 
         true
     }
-
-    #[inline(always)]
-    pub(crate) fn from_core(core: TripleMixSimdCore) -> Self {
-        Self {
-            block_core: BlockRng::new(core),
-            reproducibility: PhantomData,
-        }
-    }
-
-    /// Creates an instance in a relatively predictable state. Idempotent. Intended only for
-    /// testing.
-    #[inline(always)]
-    pub fn almost_all_zeroes_state() -> Self {
-        TripleMixPrng::from_core(TripleMixSimdCore::almost_all_zeroes_core())
-    }
 }
 
 #[cfg(test)]
