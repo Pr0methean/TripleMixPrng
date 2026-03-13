@@ -98,7 +98,7 @@ impl TripleMixSimdCore {
             let next_carry_part = mcg_state - kx_hi; // MCG update
             tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
             xr0 = rotl(xr0, 24); // Xoroshiro++ update
-            let next_carry = next_carry_part - borrow; // MCG update: adding u64::MAX == subtracting 1
+            let next_carry = next_carry_part + borrow; // MCG update: adding u64::MAX == subtracting 1
             tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
             xr1 = rotl(t, 37); // Xoroshiro++ update
             mcg_state = next_state; // MCG update

@@ -49,24 +49,26 @@ pub fn mul_small(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
 #[inline(always)]
 unsafe fn mul_small_avx2(x: __m256i, kvec: __m256i) -> (__m256i, __m256i) {
     unsafe {
-        // shift to get x_hi
+        // x = x_hi * 2^32 + x_lo
         let x_hi = _mm256_srli_epi64(x, 32);
 
-        // x_lo * k
+        // p0 = x_lo * k
         let p0 = _mm256_mul_epu32(x, kvec);
 
-        // x_hi * k
+        // p1 = x_hi * k
         let p1 = _mm256_mul_epu32(x_hi, kvec);
 
-        // construct low word
+        // kx = p1 * 2^32 + p0 = (p1 + (p0 >> 32)) * 2^32 + (p0 & 0xffffffff)
+        let p0_hi = _mm256_srli_epi64(p0, 32);
+        let s = _mm256_add_epi64(p1, p0_hi);
+
+        // construct low word: lo = (s << 32) | (p0 & 0xffffffff)
         let lo_low = _mm256_and_si256(p0, _mm256_set1_epi64x(0xffffffff));
-        let lo_high = _mm256_slli_epi64(p1, 32);
+        let lo_high = _mm256_slli_epi64(s, 32);
         let lo = _mm256_or_si256(lo_low, lo_high);
 
-        // construct high word
-        let hi0 = _mm256_srli_epi64(p0, 32);
-        let hi1 = _mm256_srli_epi64(p1, 32);
-        let hi = _mm256_add_epi64(hi0, hi1);
+        // construct high word: hi = s >> 32
+        let hi = _mm256_srli_epi64(s, 32);
 
         (lo, hi)
     }
