@@ -66,23 +66,23 @@ impl TripleMixSimdCore {
         // It satisfies the recurrence V_n = a * V_{n-1} mod m,
         // where m = a * 2^64 - 1.
         // Recover (W, c) from V as W = V / a, c = V % a.
-        
+
         for i in 0..SIMD_WIDTH {
             let a = TripleMixSimdCore::MCG_MULTIPLIERS[i] as u128;
             let m = (a << 64) - 1;
-            
+
             // Initial V_0 = a * W_0 + c_0
             let v_0 = a.wrapping_mul(state[i] as u128).wrapping_add(carry[i] as u128) % m;
-            
+
             let mut base = a % m;
             let mut exp = steps;
-            
+
             for _ in 0..k {
                 for _ in 0..128 {
                     base = mul_mod(base, base, m);
                 }
             }
-            
+
             let mut ak = 1u128;
             while exp > 0 {
                 if exp & 1 != 0 {
@@ -91,9 +91,9 @@ impl TripleMixSimdCore {
                 base = mul_mod(base, base, m);
                 exp >>= 1;
             }
-            
+
             let v_final = mul_mod(v_0, ak, m);
-            
+
             res_state[i] = (v_final / a) as u64;
             res_carry[i] = (v_final % a) as u64;
         }
