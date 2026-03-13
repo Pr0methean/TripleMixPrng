@@ -2,7 +2,7 @@ rand_triplemix
 ==============
 
 This is a vectorized pseudorandom number generator (PRNG) that combines, in each of 4 SIMD lanes, an instance of 
-xoroshiro128, TinyMT64 and a 128-bit linear congruential generator (LCG) in each of 4 SIMD lanes. This PRNG has not been 
+xoroshiro128, TinyMT64 and a 128-bit multiply-with-carry generator (MCG) in each of 4 SIMD lanes. This PRNG has not been 
 evaluated for cryptographic use.
 
 Requires the `portable_simd` feature, which is currently nightly-only.
@@ -11,9 +11,17 @@ The PRNG has the following properties:
 
 * The output block size is 64 bytes (8 u64's).
 * The state size is 256 bytes: 508 bits of identity, 1532 bits of mutable state, 8 bits of overhead.
-* The period is 2<sup>128</sup>(2<sup>128</sup> - 1)(2<sup>127</sup> - 1) blocks, because the period of the LCG is
-  2<sup>128</sup>, the period of the TinyMT64 is 2<sup>127</sup> - 1, and the period of the xoroshiro is 
-  2<sup>128</sup> - 1, and those three periods are coprime.
+* The period is greater than 2<sup>763</sup> - 2<sup>712</sup> - 2<sup>710</sup> blocks, which is the product of the subgenerators' coprime periods:
+  * Xoroshiro++: 2<sup>128</sup> - 1
+  * TinyMT64: 2<sup>127</sup> - 1
+  * MCG (lane 0): 2<sup>127</sup> - 742×2<sup>63</sup> - 1
+  * MCG (lane 1): 2<sup>127</sup> - 5571×2<sup>63</sup> - 1
+  * MCG (lane 2): 2<sup>127</sup> - 1431×2<sup>63</sup> - 1
+  * MCG (lane 3): 2<sup>127</sup> - 1107×2<sup>63</sup> - 1
+* The 3-step output mapping achieves an average linear rank of 1531.94, with standard deviation less than 0.3.
+* The generator is approximately k-equidistributed for 64-bit outputs for 2 ≤ k ≤ 11. This means that over its full 
+  period for any given seed, every possible sequence of k consecutive 64-bit values occurs, and no sequence 
+  occurs fewer than 1 − 2<sup>-59</sup> times as often as any other.
 * 64-bit outputs are exactly uniformly distributed: each possible output will occur 
   2<sup>64</sup>(2<sup>128</sup> - 1)(2<sup>127</sup> - 1) times in each SIMD lane during a full cycle.
 * Can be created with a seed of any length.

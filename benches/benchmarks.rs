@@ -2,6 +2,7 @@ use criterion::measurement::Measurement;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use const_format::formatcp;
+use core::time::Duration;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use criterion_cycles_per_byte::CyclesPerByte;
 #[cfg(feature = "bench_include_threadrng")]
@@ -18,7 +19,6 @@ use rand_triplemix::seed::{DEFAULT_SEED_SIZE, LARGE_SEED_SIZE};
 use std::env::consts::{ARCH, OS};
 use std::hint::black_box;
 use std::mem::size_of;
-use core::time::Duration;
 
 const PLATFORM: &str = formatcp!("{ARCH}:{OS}");
 

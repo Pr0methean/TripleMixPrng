@@ -1,4 +1,4 @@
-use crate::generate::{SIMD_WIDTH, Simd64, TINYMT64_LANE_MASK};
+use crate::generate::{Simd64, TINYMT64_LANE_MASK};
 use crate::{Reproducibility, VERSION_OID};
 use crate::{TripleMixPrng, TripleMixSimdCore};
 use const_format::formatcp;
@@ -282,18 +282,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     /// testing.
     #[inline(always)]
     pub fn almost_all_zeroes_state() -> Self {
-        const SMALLEST_DISTINCT_ODD: [u64; SIMD_WIDTH] = [1, 3, 5, 7];
-        const SMALLEST_DISTINCT_POSITIVE: [u64; SIMD_WIDTH] = [1, 2, 3, 4];
-        TripleMixPrng::from_core(TripleMixSimdCore {
-            xr0: Simd::splat(0),
-            xr1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            tm0: Simd::splat(0),
-            tm1: Simd64::from_array(SMALLEST_DISTINCT_POSITIVE),
-            weyl_lo: Simd::splat(0),
-            weyl_hi: Simd::splat(0),
-            inc_lo: Simd64::from_array(SMALLEST_DISTINCT_ODD),
-            inc_hi: Simd::splat(0),
-        })
+        TripleMixPrng::from_core(TripleMixSimdCore::almost_all_zeroes_core())
     }
 }
 
