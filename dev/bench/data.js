@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773472573767,
+  "lastUpdate": 1773472616987,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -34848,6 +34848,198 @@ window.BENCHMARK_DATA = {
             "value": 7559,
             "range": "± 49",
             "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4eb38bc82bb693258ccbdcb1289eebcba150a31",
+          "message": "Finish migration to MWC (#63)\n\n* Tweaks to achieve and prove equidistribution\n\n* cargo fmt --all\n\n* Fix a Clippy warning\n\n* cargo clippy --fix\n\n* Fix: occasional linear rank of less than 1532 is expected, so replace flaky rank test with a statistical test\n\n* Fix: update reproducibility test reference output\n\n* Update LANE_CONSTANTS and README for the fact the \"LCG\" is actually an MCG\n\n* cargo fmt --all\n\n* Update reference output in test_cross_platform_reproducibility\n\n* WIP: Implement MCG with a prime modulus\n\n* WIP: Bug fixes and increased mixing\n\n* Bug fixes for jump (via Gemini Flash 3)\n\n* Clean up unused imports and parameters\n\n* Rename \"mcg_*\" to \"mwc_*\"\n\n* Fix: skip invalid states in test_avalanche, and don't lag output\n\n* Minor bug fixes\n\n* Fix: test_mix_matrix_proptest was using old size\n\n* Fix: test_mix_matrix_proptest was using old size to set expectations\n\n* Fix merge\n\n* Fix: was using an invalid state in tests\n\n* Fix: bad multiplication code for non-AVX2\n\n* Fix bugs in non-AVX2 simd_mulsmall (via Gemini 3 Flash)\n\n* Mixing tweaks: use intermediate variables for first two cross-mixing steps, and reduce rounds from 2.5 to 2.25\n\n* Update reference output for reproducibility test\n\n* Tweak: restore mix to 2.5 rounds, but also add intermediates in late cross-mixing\n\n* Fix: restore dependency cahin for late cross-mixing\n\n* Tweak: use a simplified version of third ChaCha half-round with partial ILP\n\n* Tweak: increase ILP and mixing for final half-round\n\n* Update reference output\n\n* Optimize `mix` (via DeepSeek)\n\n* Optimize `mix` further (via DeepSeek)\n\n* Update reference output",
+          "timestamp": "2026-03-13T23:57:49-07:00",
+          "tree_id": "c1b0078168bacdb5d3909599aba29ac20a2f1c59",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/a4eb38bc82bb693258ccbdcb1289eebcba150a31"
+        },
+        "date": 1773472615903,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 575153,
+            "range": "± 521",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 609441,
+            "range": "± 467",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 575441,
+            "range": "± 1305",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 659009,
+            "range": "± 950",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 576308,
+            "range": "± 675",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 660322,
+            "range": "± 1076",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 576055,
+            "range": "± 503",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 659351,
+            "range": "± 781",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 576206,
+            "range": "± 447",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 659318,
+            "range": "± 580",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 576088,
+            "range": "± 514",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 659238,
+            "range": "± 1122",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 576148,
+            "range": "± 467",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 659225,
+            "range": "± 517",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 576123,
+            "range": "± 589",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 658501,
+            "range": "± 649",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: next_u64/TripleMixPrng",
+            "value": 48,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 48,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/8",
+            "value": 2300,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/16",
+            "value": 2300,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/32",
+            "value": 2300,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/64",
+            "value": 2299,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/72",
+            "value": 2266,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/128",
+            "value": 1536,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/256",
+            "value": 2837,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/216",
+            "value": 2520,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/from_seed/512",
+            "value": 3377,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:linux: Initialization/fork",
+            "value": 2557,
+            "range": "± 6",
+            "unit": "ns/iter"
           }
         ]
       }
