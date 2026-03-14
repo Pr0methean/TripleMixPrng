@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773472616987,
+  "lastUpdate": 1773472626602,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -35039,6 +35039,198 @@ window.BENCHMARK_DATA = {
             "name": "aarch64:linux: Initialization/fork",
             "value": 2557,
             "range": "± 6",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4eb38bc82bb693258ccbdcb1289eebcba150a31",
+          "message": "Finish migration to MWC (#63)\n\n* Tweaks to achieve and prove equidistribution\n\n* cargo fmt --all\n\n* Fix a Clippy warning\n\n* cargo clippy --fix\n\n* Fix: occasional linear rank of less than 1532 is expected, so replace flaky rank test with a statistical test\n\n* Fix: update reproducibility test reference output\n\n* Update LANE_CONSTANTS and README for the fact the \"LCG\" is actually an MCG\n\n* cargo fmt --all\n\n* Update reference output in test_cross_platform_reproducibility\n\n* WIP: Implement MCG with a prime modulus\n\n* WIP: Bug fixes and increased mixing\n\n* Bug fixes for jump (via Gemini Flash 3)\n\n* Clean up unused imports and parameters\n\n* Rename \"mcg_*\" to \"mwc_*\"\n\n* Fix: skip invalid states in test_avalanche, and don't lag output\n\n* Minor bug fixes\n\n* Fix: test_mix_matrix_proptest was using old size\n\n* Fix: test_mix_matrix_proptest was using old size to set expectations\n\n* Fix merge\n\n* Fix: was using an invalid state in tests\n\n* Fix: bad multiplication code for non-AVX2\n\n* Fix bugs in non-AVX2 simd_mulsmall (via Gemini 3 Flash)\n\n* Mixing tweaks: use intermediate variables for first two cross-mixing steps, and reduce rounds from 2.5 to 2.25\n\n* Update reference output for reproducibility test\n\n* Tweak: restore mix to 2.5 rounds, but also add intermediates in late cross-mixing\n\n* Fix: restore dependency cahin for late cross-mixing\n\n* Tweak: use a simplified version of third ChaCha half-round with partial ILP\n\n* Tweak: increase ILP and mixing for final half-round\n\n* Update reference output\n\n* Optimize `mix` (via DeepSeek)\n\n* Optimize `mix` further (via DeepSeek)\n\n* Update reference output",
+          "timestamp": "2026-03-13T23:57:49-07:00",
+          "tree_id": "c1b0078168bacdb5d3909599aba29ac20a2f1c59",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/a4eb38bc82bb693258ccbdcb1289eebcba150a31"
+        },
+        "date": 1773472624895,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 428668,
+            "range": "± 11983",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 430091,
+            "range": "± 11054",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 427571,
+            "range": "± 3211",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 428740,
+            "range": "± 19637",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 429861,
+            "range": "± 21479",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 428227,
+            "range": "± 6707",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 429064,
+            "range": "± 19125",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 427417,
+            "range": "± 6805",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 427163,
+            "range": "± 5867",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 429295,
+            "range": "± 14901",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 428645,
+            "range": "± 7515",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 427704,
+            "range": "± 20356",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 428473,
+            "range": "± 16125",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 428425,
+            "range": "± 10504",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 428911,
+            "range": "± 11531",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 427725,
+            "range": "± 8892",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: next_u64/TripleMixPrng",
+            "value": 26,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 26,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/8",
+            "value": 1875,
+            "range": "± 47",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/16",
+            "value": 1865,
+            "range": "± 60",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/32",
+            "value": 1871,
+            "range": "± 42",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/64",
+            "value": 1868,
+            "range": "± 42",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/72",
+            "value": 1865,
+            "range": "± 52",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/128",
+            "value": 1218,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/256",
+            "value": 2327,
+            "range": "± 70",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/216",
+            "value": 2064,
+            "range": "± 38",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/from_seed/512",
+            "value": 2953,
+            "range": "± 274",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:macos: Initialization/fork",
+            "value": 2196,
+            "range": "± 232",
             "unit": "ns/iter"
           }
         ]
