@@ -222,40 +222,35 @@ pub(crate) fn mix(
         ))
     }
 
-    // Words 1, 5, 9 and 13 of the fractional part of the Golden Ratio.
-    static FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
+    const FEISTEL_CONSTANT_1: Simd64 = Simd::from_array([
         0x9E3779B97F4A7C15,
         0x2767f0b153d27b7f,
         0xf06ad7ae9717877e,
         0x626e33b8d04b4331,
     ]);
-    // Words 2, 6, 10 and 14 of the fractional part of the Golden Ratio.
-    static FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
+    const FEISTEL_CONSTANT_2: Simd64 = Simd::from_array([
         0xf39cc0605cedc834,
         0x0347045b5bf1827f,
         0x85839d6effbd7dc6,
         0xbbf73c790d94f79d,
     ]);
-    static AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
+    const AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
         0xd6e8feb86659fd93,
         0x9e3779b97f4a7c15,
         0xbf58476d1ce4e5b9,
         0x94d049bb133111eb,
     ]);
-    static AVALANCHE_MULTIPLIERS_2: Simd64 = Simd::from_array([
+    const AVALANCHE_MULTIPLIERS_2: Simd64 = Simd::from_array([
         0xd1342543de82ef95,
         0xa24baed4963ee407,
         0x9fb21c651e98df25,
         0xc2b2ae3d27d4eb4f,
     ]);
+
     let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
     let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
     let mut b = t + FEISTEL_CONSTANT_1;
     let mut c = x_in + FEISTEL_CONSTANT_2;
-
-    // This mixing function is a modified ChaCha20 double-round that uses 64-bit rather than 32-bit
-    // words and adds the multiplication. Instead of permuting between rounds, we mix the
-    // permutation in during the second round, thus hiding simd_swizzle's latency.
 
     // 1st half of 1st ChaCha round
     a += b;
@@ -265,9 +260,11 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl16(b);
 
-    // Cross-mixing
-    let axc = a + rotl(c, 23);
-    let bxd = b ^ rotl(d, 43);
+    // Cross-mixing with parallel rotation computation
+    let rot_c_23 = rotl(c, 23);
+    let rot_d_43 = rotl(d, 43);
+    let axc = a + rot_c_23;
+    let bxd = b ^ rot_d_43;
 
     // 3rd quarter of 1st ChaCha round
     d ^= axc;
@@ -275,16 +272,17 @@ pub(crate) fn mix(
     d = rotl(d, 52);
 
     // Cross-mixing
-    let cxa = c ^ rotl(a, 13);
-    let dxb = d - rotl(b, 33);
+    let rot_a_13 = rotl(a, 13);
+    let rot_b_33 = rotl(b, 33);
+    let cxa = c ^ rot_a_13;
+    let dxb = d - rot_b_33;
 
     // 4th quarter of 1st ChaCha round
     b ^= cxa;
     c += dxb;
     b = rotl8(b);
 
-    // This permutation is based on the `diagonalize` method in `c2-chacha`:
-    // https://github.com/cryptocorrosion/cryptocorrosion/blob/master/stream-ciphers/chacha/src/guts.rs#L47
+    // *** CRITICAL: Swizzle operations ***
     let cr = rotl(c.rotate_elements_left::<1>(), 17);
     let dr = d.rotate_elements_right::<2>();
     let ar = rotl(a.rotate_elements_right::<1>(), 29);
@@ -304,28 +302,34 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl24(b);
 
-    // Cross-mixing
-    let bxc = b - rotl(c, 19);
-    let axb = a ^ rotl(b, 37);
+    // Cross-mixing with parallel computation
+    let rot_c_19 = rotl(c, 19);
+    let rot_b_37 = rotl(b, 37);
+    let bxc = b - rot_c_19;
+    let axb = a ^ rot_b_37;
 
     // 3rd quarter of 2nd ChaCha round
     a ^= bxc;
     d += axb;
     d = rotl16(d);
 
-    // Cross-mixing (no lag)
-    c ^= rotl(a, 39);
-    b += rotl(d, 21);
+    // Cross-mixing (with strict dependency chain)
+    let rot_a_39 = rotl(a, 39);
+    let rot_d_21 = rotl(d, 21);
+    c ^= rot_a_39;
+    b += rot_d_21;
 
     // 4th quarter of 2nd ChaCha round
     c += d;
     b ^= c;
     b = rotl(b, 7);
 
-    // vaguely ChaCha-like half-round
+    // Vaguely ChaCha-like half-round
     a += b;
-    let ar = rotl16(b + d);
     c += d;
+
+    // Parallel computation
+    let ar = rotl16(b + d);
     let cr = rotl(c ^ a, 11);
     d ^= ar;
     b ^= cr;
