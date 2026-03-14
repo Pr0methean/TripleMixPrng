@@ -340,18 +340,6 @@ pub(crate) fn mix(
         0x85839d6effbd7dc6,
         0xbbf73c790d94f79d,
     ]);
-    const AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
-        0xd6e8feb86659fd93,
-        0x881cf9e71fbdd5b9,
-        0xbf58476d1ce4e5b9,
-        0x94d049bb133111eb,
-    ]);
-    const AVALANCHE_MULTIPLIERS_2: Simd64 = Simd::from_array([
-        0xd1342543de82ef95,
-        0xa24baed4963ee407,
-        0x9fb21c651e98df25,
-        0xc2b2ae3d27d4eb4f,
-    ]);
     const AVALANCHE_MULTIPLIERS_3: Simd64 = Simd::from_array([
         0xe68e0860ce559b5b,
         0xbca6b7d7acc9d61b,
@@ -359,14 +347,12 @@ pub(crate) fn mix(
         0xbcf746f9ee677775,
     ]);
     let i_mixed_1 = i ^ FEISTEL_CONSTANT_1;
-    let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
-    let mut b = t + i_mixed_1;
     let i_mixed_2 = rotl24(i) ^ FEISTEL_CONSTANT_2;
-    let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
+    let mut b = t + i_mixed_1;
     let mut c = x_in + i_mixed_2;
 
-    // === OPTIMIZED MIXING CORE ===
-    // Reduced from ~40 ops to ~25 ops while preserving per-lane constants
+    let mut a = w_lo;
+    let mut d = w_hi;
 
     // Round 1 - Combined operations
     a += b;
@@ -390,17 +376,36 @@ pub(crate) fn mix(
     // Round 2 - Efficient mixing
     a += b;
     d ^= a;
-    d = rotl8(d);
-
     b ^= c_rot;
+    d = rotl8(d);
     c += d.rotate_elements_right::<2>();
     d += a_rot;
+    a += b;
+    d ^= a;
+    d = rotl16(d);
+
+    let m = simd_wrapping_mul(a + b, c + d);
+    c += d;
+    b ^= c;
+    b = rotl24(b);
+    d = rotl8(d);
+    let mr1 = rotl(m, 33);
+    let mr2 = rotl(m, 27);
+    c ^= m;
+    b += m;
+    a += mr1;
+    d ^= mr2;
+    c += d;
+    b ^= c;
+    b = rotl(b, 7);
 
     // Output mixing
     let acr = rotl(a + c, 41);
+    let axc = a ^ c;
     let bdr = rotl(b + d, 17);
-    let y = b ^ d ^ acr;
-    let x = a ^ c ^ bdr;
+    let bxd = b ^ d;
+    let x = axc ^ bdr;
+    let y = bxd ^ acr;
 
     (x, y)
 }
