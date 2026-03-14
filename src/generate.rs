@@ -252,7 +252,10 @@ pub(crate) fn mix(
     let mut b = t + FEISTEL_CONSTANT_1;
     let mut c = x_in + FEISTEL_CONSTANT_2;
 
-    // 1st half of 1st ChaCha round
+    // === OPTIMIZED MIXING CORE ===
+    // Reduced from ~40 ops to ~25 ops while preserving per-lane constants
+
+    // Round 1 - Combined operations
     a += b;
     d ^= a;
     d = rotl24(d);
@@ -260,85 +263,47 @@ pub(crate) fn mix(
     b ^= c;
     b = rotl16(b);
 
-    // Cross-mixing with parallel rotation computation
-    let rot_c_23 = rotl(c, 23);
-    let rot_d_43 = rotl(d, 43);
-    let axc = a + rot_c_23;
-    let bxd = b ^ rot_d_43;
+    // Cross-mix with multiplication (keeps per-lane constants)
+    a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_1);
+    d = rotl(d ^ a, 52);
 
-    // 3rd quarter of 1st ChaCha round
-    d ^= axc;
-    a += bxd;
-    d = rotl(d, 52);
+    c = simd_wrapping_mul(c ^ rotl(b, 33), AVALANCHE_MULTIPLIERS_2);
+    b = rotl8(b ^ c);
 
-    // Cross-mixing
-    let rot_a_13 = rotl(a, 13);
-    let rot_b_33 = rotl(b, 33);
-    let cxa = c ^ rot_a_13;
-    let dxb = d - rot_b_33;
+    // Permutation with per-lane swizzles
+    let c_rot = rotl(c.rotate_elements_left::<1>(), 17);
+    let a_rot = rotl(a.rotate_elements_right::<1>(), 29);
 
-    // 4th quarter of 1st ChaCha round
-    b ^= cxa;
-    c += dxb;
-    b = rotl8(b);
-
-    // *** CRITICAL: Swizzle operations ***
-    let cr = rotl(c.rotate_elements_left::<1>(), 17);
-    let dr = d.rotate_elements_right::<2>();
-    let ar = rotl(a.rotate_elements_right::<1>(), 29);
-
-    // 1st quarter of 2nd ChaCha round
+    // Round 2 - Efficient mixing
     a += b;
     d ^= a;
     d = rotl8(d);
 
-    // Inject swizzled copies
-    b ^= cr;
-    c += dr;
-    d += ar;
+    b ^= c_rot;
+    c += d.rotate_elements_right::<2>();
+    d += a_rot;
 
-    // 2nd quarter of 2nd ChaCha round
+    // Final mixing with fewer steps
     c += d;
     b ^= c;
     b = rotl24(b);
 
-    // Cross-mixing with parallel computation
-    let rot_c_19 = rotl(c, 19);
-    let rot_b_37 = rotl(b, 37);
-    let bxc = b - rot_c_19;
-    let axb = a ^ rot_b_37;
-
-    // 3rd quarter of 2nd ChaCha round
-    a ^= bxc;
-    d += axb;
+    // Cross-mix with multiplication
+    a ^= simd_wrapping_mul(b - rotl(c, 19), AVALANCHE_MULTIPLIERS_1);
+    d += simd_wrapping_mul(a ^ rotl(b, 37), AVALANCHE_MULTIPLIERS_2);
     d = rotl16(d);
 
-    // Cross-mixing (with strict dependency chain)
-    let rot_a_39 = rotl(a, 39);
-    let rot_d_21 = rotl(d, 21);
-    c ^= rot_a_39;
-    b += rot_d_21;
+    // Final avalanche
+    c ^= rotl(a, 39);
+    b += rotl(d, 21);
 
-    // 4th quarter of 2nd ChaCha round
     c += d;
     b ^= c;
     b = rotl(b, 7);
 
-    // Vaguely ChaCha-like half-round
-    a += b;
-    c += d;
-
-    // Parallel computation
-    let ar = rotl16(b + d);
-    let cr = rotl(c ^ a, 11);
-    d ^= ar;
-    b ^= cr;
-
-    let mut x = a + c;
-    let mut y = b + d;
-
-    x ^= rotl(y, 17);
-    y ^= rotl(x, 41);
+    // Output mixing
+    let x = a ^ c ^ rotl(b + d, 17);
+    let y = b ^ d ^ rotl(a + c, 41);
 
     (x, y)
 }
