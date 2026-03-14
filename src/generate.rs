@@ -871,9 +871,6 @@ mod tests {
                     flips_per_bit_for_field.iter_mut().enumerate()
                 {
                     for (bit_idx, flips_for_bit) in flips_per_bit_for_lane.iter_mut().enumerate() {
-                        if field_idx == 2 || field_idx == 3 {
-                            continue;
-                        }
                         if field_idx == 4 && bit_idx == 63 {
                             continue;
                         }
@@ -947,16 +944,18 @@ mod tests {
                                     if vec_idx == 0 && cell == 0 {
                                         continue;
                                     }
-                                    assert_eq!(
-                                        sub_same.test(cell),
-                                        false,
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
-                                    );
-                                    assert_eq!(
-                                        xor_same.test(cell),
-                                        false,
-                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
-                                    );
+                                    if field_idx != 2 && field_idx != 3 {
+                                        assert_eq!(
+                                            sub_same.test(cell),
+                                            false,
+                                            "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
+                                        );
+                                        assert_eq!(
+                                            xor_same.test(cell),
+                                            false,
+                                            "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
+                                        );
+                                    }
                                 }
                                 flips += xor.count_ones().reduce_sum();
                             }
