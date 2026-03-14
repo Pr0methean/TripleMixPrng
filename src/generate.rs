@@ -423,6 +423,7 @@ impl Generator for TripleMixSimdCore {
 mod tests {
     use crate::generate::{OUTPUT_LEN, OUTPUTS_PER_STEP, SIMD_WIDTH, Simd64, mix};
     use crate::reproducibility::NotReproducible;
+    use crate::{TripleMixPrng, TripleMixSimdCore};
     use bytemuck::cast_slice_mut;
     use core::simd::Simd;
     use core::simd::cmp::SimdPartialEq;
@@ -435,7 +436,6 @@ mod tests {
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
-    use crate::{TripleMixPrng, TripleMixSimdCore};
 
     struct MixMatrixStats {
         total_weight: usize,
@@ -457,7 +457,7 @@ mod tests {
                         modified_input[1],
                         modified_input[2],
                         modified_input[3],
-                        modified_input[4]
+                        modified_input[4],
                     );
                     let (out_xor_0, out_xor_1) = (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
                     let mut j = 0;
@@ -887,17 +887,17 @@ mod tests {
                                     if vec_idx == 0 && cell == 0 {
                                         continue;
                                     }
-                                        assert_eq!(
-                                            sub_same.test(cell),
-                                            false,
-                                            "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
-                                        );
-                                        assert_eq!(
-                                            xor_same.test(cell),
-                                            false,
-                                            "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
-                                        );
-                                    }
+                                    assert_eq!(
+                                        sub_same.test(cell),
+                                        false,
+                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same difference between cells 0 and {cell} as before flipping"
+                                    );
+                                    assert_eq!(
+                                        xor_same.test(cell),
+                                        false,
+                                        "Field {field_idx}, lane {lane_idx}, bit {bit_idx}: Same xor between cells 0 and {cell} as before flipping"
+                                    );
+                                }
                                 flips += xor.count_ones().reduce_sum();
                             }
                             total_flips += flips;
