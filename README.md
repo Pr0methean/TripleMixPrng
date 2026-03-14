@@ -47,6 +47,6 @@ The PRNG has the following properties:
   | Entropy measure   | Value (bits/byte)     |
   |-------------------|-----------------------|
   | 0th-order H0      | 7.999 999 989 499 129 |
-  | 1st-order H1\|0   | 7.999 997 311 401 072 |
-  | 2nd-order H2\|1,0 | 7.999 298 213 959 470 |
+  | 1st-order H1\|0   | 7.999 997 242 907 519 |
+  | 2nd-order H2\|1,0 | 7.999 999 989 621 270 |
 * Passes PractRand 0.96 for at least 32 TiB (tested with 10 seeds).
