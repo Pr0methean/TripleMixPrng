@@ -305,10 +305,6 @@ const fn compute_tinymt_mat() -> [u128; 128] {
     res
 }
 
-const fn rotl_scalar(x: u64, k: u32) -> u64 {
-    x.rotate_left(k)
-}
-
 const fn apply_mat(mat: &[u128; 128], mut vec: u128) -> u128 {
     let mut res = 0;
     let mut i = 0;
