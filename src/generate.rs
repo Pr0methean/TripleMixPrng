@@ -170,7 +170,8 @@ impl TripleMixSimdCore {
 
         for block in blocks {
             tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
-            let pcg_output = self.dxsm_output(pcg_state_lo, pcg_state_hi);
+            let (prod_high, prod_low) =
+                Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS); // PCG update
             // 128-bit MWC:
             // c =
             // w' = w * (lane_constant << 64 + 1) + inc
@@ -179,23 +180,21 @@ impl TripleMixSimdCore {
             // (1) high_product is computed from w_lo, not next_w_lo
             // (2) w_hi is updated after output, but next_w_lo is output already updated
             let (kx_lo, kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS); // MWC update
-            let (prod_high, prod_low) =
-                Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
-            let (new_low, carry) = Self::add128_with_carry(prod_low, pcg_inc_lo, Simd64::splat(0)); // PCG update
-            let (new_high, _) = Self::add128_with_carry(prod_high, pcg_inc_hi, carry); // PCG update
-            pcg_state_lo = new_low; // PCG update
-            pcg_state_hi = new_high; // PCG update
+            let pcg_output = self.dxsm_output(pcg_state_lo, pcg_state_hi); // PCG output
             let mut x = tm0 ^ tm1; // TinyMT64 update
+            let (new_low, carry) = Self::add128_with_carry(prod_low, pcg_inc_lo, Simd64::splat(0)); // PCG update
             let next_state = mwc_carry - kx_lo; // MCG update
             x ^= x << Simd::splat(12); // TinyMT64 output tempering
+            let (new_high, _) = Self::add128_with_carry(prod_high, pcg_inc_hi, carry); // PCG update
             let mut ty = tm0 + tm1; // TinyMT64 update
+            pcg_state_lo = new_low; // PCG update
             x ^= x >> Simd::splat(32); // TinyMT64 output tempering
+            pcg_state_hi = new_high; // PCG update
             ty ^= tm0 >> Simd::splat(8); // TinyMT64 update
-            x ^= x << Simd::splat(32); // TinyMT64++ output tempering
+            x ^= x << Simd::splat(32); // TinyMT64 output tempering
 
-            // TinyMT64 update
             let t_out =
-                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT)); // TinyMT output
             let i_mixed = pcg_inc_hi + pcg_inc_lo;
             x ^= x << Simd::splat(11); // TinyMT64 output tempering
 
@@ -359,11 +358,12 @@ pub(crate) fn mix(
         0x94d049bb133111eb,
         0xbcf746f9ee677775,
     ]);
-
+    let i_mixed_1 = i ^ FEISTEL_CONSTANT_1;
     let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
+    let mut b = t + i_mixed_1;
+    let i_mixed_2 = rotl24(i) ^ FEISTEL_CONSTANT_2;
     let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
-    let mut b = t + (i ^ FEISTEL_CONSTANT_1);
-    let mut c = x_in + (rotl24(i) ^ FEISTEL_CONSTANT_2);
+    let mut c = x_in + i_mixed_2;
 
     // === OPTIMIZED MIXING CORE ===
     // Reduced from ~40 ops to ~25 ops while preserving per-lane constants
@@ -396,27 +396,11 @@ pub(crate) fn mix(
     c += d.rotate_elements_right::<2>();
     d += a_rot;
 
-    // Final mixing with fewer steps
-    c += d;
-    b ^= c;
-    b = rotl24(b);
-
-    // Cross-mix with multiplication
-    a ^= simd_wrapping_mul(b - rotl(c, 19), AVALANCHE_MULTIPLIERS_1);
-    d += simd_wrapping_mul(a ^ rotl(b, 37), AVALANCHE_MULTIPLIERS_2);
-    d = rotl16(d);
-
-    // Final avalanche
-    c ^= rotl(a, 39);
-    b += rotl(d, 21);
-
-    c += d;
-    b ^= c;
-    b = rotl(b, 7);
-
     // Output mixing
-    let x = a ^ c ^ rotl(b + d, 17);
-    let y = b ^ d ^ rotl(a + c, 41);
+    let acr = rotl(a + c, 41);
+    let bdr = rotl(b + d, 17);
+    let y = b ^ d ^ acr;
+    let x = a ^ c ^ bdr;
 
     (x, y)
 }
