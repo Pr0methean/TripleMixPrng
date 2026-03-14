@@ -36,21 +36,30 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     }
 }
 
-
+/// Represents a linear transformation on the 128-bit state:
+/// new_state = matrix * state + constant
+struct JumpMatrix {
+    /// Multiplier part (how state is transformed)
+    mult_low: Simd64,
+    mult_high: Simd64,
+    /// Constant part (how increment contributes)
+    const_low: Simd64,
+    const_high: Simd64,
+}
 
 impl JumpMatrix {
     /// Create identity matrix (jump by 0 steps)
     fn identity() -> Self {
         Self {
-            mult_low: u64x4::splat(1),
-            mult_high: u64x4::splat(0),
-            const_low: u64x4::splat(0),
-            const_high: u64x4::splat(0),
+            mult_low: Simd64::splat(1),
+            mult_high: Simd64::splat(0),
+            const_low: Simd64::splat(0),
+            const_high: Simd64::splat(0),
         }
     }
 
     /// Compose two jump matrices: this * other
-    fn compose(&self, other: &Self, inc_low: u64x4, inc_high: u64x4) -> Self {
+    fn compose(&self, other: &Self, inc_low: Simd64, inc_high: Simd64) -> Self {
         // new_mult = self.mult * other.mult
         let (new_mult_low, new_mult_high) = mul128x128(
             self.mult_high, self.mult_low,
@@ -63,7 +72,7 @@ impl JumpMatrix {
             other.const_high, other.const_low
         );
 
-        let (new_const_low, carry) = add128_with_carry(temp_low, self.const_low, u64x4::splat(0));
+        let (new_const_low, carry) = add128_with_carry(temp_low, self.const_low, Simd64::splat(0));
         let (new_const_high, _) = add128_with_carry(temp_high, self.const_high, carry);
 
         Self {
@@ -75,35 +84,40 @@ impl JumpMatrix {
     }
 
     /// Apply this jump to a state
-    fn apply(&self, state_low: u64x4, state_high: u64x4, inc_low: u64x4, inc_high: u64x4) -> (u64x4, u64x4) {
+    fn apply(&self, state_low: Simd64, state_high: Simd64, inc_low: Simd64, inc_high: Simd64) -> (Simd64, Simd64) {
         // new_state = mult * state + const
         let (prod_low, prod_high) = mul128x128(
             self.mult_high, self.mult_low,
             state_high, state_low
         );
 
-        let (new_low, carry) = add128_with_carry(prod_low, self.const_low, u64x4::splat(0));
-        let (new_high, _) = add128_with_carry(prod_high, self.const_high, carry);
+        let (new_low, carry) = TripleMixSimdCore::add128_with_carry(prod_low, self.const_low, Simd64::splat(0));
+        let (new_high, _) = TripleMixSimdCore::add128_with_carry(prod_high, self.const_high, carry);
 
         (new_low, new_high)
     }
 }
 
 /// Full 128x128 multiplication
-fn mul128x128(a_high: u64x4, a_low: u64x4, b_high: u64x4, b_low: u64x4) -> (u64x4, u64x4) {
+fn mul128x128(a_high: Simd64, a_low: Simd64, b_high: Simd64, b_low: Simd64) -> (Simd64, Simd64) {
     // This is complex - would need multiple calls to mul128_by_64_per_lane
     // and careful addition of partial products
     unimplemented!("Full 128x128 multiplication")
 }
 
-impl Pcg64Dxsm {
+impl TripleMixSimdCore {
+    // 2^128 == 2^1 mod (2^127 - 1)
+    const TINYMT_JUMP_128_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 1);
+    // 2^256 == 2^2 mod (2^127 - 1)
+    const TINYMT_JUMP_256_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
+
     /// Precompute jump matrix for 2^power steps
     fn precompute_jump(&self, power: u32) -> JumpMatrix {
         let mut result = JumpMatrix::identity();
         let mut base = JumpMatrix {
             // Base transformation for 1 step
             mult_low: self.multiplier,
-            mult_high: u64x4::splat(0),
+            mult_high: Simd64::splat(0),
             const_low: self.inc_low,
             const_high: self.inc_high,
         };
@@ -124,19 +138,16 @@ impl Pcg64Dxsm {
     pub fn jump_pow2(&mut self, power: u32) {
         let matrix = self.precompute_jump(power);
         let (new_low, new_high) = matrix.apply(
-            self.state_low, self.state_high,
-            self.inc_low, self.inc_high
+            self.pcg_state_lo, self.pcg_state_hi,
+            self.pcg_inc_lo, self.pcg_inc_hi
         );
-        self.state_low = new_low;
-        self.state_high = new_high;
+        self.pcg_state_lo = new_low;
+        self.pcg_state_hi = new_high;
     }
-}
 
-impl TripleMixSimdCore {
-    // 2^128 == 2^1 mod (2^127 - 1)
-    const TINYMT_JUMP_128_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 1);
-    // 2^256 == 2^2 mod (2^127 - 1)
-    const TINYMT_JUMP_256_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
+    fn jump_pcg(&mut self, steps: u128) {
+        // TODO
+    }
 
     /// Jump ahead by steps = x * 2^(128*k)
     /// x: u128, k: u64
