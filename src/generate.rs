@@ -39,10 +39,10 @@ impl TripleMixSimdCore {
     ]);
 
     pub(crate) const PCG_MULTIPLIERS: Simd64 = Simd64::from_array([
-        0x2360_ED05_1FC6_5DA4,
-        0x5851_F42D_4C95_7F2B,
-        0xA3E7_9B3D_8F1C_5E9A,
-        0x9B3C_D8F1_E5A7_4D2B,
+        0x2360_ED05_1FC6_5DA5,
+        0x5851_F42D_4C95_7F2D,
+        0xA3E7_9B3D_8F1C_5E95,
+        0x9B3C_D8F1_E5A7_4D29,
     ]);
 
     /// Generate the next 4 random u64 values (one per lane)
@@ -83,70 +83,25 @@ impl TripleMixSimdCore {
     #[inline]
     pub(crate) fn mul128x64to128(a_high: Simd64, a_low: Simd64, b: Simd64) -> (Simd64, Simd64) {
         // Decompose b into 32-bit halves across all lanes simultaneously
-        // Each lane of b_lo contains the low 32 bits of that lane's multiplier
-        // Each lane of b_hi contains the high 32 bits of that lane's multiplier
         let b_lo = b & Simd64::splat(0xFFFF_FFFF);
         let b_hi = b >> 32;
 
-        // ----- Multiply low part: a_low * b -----
+        let (p1_lo, p1_hi) = simd_mulsmall(a_low, b_lo);
+        let (p2_lo, p2_hi) = simd_mulsmall(a_low, b_hi);
 
-        // a_low * b_lo (64x32 -> 64 low, 64 high) per lane
-        let (low_lo_lo, low_lo_hi) = simd_mulsmall(a_low, b_lo);
+        // p2 * 2^32 = p2_hi * 2^96 + p2_lo * 2^32
+        let p2_shifted_lo = p2_lo << Simd64::splat(32);
+        let p2_shifted_hi = (p2_hi << Simd64::splat(32)) | (p2_lo >> Simd64::splat(32));
 
-        // a_low * b_hi (64x32 -> 64 low, 64 high) per lane
-        let (low_hi_lo, low_hi_hi) = simd_mulsmall(a_low, b_hi);
+        // low sum = p1_lo + p2_shifted_lo
+        let (low_sum, carry1) = Self::add128_with_carry(p1_lo, p2_shifted_lo, Simd64::splat(0));
 
-        // low_hi_lo needs to be shifted left 32 before adding to low result
-        let low_hi_lo_shifted = low_hi_lo << Simd64::splat(32);
+        let a_low_b_hi = p1_hi + p2_shifted_hi + carry1;
 
-        // Sum contributions to low 64 bits
-        let mut low_sum = low_lo_lo;
-
-        // Track carries from low_lo_lo
-        let carry1 = low_sum
-            .simd_lt(low_lo_lo)
-            .select(Simd64::splat(1), Simd64::splat(0));
-
-        // Add shifted low_hi_lo
-        low_sum = low_sum + low_hi_lo_shifted;
-        let carry2 = low_sum
-            .simd_lt(low_hi_lo_shifted)
-            .select(Simd64::splat(1), Simd64::splat(0));
-
-        // High part from low multiplication includes:
-        // - low_lo_hi (from low_lo multiplication)
-        // - low_hi_hi (from low_hi multiplication)
-        // - carries from low addition
-        let low_high_from_low = low_lo_hi + low_hi_hi + carry1 + carry2;
-
-        // ----- Multiply high part: a_high * b -----
-
-        // a_high * b_lo
-        let (high_lo_lo, high_lo_hi) = simd_mulsmall(a_high, b_lo);
-
-        // a_high * b_hi
-        let (high_hi_lo, high_hi_hi) = simd_mulsmall(a_high, b_hi);
-
-        // high_hi_lo shifted left 32
-        let high_hi_lo_shifted = high_hi_lo << Simd64::splat(32);
-
-        // Sum high part contributions
-        let mut high_sum = high_lo_lo;
-        let carry3 = high_sum
-            .simd_lt(high_lo_lo)
-            .select(Simd64::splat(1), Simd64::splat(0));
-
-        high_sum = high_sum + high_hi_lo_shifted;
-        let carry4 = high_sum
-            .simd_lt(high_hi_lo_shifted)
-            .select(Simd64::splat(1), Simd64::splat(0));
-
-        // Complete high part includes:
-        // - high_sum from above
-        // - low_high_from_low (contributions from low multiplication)
-        // - high_lo_hi and high_hi_hi
-        // - carries from high addition
-        let final_high = high_sum + low_high_from_low + (high_lo_hi + high_hi_hi + carry3 + carry4);
+        // the final high part is a_low_b_hi + a_high * b
+        // a_high * b = a_high * b_lo + a_high * b_hi * 2^32 (we only care about the low 64 bits of this)
+        let a_high_b = simd_wrapping_mul(a_high, b);
+        let final_high = a_low_b_hi + a_high_b;
 
         (final_high, low_sum)
     }
@@ -154,11 +109,11 @@ impl TripleMixSimdCore {
     /// 128-bit addition with carry: (result, carry_out) = a + b + carry_in
     #[inline]
     pub(crate) fn add128_with_carry(a: Simd64, b: Simd64, carry_in: Simd64) -> (Simd64, Simd64) {
-        let sum = a + b + carry_in;
-        // Detect overflow: if sum < a (considering carry_in), then carry occurred
-        let carry_out = sum
-            .simd_lt(a + carry_in)
-            .select(Simd64::splat(1), Simd64::splat(0));
+        let sum1 = a + b;
+        let c1 = sum1.simd_lt(a);
+        let sum = sum1 + carry_in;
+        let c2 = sum.simd_lt(sum1);
+        let carry_out = (c1 | c2).select(Simd64::splat(1), Simd64::splat(0));
         (sum, carry_out)
     }
 
