@@ -18,6 +18,15 @@ pub fn wrapping_mul(a: Simd64, b: Simd64) -> Simd64 {
 }
 
 #[inline(always)]
+pub fn mul32x32to64(a: Simd64, b: Simd64) -> Simd64 {
+    unsafe {
+        let a = transmute::<Simd64, __m256i>(a);
+        let b = transmute::<Simd64, __m256i>(b);
+        transmute::<__m256i, Simd64>(_mm256_mul_epu32(a, b))
+    }
+}
+
+#[inline(always)]
 unsafe fn mullo_u64x4_avx2(a: __m256i, b: __m256i) -> __m256i {
     unsafe {
         let a_hi = _mm256_srli_epi64(a, 32);

@@ -28,12 +28,14 @@ use reproducibility::Reproducibility;
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct TripleMixSimdCore {
-    xr0: Simd64,
-    xr1: Simd64,
-    tm0: Simd64,
-    tm1: Simd64,
+    tm0: Simd64, // TinyMT64 state
+    tm1: Simd64, // TinyMT64 state, with highest bit always 0
     mwc_state: Simd64,
     mwc_carry: Simd64,
+    pcg_state_lo: Simd64,
+    pcg_state_hi: Simd64,
+    pcg_inc_lo: Simd64,
+    pcg_inc_hi: Simd64,
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {

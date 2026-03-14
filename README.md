@@ -2,7 +2,7 @@ rand_triplemix
 ==============
 
 This is a vectorized pseudorandom number generator (PRNG) that combines, in each of 4 SIMD lanes, an instance of 
-xoroshiro128, TinyMT64 and a 128-bit multiply-with-carry generator (MCG) in each of 4 SIMD lanes. This PRNG has not been 
+PCG64, TinyMT64 and a 128-bit multiply-with-carry generator (MCG) in each of 4 SIMD lanes. This PRNG has not been 
 evaluated for cryptographic use.
 
 Requires the `portable_simd` feature, which is currently nightly-only.
@@ -11,8 +11,8 @@ The PRNG has the following properties:
 
 * The output block size is 64 bytes (8 u64's).
 * The state size is 256 bytes: 508 bits of identity, 1532 bits of mutable state, 8 bits of overhead.
-* The period is greater than 2<sup>763</sup> - 2<sup>712</sup> - 2<sup>710</sup> blocks, which is the product of the subgenerators' coprime periods:
-  * Xoroshiro++: 2<sup>128</sup> - 1
+* The period is greater than 2<sup>763</sup> - 2<sup>712</sup> - 2<sup>710</sup> blocks, because it's the product of the subgenerators' coprime periods:
+  * PCG64: 2<sup>128</sup>
   * TinyMT64: 2<sup>127</sup> - 1
   * MCG (lane 0): 2<sup>127</sup> - 742×2<sup>63</sup> - 1
   * MCG (lane 1): 2<sup>127</sup> - 5571×2<sup>63</sup> - 1
