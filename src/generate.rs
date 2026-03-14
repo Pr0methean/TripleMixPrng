@@ -236,7 +236,7 @@ pub(crate) fn mix(
     ]);
     const AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
         0xd6e8feb86659fd93,
-        0x9e3779b97f4a7c15,
+        0x881cf9e71fbdd5b9,
         0xbf58476d1ce4e5b9,
         0x94d049bb133111eb,
     ]);
@@ -246,6 +246,13 @@ pub(crate) fn mix(
         0x9fb21c651e98df25,
         0xc2b2ae3d27d4eb4f,
     ]);
+    const AVALANCHE_MULTIPLIERS_3: Simd64 = Simd::from_array([
+        0xe68e0860ce559b5b,
+        0xbca6b7d7acc9d61b,
+        0x94d049bb133111eb,
+        0xbcf746f9ee677775,
+    ]);
+
 
     let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
     let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
@@ -264,10 +271,10 @@ pub(crate) fn mix(
     b = rotl16(b);
 
     // Cross-mix with multiplication (keeps per-lane constants)
-    a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_1);
+    a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_3);
     d = rotl(d ^ a, 52);
 
-    c = simd_wrapping_mul(c ^ rotl(b, 33), AVALANCHE_MULTIPLIERS_2);
+    c += rotl(b, 33);
     b = rotl8(b ^ c);
 
     // Permutation with per-lane swizzles
