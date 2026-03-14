@@ -169,8 +169,8 @@ fn init<T: Measurement>(c: &mut Criterion<T>) {
         64,
         DEFAULT_SEED_SIZE,
         128,
-        256,
         LARGE_SEED_SIZE,
+        256,
         512,
     ] {
         let input_seed = &seed_4096[..size];
