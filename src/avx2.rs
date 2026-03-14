@@ -1,6 +1,6 @@
+use crate::generate::Simd64;
 use core::arch::x86_64::*;
 use core::mem::transmute;
-use crate::generate::Simd64;
 
 // ============================================================================
 // AVX2-optimized 64-bit multiplication (the ONLY operation that differs)
@@ -50,7 +50,10 @@ pub fn mul_small(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
         let a = transmute::<Simd64, __m256i>(a);
         let b = transmute::<Simd64, __m256i>(b);
         let (lo, hi) = mul_small_avx2(a, b);
-        (transmute::<__m256i, Simd64>(lo), transmute::<__m256i, Simd64>(hi))
+        (
+            transmute::<__m256i, Simd64>(lo),
+            transmute::<__m256i, Simd64>(hi),
+        )
     }
 }
 

@@ -1,12 +1,12 @@
 use crate::TripleMixSimdCore;
 use bytemuck::cast;
 use core::simd::cmp::SimdPartialOrd;
+use core::simd::num::SimdInt;
 use core::simd::num::SimdUint;
 use core::simd::{Simd, simd_swizzle, u8x32, u16x16};
 use core::slice::from_mut;
-use core::simd::num::SimdInt;
-use std::simd::Select;
 use rand_core::block::Generator;
+use std::simd::Select;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -64,11 +64,8 @@ impl TripleMixSimdCore {
     #[inline]
     fn pcg_advance(&mut self) {
         // 128-bit multiplication: (state_high, state_low) * multiplier (per lane)
-        let (prod_high, prod_low) = Self::mul128x64to128(
-            self.pcg_state_hi,
-            self.pcg_state_lo,
-            Self::PCG_MULTIPLIERS,
-        );
+        let (prod_high, prod_low) =
+            Self::mul128x64to128(self.pcg_state_hi, self.pcg_state_lo, Self::PCG_MULTIPLIERS);
 
         // Add the 128-bit increment with carry propagation
         let (new_low, carry) = Self::add128_with_carry(prod_low, self.pcg_inc_lo, Simd64::splat(0));
@@ -106,11 +103,15 @@ impl TripleMixSimdCore {
         let mut low_sum = low_lo_lo;
 
         // Track carries from low_lo_lo
-        let carry1 = low_sum.simd_lt(low_lo_lo).select(Simd64::splat(1), Simd64::splat(0));
+        let carry1 = low_sum
+            .simd_lt(low_lo_lo)
+            .select(Simd64::splat(1), Simd64::splat(0));
 
         // Add shifted low_hi_lo
         low_sum = low_sum + low_hi_lo_shifted;
-        let carry2 = low_sum.simd_lt(low_hi_lo_shifted).select(Simd64::splat(1), Simd64::splat(0));
+        let carry2 = low_sum
+            .simd_lt(low_hi_lo_shifted)
+            .select(Simd64::splat(1), Simd64::splat(0));
 
         // High part from low multiplication includes:
         // - low_lo_hi (from low_lo multiplication)
@@ -131,10 +132,14 @@ impl TripleMixSimdCore {
 
         // Sum high part contributions
         let mut high_sum = high_lo_lo;
-        let carry3 = high_sum.simd_lt(high_lo_lo).select(Simd64::splat(1), Simd64::splat(0));
+        let carry3 = high_sum
+            .simd_lt(high_lo_lo)
+            .select(Simd64::splat(1), Simd64::splat(0));
 
         high_sum = high_sum + high_hi_lo_shifted;
-        let carry4 = high_sum.simd_lt(high_hi_lo_shifted).select(Simd64::splat(1), Simd64::splat(0));
+        let carry4 = high_sum
+            .simd_lt(high_hi_lo_shifted)
+            .select(Simd64::splat(1), Simd64::splat(0));
 
         // Complete high part includes:
         // - high_sum from above
@@ -151,7 +156,9 @@ impl TripleMixSimdCore {
     pub(crate) fn add128_with_carry(a: Simd64, b: Simd64, carry_in: Simd64) -> (Simd64, Simd64) {
         let sum = a + b + carry_in;
         // Detect overflow: if sum < a (considering carry_in), then carry occurred
-        let carry_out = sum.simd_lt(a + carry_in).select(Simd64::splat(1), Simd64::splat(0));
+        let carry_out = sum
+            .simd_lt(a + carry_in)
+            .select(Simd64::splat(1), Simd64::splat(0));
         (sum, carry_out)
     }
 
@@ -178,7 +185,7 @@ impl TripleMixSimdCore {
     }
 
     pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
-        const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 6, 7];
+        const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 7, 9];
         TripleMixSimdCore {
             pcg_state_lo: Simd::splat(0),
             pcg_state_hi: Simd::splat(0),
@@ -217,11 +224,8 @@ impl TripleMixSimdCore {
             // (1) high_product is computed from w_lo, not next_w_lo
             // (2) w_hi is updated after output, but next_w_lo is output already updated
             let (kx_lo, kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS); // MWC update
-            let (prod_high, prod_low) = Self::mul128x64to128(
-                pcg_state_hi,
-                pcg_state_lo,
-                Self::PCG_MULTIPLIERS,
-            );
+            let (prod_high, prod_low) =
+                Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
             let (new_low, carry) = Self::add128_with_carry(prod_low, pcg_inc_lo, Simd64::splat(0)); // PCG update
             let (new_high, _) = Self::add128_with_carry(prod_high, pcg_inc_hi, carry); // PCG update
             pcg_state_lo = new_low; // PCG update
@@ -264,7 +268,7 @@ impl TripleMixSimdCore {
 
 /// SIMD multiply: uses AVX2 mullo (in-register) or portable * (scalarized).
 #[inline(always)]
-fn simd_wrapping_mul(a: Simd64, b: Simd64) -> Simd64 {
+pub(crate) fn simd_wrapping_mul(a: Simd64, b: Simd64) -> Simd64 {
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
@@ -346,12 +350,7 @@ fn rotl(x: Simd64, k: u64) -> Simd64 {
 }
 
 #[inline(always)]
-pub(crate) fn mix(
-    w_lo: Simd64,
-    x_in: Simd64,
-    t: Simd64,
-    w_hi: Simd64,
-) -> (Simd64, Simd64) {
+pub(crate) fn mix(w_lo: Simd64, x_in: Simd64, t: Simd64, w_hi: Simd64) -> (Simd64, Simd64) {
     #[inline(always)]
     fn rotl16(d: Simd64) -> Simd64 {
         let d_transmuted: u16x16 = cast(d);
@@ -415,7 +414,6 @@ pub(crate) fn mix(
         0x94d049bb133111eb,
         0xbcf746f9ee677775,
     ]);
-
 
     let mut a = simd_wrapping_mul(w_lo, AVALANCHE_MULTIPLIERS_1);
     let mut d = simd_wrapping_mul(w_hi, AVALANCHE_MULTIPLIERS_2);
@@ -579,12 +577,8 @@ mod tests {
             Simd::from_array(mix_input[8..12].try_into().unwrap()),
             Simd::from_array(mix_input[12..16].try_into().unwrap()),
         ];
-        let (base_out0, base_out1) = mix(
-            base_input[0],
-            base_input[1],
-            base_input[2],
-            base_input[3],
-        );
+        let (base_out0, base_out1) =
+            mix(base_input[0], base_input[1], base_input[2], base_input[3]);
         (base_input, base_out0, base_out1)
     }
 
@@ -612,7 +606,7 @@ mod tests {
                                         modified_input[0],
                                         modified_input[1],
                                         modified_input[2],
-                                        modified_input[3]
+                                        modified_input[3],
                                     );
                                     let (out_xor_0, out_xor_1) =
                                         (mod_out0 ^ base_out0, mod_out1 ^ base_out1);
@@ -877,13 +871,12 @@ mod tests {
                     flips_per_bit_for_field.iter_mut().enumerate()
                 {
                     for (bit_idx, flips_for_bit) in flips_per_bit_for_lane.iter_mut().enumerate() {
-                        if field_idx == 2 && bit_idx == 63 {
+                        if field_idx == 2 || field_idx == 3 {
                             continue;
                         }
-                        if field_idx == 6 && bit_idx == 0 {
+                        if field_idx == 4 && bit_idx == 63 {
                             continue;
                         }
-                        //if field_idx == 7 && bit_idx >= 59 { continue; }
                         let mut core2 = core;
                         match field_idx {
                             0 => {
@@ -1281,7 +1274,7 @@ mod tests {
 
     /// Build transition matrix from state bits to output bits
     fn build_transition_matrix(config: &MatrixConfig) -> (BitMatrix<u64>, Vec<String>) {
-        let state_bits = 8 * SIMD_WIDTH * 64; // 6 fields × 4 lanes × 64 bits = 1536 bits
+        let state_bits = 8 * SIMD_WIDTH * 64; // 8 fields × 4 lanes × 64 bits = 2048 bits
 
         let output_bits = config.steps * OUTPUT_LEN * 64; // steps × 8 words × 64 bits
 
@@ -1388,7 +1381,7 @@ mod tests {
     }
 
     #[test]
-    fn test_3_step_matrix_rank_distribution() {
+    fn test_4_step_matrix_rank_distribution() {
         let mut rng = rng();
         let mut ranks = Vec::new();
         let iterations = 1000;
@@ -1398,7 +1391,7 @@ mod tests {
                 .block_core
                 .core;
             let config = MatrixConfig {
-                steps: 3,
+                steps: 4,
                 base_state,
             };
 

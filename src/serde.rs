@@ -4,8 +4,10 @@ use crate::reproducibility::Reproducibility;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CoreState {
-    xr0: [u64; 4],
-    xr1: [u64; 4],
+    pcg_state_lo: [u64; 4],
+    pcg_state_hi: [u64; 4],
+    pcg_inc_lo: [u64; 4],
+    pcg_inc_hi: [u64; 4],
     tm0: [u64; 4],
     tm1: [u64; 4],
     mwc_state: [u64; 4],
@@ -20,8 +22,10 @@ impl<R: Reproducibility> serde::Serialize for TripleMixPrng<R> {
     {
         let core = &self.block_core.core;
         CoreState {
-            xr0: core.xr0.to_array(),
-            xr1: core.xr1.to_array(),
+            pcg_state_lo: core.pcg_state_lo.to_array(),
+            pcg_state_hi: core.pcg_state_hi.to_array(),
+            pcg_inc_lo: core.pcg_inc_lo.to_array(),
+            pcg_inc_hi: core.pcg_inc_hi.to_array(),
             tm0: core.tm0.to_array(),
             tm1: core.tm1.to_array(),
             mwc_state: core.mwc_state.to_array(),
@@ -48,8 +52,10 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
         use serde::de::Error;
         let state = CoreState::deserialize(deserializer)?;
         let core = TripleMixSimdCore {
-            xr0: Simd64::from_array(state.xr0),
-            xr1: Simd64::from_array(state.xr1),
+            pcg_state_lo: Simd64::from_array(state.pcg_state_lo),
+            pcg_state_hi: Simd64::from_array(state.pcg_state_hi),
+            pcg_inc_lo: Simd64::from_array(state.pcg_inc_lo),
+            pcg_inc_hi: Simd64::from_array(state.pcg_inc_hi),
             tm0: Simd64::from_array(state.tm0),
             tm1: Simd64::from_array(state.tm1),
             mwc_state: Simd64::from_array(state.mwc_state),
@@ -78,7 +84,8 @@ mod tests {
     fn test_round_trip() {
         for prng in create_rngs::<DefaultReproducibility>() {
             let json = serde_json::to_string(&prng).unwrap();
-            let prng_copy: TripleMixPrng<DefaultReproducibility> = serde_json::from_str(&json).unwrap();
+            let prng_copy: TripleMixPrng<DefaultReproducibility> =
+                serde_json::from_str(&json).unwrap();
             assert_eq!(
                 prng.block_core.core.as_bytes(),
                 prng_copy.block_core.core.as_bytes()
