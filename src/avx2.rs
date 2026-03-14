@@ -1,5 +1,5 @@
 use core::arch::x86_64::*;
-
+use core::mem::transmute;
 use crate::generate::Simd64;
 
 // ============================================================================
@@ -9,11 +9,11 @@ use crate::generate::Simd64;
 /// Multiply two vectors of u64 lanes, keeping the low 64 bits of each product.
 /// This uses `_mm256_mul_epu32` to avoid the scalarization that portable SIMD does.
 #[inline(always)]
-pub fn mullo(a: Simd64, b: Simd64) -> Simd64 {
+pub fn wrapping_mul(a: Simd64, b: Simd64) -> Simd64 {
     unsafe {
-        let a = std::mem::transmute::<Simd64, __m256i>(a);
-        let b = std::mem::transmute::<Simd64, __m256i>(b);
-        std::mem::transmute::<__m256i, Simd64>(mullo_u64x4_avx2(a, b))
+        let a = transmute::<Simd64, __m256i>(a);
+        let b = transmute::<Simd64, __m256i>(b);
+        transmute::<__m256i, Simd64>(mullo_u64x4_avx2(a, b))
     }
 }
 
@@ -34,6 +34,46 @@ unsafe fn mullo_u64x4_avx2(a: __m256i, b: __m256i) -> __m256i {
     }
 }
 
+/// Multiplies two vectors. Requires that all elements of b be less than 2^32. Returns (low, hi)
+/// halves of result.
+pub fn mul_small(a: Simd64, b: Simd64) -> (Simd64, Simd64) {
+    unsafe {
+        let a = transmute::<Simd64, __m256i>(a);
+        let b = transmute::<Simd64, __m256i>(b);
+        let (lo, hi) = mul_small_avx2(a, b);
+        (transmute::<__m256i, Simd64>(lo), transmute::<__m256i, Simd64>(hi))
+    }
+}
+
+/// Requires that all elements of kvec as a u64x4 be less than 2^32.
+#[inline(always)]
+unsafe fn mul_small_avx2(x: __m256i, kvec: __m256i) -> (__m256i, __m256i) {
+    unsafe {
+        // x = x_hi * 2^32 + x_lo
+        let x_hi = _mm256_srli_epi64(x, 32);
+
+        // p0 = x_lo * k
+        let p0 = _mm256_mul_epu32(x, kvec);
+
+        // p1 = x_hi * k
+        let p1 = _mm256_mul_epu32(x_hi, kvec);
+
+        // kx = p1 * 2^32 + p0 = (p1 + (p0 >> 32)) * 2^32 + (p0 & 0xffffffff)
+        let p0_hi = _mm256_srli_epi64(p0, 32);
+        let s = _mm256_add_epi64(p1, p0_hi);
+
+        // construct low word: lo = (s << 32) | (p0 & 0xffffffff)
+        let lo_low = _mm256_and_si256(p0, _mm256_set1_epi64x(0xffffffff));
+        let lo_high = _mm256_slli_epi64(s, 32);
+        let lo = _mm256_or_si256(lo_low, lo_high);
+
+        // construct high word: hi = s >> 32
+        let hi = _mm256_srli_epi64(s, 32);
+
+        (lo, hi)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,7 +82,7 @@ mod tests {
     fn assert_mullo_eq(a_arr: [u64; 4], b_arr: [u64; 4]) {
         let a = Simd64::from_array(a_arr);
         let b = Simd64::from_array(b_arr);
-        let result = mullo(a, b).to_array();
+        let result = wrapping_mul(a, b).to_array();
         let expected: [u64; 4] = std::array::from_fn(|i| a_arr[i].wrapping_mul(b_arr[i]));
         assert_eq!(result, expected, "mullo({a_arr:?}, {b_arr:?})");
     }
@@ -82,8 +122,8 @@ mod tests {
     fn test_mullo_commutativity() {
         let a = [0x1234_5678_9ABC_DEF0, 0xFEDC_BA98_7654_3210, 42, 0];
         let b = [0x0F0F_0F0F_0F0F_0F0F, 0xAAAA_BBBB_CCCC_DDDD, 99, 1];
-        let r1 = mullo(Simd64::from_array(a), Simd64::from_array(b)).to_array();
-        let r2 = mullo(Simd64::from_array(b), Simd64::from_array(a)).to_array();
+        let r1 = wrapping_mul(Simd64::from_array(a), Simd64::from_array(b)).to_array();
+        let r2 = wrapping_mul(Simd64::from_array(b), Simd64::from_array(a)).to_array();
         assert_eq!(r1, r2, "mullo should be commutative");
     }
 
@@ -99,7 +139,7 @@ mod tests {
     fn test_mullo_max_squared() {
         // MAX * MAX = 1 (mod 2^64)
         let maxes = [u64::MAX; 4];
-        let result = mullo(Simd64::from_array(maxes), Simd64::from_array(maxes)).to_array();
+        let result = wrapping_mul(Simd64::from_array(maxes), Simd64::from_array(maxes)).to_array();
         assert_eq!(result, [1; 4], "(-1)^2 ≡ 1 (mod 2^64)");
     }
 
@@ -108,7 +148,7 @@ mod tests {
         let a = [10, 20, 30, 40];
         let c = 7u64;
         let p0 = Simd64::from_array(a);
-        let result = mullo(p0, Simd64::splat(c)).to_array();
+        let result = wrapping_mul(p0, Simd64::splat(c)).to_array();
         let expected: [u64; 4] = std::array::from_fn(|i| a[i].wrapping_mul(c));
         assert_eq!(result, expected);
     }
@@ -118,7 +158,7 @@ mod tests {
         let a = [u64::MAX, 0x8000_0000_0000_0001, 1, 0];
         let c = u64::MAX;
         let p0 = Simd64::from_array(a);
-        let result = mullo(p0, Simd64::splat(c)).to_array();
+        let result = wrapping_mul(p0, Simd64::splat(c)).to_array();
         let expected: [u64; 4] = std::array::from_fn(|i| a[i].wrapping_mul(c));
         assert_eq!(result, expected);
     }
@@ -127,7 +167,7 @@ mod tests {
     fn test_mullo_const_zero() {
         let a = [42, u64::MAX, 1, 0x1234_5678_9ABC_DEF0];
         let p0 = Simd64::from_array(a);
-        let result = mullo(p0, Simd64::splat(0)).to_array();
+        let result = wrapping_mul(p0, Simd64::splat(0)).to_array();
         assert_eq!(result, [0; 4]);
     }
 
@@ -135,7 +175,7 @@ mod tests {
     fn test_mullo_const_one() {
         let a = [42, u64::MAX, 1, 0x1234_5678_9ABC_DEF0];
         let p0 = Simd64::from_array(a);
-        let result = mullo(p0, Simd64::splat(1)).to_array();
+        let result = wrapping_mul(p0, Simd64::splat(1)).to_array();
         assert_eq!(result, a);
     }
 

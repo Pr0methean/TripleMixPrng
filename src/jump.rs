@@ -42,70 +42,102 @@ impl TripleMixSimdCore {
     // 2^256 == 2^2 mod (2^127 - 1)
     const TINYMT_JUMP_256_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
 
+
+    /// Jump ahead by steps = x * 2^(128*k)
+    /// x: u128, k: u64
+    /// state_lo/state_hi: current state vectors
+    /// a: multiplier (per lane)
+    /// returns new (state_lo, state_hi)
+    pub fn mwc_jump(
+        state: Simd64,
+        carry: Simd64,
+        steps: u128,
+        k: u64,
+    ) -> (Simd64, Simd64) {
+        if steps == 0 && k == 0 {
+            return (state, carry);
+        }
+
+        let mut res_state = state;
+        let mut res_carry = carry;
+
+        // Correct MWC state correspondence for LCG jump:
+        // The state (W, c) corresponds to the value V = a * W + c.
+        // It satisfies the recurrence V_n = a * V_{n-1} mod m,
+        // where m = a * 2^64 - 1.
+        // Recover (W, c) from V as W = V / a, c = V % a.
+
+        for i in 0..SIMD_WIDTH {
+            let a = TripleMixSimdCore::MCG_MULTIPLIERS[i] as u128;
+            let m = (a << 64) - 1;
+
+            // Initial V_0 = a * W_0 + c_0
+            let v_0 = a.wrapping_mul(state[i] as u128).wrapping_add(carry[i] as u128) % m;
+
+            let mut base = a % m;
+            let mut exp = steps;
+
+            for _ in 0..k {
+                for _ in 0..128 {
+                    base = mul_mod(base, base, m);
+                }
+            }
+
+            let mut ak = 1u128;
+            while exp > 0 {
+                if exp & 1 != 0 {
+                    ak = mul_mod(ak, base, m);
+                }
+                base = mul_mod(base, base, m);
+                exp >>= 1;
+            }
+
+            let v_final = mul_mod(v_0, ak, m);
+
+            res_state[i] = (v_final / a) as u64;
+            res_carry[i] = (v_final % a) as u64;
+        }
+
+        (res_state, res_carry)
+    }
+}
+
+fn mul_mod(mut x: u128, mut y: u128, m: u128) -> u128 {
+    let mut res: u128 = 0;
+    x %= m;
+    while y > 0 {
+        if y & 1 != 0 {
+            let sum = res.wrapping_add(x);
+            if sum < res || sum >= m {
+                res = sum.wrapping_sub(m);
+            } else {
+                res = sum;
+            }
+        }
+        let double_x = x.wrapping_add(x);
+        if double_x < x || double_x >= m {
+            x = double_x.wrapping_sub(m);
+        } else {
+            x = double_x;
+        }
+        y >>= 1;
+    }
+    res
+}
+
+impl TripleMixSimdCore {
+
     #[inline]
     pub(crate) fn advance(&mut self, steps: u128) {
         if steps == 0 {
             return;
         }
-
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, steps, 0);
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
-
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
-
-        let mut weyl_lo_arr = self.weyl_lo.to_array();
-        let mut weyl_hi_arr = self.weyl_hi.to_array();
-
-        for i in 0..SIMD_WIDTH {
-            let w_lo = weyl_lo_arr[i];
-            let w_hi = weyl_hi_arr[i];
-            let init_state = ((w_hi as u128) << 64) | (w_lo as u128);
-            let i_lo = self.inc_lo.as_array()[i];
-            let i_hi = self.inc_hi.as_array()[i];
-            let l = Self::LANE_CONSTANTS.as_array()[i];
-
-            // M = (l << 64) + 1
-            let m = (l as u128) << 64 | 1;
-            // C = (i_hi << 64) | i_lo
-            let c = (i_hi as u128) << 64 | (i_lo as u128);
-
-            let mut acc_m = 1u128;
-            let mut acc_c = 0u128;
-            let mut cur_m = m;
-            let mut cur_c = c;
-            let mut remaining = steps;
-
-            while remaining > 0 {
-                if remaining & 1 != 0 {
-                    // acc = acc ∘ cur
-                    // new_acc_m = acc_m * cur_m
-                    // new_acc_c = acc_c * cur_m + cur_c
-                    let new_acc_m = acc_m.wrapping_mul(cur_m);
-                    let new_acc_c = acc_c.wrapping_mul(cur_m).wrapping_add(cur_c);
-                    acc_m = new_acc_m;
-                    acc_c = new_acc_c;
-                }
-
-                // cur = cur ∘ cur  (square the transformation)
-                // new_cur_m = cur_m * cur_m
-                // new_cur_c = cur_c * cur_m + cur_c
-                let new_cur_m = cur_m.wrapping_mul(cur_m);
-                let new_cur_c = cur_c.wrapping_mul(cur_m).wrapping_add(cur_c);
-                cur_m = new_cur_m;
-                cur_c = new_cur_c;
-
-                remaining >>= 1;
-            }
-
-            // Apply the accumulated transformation
-            let new_state = acc_m.wrapping_mul(init_state).wrapping_add(acc_c);
-
-            weyl_lo_arr[i] = new_state as u64;
-            weyl_hi_arr[i] = (new_state >> 64) as u64;
-        }
-
-        self.weyl_lo = Simd64::from_array(weyl_lo_arr);
-        self.weyl_hi = Simd64::from_array(weyl_hi_arr);
     }
 
     #[inline]
@@ -113,12 +145,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 1);
         // 2^128 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
-        // LCG returns exactly to its same state after 2^128 steps
-
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 
@@ -127,10 +159,12 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
+        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 2);
         // 2^256 = 1 mod (2^128 - 1)
         let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
-
+        self.mwc_state = new_mwc_state;
+        self.mwc_carry = new_mwc_carry;
         self.update_x_and_t_from_matrices(&x_pow, &t_pow);
     }
 
@@ -299,16 +333,7 @@ mod tests {
             prng_jmp.advance(12);
             prng.block_core.reset_and_skip(0);
             prng_jmp.block_core.reset_and_skip(0);
-            println!("prng={:?}", prng.block_core.core);
-            println!("prng_jmp={:?}", prng_jmp.block_core.core);
-            println!(
-                "prng buffer remaining: {:?}",
-                prng.block_core.remaining_results()
-            );
-            println!(
-                "prng_jmp buffer remaining: {:?}",
-                prng_jmp.block_core.remaining_results()
-            );
+
             for _ in 0..OUTPUT_LEN {
                 assert_eq!(prng.next_u64(), prng_jmp.next_u64());
             }

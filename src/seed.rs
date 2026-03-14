@@ -6,6 +6,7 @@ use core::hint::cold_path;
 use core::marker::PhantomData;
 use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
+use std::simd::cmp::SimdPartialOrd;
 use generic_array::GenericArray;
 use rand::RngExt;
 use rand_core::SeedableRng;
@@ -42,7 +43,7 @@ macro_rules! once_kmac {
 /// it with any slower source the way the operating system usually does. It will always be at least
 /// 256 bytes, because TripleMixPrng's internal state contains 2040 variable bits and the extra 8
 /// bits help ensure all or nearly all valid states are possible as initial states.
-pub const LARGE_SEED_SIZE: usize = 288;
+pub const LARGE_SEED_SIZE: usize = 216;
 
 /// This is the recommended seed size when instantiating TripleMixPrng from a SysRng. Windows, MacOS
 /// and Linux CSPRNGs are designed to provide only 256 bits of security, so this is the smallest
@@ -77,7 +78,7 @@ impl<R: Reproducibility, T: AsRef<[u8]>> From<T> for TripleMixPrng<R> {
         let mut attempt = 0u128;
         loop {
             let core = Self::permute(&base_kmac, attempt);
-            if Self::is_valid(&core) {
+            if core.is_valid() {
                 return Self::from_core(core);
             }
             cold_path();
@@ -107,17 +108,15 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut xr1 = Simd64::splat(0);
         let mut tm0 = Simd64::splat(0);
         let mut tm1 = Simd64::splat(0);
-        let mut weyl_lo = Simd64::splat(0);
-        let mut weyl_hi = Simd64::splat(0);
-        let mut inc_lo = Simd64::splat(0);
-        let mut inc_hi = Simd64::splat(0);
+        let mut mwc_state = Simd64::splat(0);
+        let mut mwc_carry = Simd64::splat(0);
         for round in 0..4 {
-            let tweak = tweak.wrapping_add((round as u128) << 126);
             let mut round_kmac = base.clone();
             round_kmac.update(&R::u128_as_bytes(tweak));
+            round_kmac.update(&R::u64_as_bytes(round));
 
             // Update KMAC from right half
-            let mut buffer = [0u64; 16];
+            let mut buffer = [0u64; 12];
             // This loop looks scalar, but modern LLVM will see
             // the fixed 128-bit extract pattern and emit VEXTRACTI128
             // or VPERM2I128 directly into the buffer.
@@ -125,14 +124,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             buffer[2..4].copy_from_slice(&xr1.as_array()[2..4]);
             buffer[4..6].copy_from_slice(&tm0.as_array()[2..4]);
             buffer[6..8].copy_from_slice(&tm1.as_array()[2..4]);
-            buffer[8..10].copy_from_slice(&weyl_lo.as_array()[2..4]);
-            buffer[10..12].copy_from_slice(&weyl_hi.as_array()[2..4]);
-            buffer[12..14].copy_from_slice(&inc_lo.as_array()[2..4]);
-            buffer[14..16].copy_from_slice(&inc_hi.as_array()[2..4]);
+            buffer[8..10].copy_from_slice(&mwc_state.as_array()[2..4]);
+            buffer[10..12].copy_from_slice(&mwc_carry.as_array()[2..4]);
             round_kmac.update(R::cast_u64_slice_as_u8(&buffer).as_ref());
 
             let mut reader = round_kmac.into_xof();
-            let mut f_out = [0u8; 128];
+            let mut f_out = [0u8; 96];
             reader.squeeze(&mut f_out);
 
             // Xor into left half
@@ -141,7 +138,6 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             let d0 = Simd::from_slice(&data.as_ref()[0..4]); // words 0,1,2,3
             let d1 = Simd::from_slice(&data.as_ref()[4..8]); // words 4,5,6,7
             let d2 = Simd::from_slice(&data.as_ref()[8..12]); // words 8,9,10,11
-            let d3 = Simd::from_slice(&data.as_ref()[12..16]); // words 12,13,14,15
             xr0 ^= d0 & mask;
             // Use a swizzle to get words 2,3 into lanes 0,1
             xr1 ^= d0.rotate_elements_left::<2>() & mask;
@@ -149,34 +145,26 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             tm0 ^= d1 & mask;
             tm1 ^= d1.rotate_elements_left::<2>() & mask;
 
-            weyl_lo ^= d2 & mask;
-            weyl_hi ^= d2.rotate_elements_left::<2>() & mask;
-
-            inc_lo ^= d3 & mask;
-            inc_hi ^= d3.rotate_elements_left::<2>() & mask;
+            mwc_state ^= d2 & mask;
+            mwc_carry ^= d2.rotate_elements_left::<2>() & mask;
 
             // Swap: Lanes 0,1 <-> Lanes 2,3
             xr0 = xr0.rotate_elements_left::<2>();
             xr1 = xr1.rotate_elements_left::<2>();
             tm0 = tm0.rotate_elements_left::<2>();
             tm1 = tm1.rotate_elements_left::<2>();
-            weyl_lo = weyl_lo.rotate_elements_left::<2>();
-            weyl_hi = weyl_hi.rotate_elements_left::<2>();
-            inc_lo = inc_lo.rotate_elements_left::<2>();
-            inc_hi = inc_hi.rotate_elements_left::<2>();
+            mwc_state = mwc_state.rotate_elements_left::<2>();
+            mwc_carry = mwc_carry.rotate_elements_left::<2>();
         }
 
-        inc_lo |= Simd::splat(1);
         tm0 &= Simd::splat(TINYMT64_LANE_MASK);
         TripleMixSimdCore {
             xr0,
             xr1,
             tm0,
             tm1,
-            weyl_lo,
-            weyl_hi,
-            inc_lo,
-            inc_hi,
+            mwc_state,
+            mwc_carry,
         }
     }
 
@@ -185,8 +173,7 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         // Simple distinctness check: Child state != Parent state in any lane combination
         !((a.xr0.simd_eq(b.xr0) & a.xr1.simd_eq(b.xr1))
             | (a.tm0.simd_eq(b.tm0) & a.tm1.simd_eq(b.tm1))
-            | (a.weyl_lo.simd_eq(b.weyl_lo) & a.weyl_hi.simd_eq(b.weyl_hi))
-            | (a.inc_lo.simd_eq(b.inc_lo) & a.inc_hi.simd_eq(b.inc_hi)))
+            | (a.mwc_state.simd_eq(b.mwc_state) & a.mwc_carry.simd_eq(b.mwc_carry)))
         .any()
     }
 
@@ -204,12 +191,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         } else {
             Kmac::v256(FORK_DOMAIN_STRING, domain_separation.as_ref())
         };
-        let mut padding = [0u64; 4]; // 32 bytes + 256-byte core state = 288 bytes = 4 blocks
+        let mut padding = [0u64; 3]; // 24 bytes + 192-byte core state = 216 bytes = 3 blocks
         let remaining = self.block_core.remaining_results();
         let remaining_len = remaining.len();
         if remaining_len > 0 {
             padding[0] = remaining_len as u64;
-            padding[1..(remaining.len() + 1).min(4)].copy_from_slice(remaining);
+            padding[1..(remaining.len() + 1).min(3)].copy_from_slice(remaining);
         } else {
             self.fill(&mut padding);
         }
@@ -219,55 +206,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         let mut attempt = 0u128;
         loop {
             let core = Self::permute(&fork_kmac, attempt);
-            if Self::is_valid(&core) && Self::is_distinct(&core, &self.block_core.core) {
+            if core.is_valid() && Self::is_distinct(&core, &self.block_core.core) {
                 return Self::from_core(core);
             }
             cold_path();
             attempt += 1;
         }
-    }
-
-    /// Aggressive SIMD Reduction for Validity
-    #[inline(always)]
-    pub(crate) fn is_valid(c: &TripleMixSimdCore) -> bool {
-        // Dead-state check
-        if ((c.xr0 | c.xr1).simd_eq(Simd::splat(0)) | (c.tm0 | c.tm1).simd_eq(Simd::splat(0))).any()
-        {
-            cold_path();
-            return false;
-        }
-
-        // Duplicate Check via XOR Reduction
-        // If Lane[i] == Lane[j], then (Lane[i] ^ Lane[j]) == 0.
-        // We check all 3 possible shift-offsets (1, 2, 3).
-        macro_rules! find_similar {
-            ($shift:expr) => {
-                let diff_xr = (c.xr0 ^ c.xr0.rotate_elements_left::<$shift>())
-                    | (c.xr1 ^ c.xr1.rotate_elements_left::<$shift>());
-                let diff_tm = (c.tm0 ^ c.tm0.rotate_elements_left::<$shift>())
-                    | (c.tm1 ^ c.tm1.rotate_elements_left::<$shift>());
-                let diff_lcg = (c.inc_hi ^ c.inc_hi.rotate_elements_left::<$shift>())
-                    | (c.inc_lo ^ c.inc_lo.rotate_elements_left::<$shift>());
-
-                // A lane is similar if ANY sub-generator matches the rotated version
-                if (diff_xr.simd_eq(Simd::splat(0))
-                    | diff_tm.simd_eq(Simd::splat(0))
-                    | diff_lcg.simd_eq(Simd::splat(0)))
-                .any()
-                {
-                    cold_path();
-                    return false;
-                }
-            };
-        }
-
-        find_similar!(1);
-        find_similar!(2);
-        // (Note: shift 3 is covered by shift 1 in a 4-lane circular buffer,
-        // but we keep it for strict completeness if not circular)
-        find_similar!(3);
-
-        true
     }
 
     #[inline(always)]
@@ -283,6 +227,55 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     #[inline(always)]
     pub fn almost_all_zeroes_state() -> Self {
         TripleMixPrng::from_core(TripleMixSimdCore::almost_all_zeroes_core())
+    }
+}
+
+impl TripleMixSimdCore {
+    #[inline(always)]
+    pub(crate) fn is_valid(self: &TripleMixSimdCore) -> bool {
+        // Dead-state check
+        if ((self.xr0 | self.xr1).simd_eq(Simd::splat(0))
+            | (self.tm0 | self.tm1).simd_eq(Simd::splat(0))
+            | (self.mwc_state | self.mwc_carry).simd_eq(Simd::splat(0))
+            | self.mwc_state.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
+            | self.mwc_carry.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
+            | (self.mwc_state & self.mwc_carry).simd_eq(TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1))
+        ).any()
+        {
+            cold_path();
+            return false;
+        }
+        // Duplicate Check via XOR Reduction
+        // If Lane[i] == Lane[j], then (Lane[i] ^ Lane[j]) == 0.
+        // We check all 3 possible shift-offsets (1, 2, 3).
+        macro_rules! find_similar {
+            ($shift:expr) => {
+                let diff_xr = (self.xr0 ^ self.xr0.rotate_elements_left::<$shift>())
+                    | (self.xr1 ^ self.xr1.rotate_elements_left::<$shift>());
+                let diff_tm = (self.tm0 ^ self.tm0.rotate_elements_left::<$shift>())
+                    | (self.tm1 ^ self.tm1.rotate_elements_left::<$shift>());
+                let diff_mcg = (self.mwc_state ^ self.mwc_state.rotate_elements_left::<$shift>())
+                    | (self.mwc_carry ^ self.mwc_carry.rotate_elements_left::<$shift>());
+
+                // A lane is similar if ANY sub-generator matches the rotated version
+                if (diff_xr.simd_eq(Simd::splat(0))
+                    | diff_tm.simd_eq(Simd::splat(0))
+                    | diff_mcg.simd_eq(Simd::splat(0)))
+                .any()
+                {
+                    cold_path();
+                    return false;
+                }
+            };
+        }
+
+        find_similar!(1);
+        find_similar!(2);
+        // (Note: shift 3 is covered by shift 1 in a 4-lane circular buffer,
+        // but we keep it for strict completeness if not circular)
+        find_similar!(3);
+
+        true
     }
 }
 
@@ -445,11 +438,6 @@ mod tests {
     fn test_invariant_fixing() {
         let base = get_base_kmac();
         let p = TripleMixPrng::<NotReproducible>::permute(&base, 42);
-
-        // LCG increment must be odd
-        for &inc in p.inc_lo.as_array() {
-            assert_eq!(inc % 2, 1, "LCG increment was not odd");
-        }
 
         // TinyMT dead bit (MSB of tm0) must be 0
         for &tm in p.tm0.as_array() {

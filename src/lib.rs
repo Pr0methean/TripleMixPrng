@@ -32,18 +32,14 @@ pub struct TripleMixSimdCore {
     xr1: Simd64,
     tm0: Simd64,
     tm1: Simd64,
-    weyl_lo: Simd64,
-    weyl_hi: Simd64,
-    inc_lo: Simd64,
-    inc_hi: Simd64,
+    mwc_state: Simd64,
+    mwc_carry: Simd64,
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let x = self.inc_hi;
-        let x1 = self.inc_lo;
-        let x2 = self.weyl_hi;
-        let x3 = self.weyl_lo;
+        let x2 = self.mwc_carry;
+        let x3 = self.mwc_state;
         let x4 = self.tm1;
         let x5 = self.tm0;
         let x6 = self.xr1;
@@ -53,10 +49,8 @@ impl std::fmt::Debug for TripleMixSimdCore {
             .field("xr1", &x6.to_array())
             .field("tm0", &x5.to_array())
             .field("tm1", &x4.to_array())
-            .field("weyl_lo", &x3.to_array())
-            .field("weyl_hi", &x2.to_array())
-            .field("inc_lo", &x1.to_array())
-            .field("inc_hi", &x.to_array())
+            .field("mwc_state", &x3.to_array())
+            .field("mwc_carry", &x2.to_array())
             .finish()
     }
 }
@@ -105,10 +99,7 @@ pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
     use core::simd::Simd;
     use rand::rngs::SysRng;
 
-    const SMALLEST_DISTINCT_ODD_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
     const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
-    const LARGEST_DISTINCT_ODD: Simd64 =
-        Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
     const LARGEST_DISTINCT: Simd64 =
         Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
     let rng1 = TripleMixPrng::almost_all_zeroes_state();
@@ -117,20 +108,16 @@ pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
         xr1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
         tm0: Simd::splat(0),
         tm1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
-        weyl_lo: Simd::splat(0),
-        weyl_hi: Simd::splat(0),
-        inc_lo: SMALLEST_DISTINCT_ODD_DESCENDING,
-        inc_hi: Simd::splat(0),
+        mwc_state: Simd::splat(0),
+        mwc_carry: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
     });
     let rng3 = TripleMixPrng::from_core(TripleMixSimdCore {
         xr0: Simd::splat(u64::MAX),
         xr1: LARGEST_DISTINCT,
         tm0: Simd::splat(u64::MAX),
         tm1: LARGEST_DISTINCT,
-        weyl_lo: Simd::splat(u64::MAX),
-        weyl_hi: Simd::splat(u64::MAX),
-        inc_lo: LARGEST_DISTINCT_ODD,
-        inc_hi: Simd::splat(u64::MAX),
+        mwc_state: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(2),
+        mwc_carry: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1),
     });
     let mut seed = [0u8; DEFAULT_SEED_SIZE];
     let rng4 = TripleMixPrng::from(&seed);

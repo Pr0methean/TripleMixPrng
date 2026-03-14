@@ -8,10 +8,8 @@ pub(crate) struct CoreState {
     xr1: [u64; 4],
     tm0: [u64; 4],
     tm1: [u64; 4],
-    weyl_lo: [u64; 4],
-    weyl_hi: [u64; 4],
-    inc_lo: [u64; 4],
-    inc_hi: [u64; 4],
+    mwc_state: [u64; 4],
+    mwc_carry: [u64; 4],
     remaining_results: Box<[u64]>,
 }
 
@@ -26,10 +24,8 @@ impl<R: Reproducibility> serde::Serialize for TripleMixPrng<R> {
             xr1: core.xr1.to_array(),
             tm0: core.tm0.to_array(),
             tm1: core.tm1.to_array(),
-            weyl_lo: core.weyl_lo.to_array(),
-            weyl_hi: core.weyl_hi.to_array(),
-            inc_lo: core.inc_lo.to_array(),
-            inc_hi: core.inc_hi.to_array(),
+            mwc_state: core.mwc_state.to_array(),
+            mwc_carry: core.mwc_carry.to_array(),
             remaining_results: self
                 .block_core
                 .remaining_results()
@@ -56,12 +52,10 @@ impl<'de, R: Reproducibility> serde::Deserialize<'de> for TripleMixPrng<R> {
             xr1: Simd64::from_array(state.xr1),
             tm0: Simd64::from_array(state.tm0),
             tm1: Simd64::from_array(state.tm1),
-            weyl_lo: Simd64::from_array(state.weyl_lo),
-            weyl_hi: Simd64::from_array(state.weyl_hi),
-            inc_lo: Simd64::from_array(state.inc_lo),
-            inc_hi: Simd64::from_array(state.inc_hi),
+            mwc_state: Simd64::from_array(state.mwc_state),
+            mwc_carry: Simd64::from_array(state.mwc_carry),
         };
-        if !Self::is_valid(&core) {
+        if !core.is_valid() {
             cold_path();
             Err(D::Error::custom("invalid core state"))
         } else if let Some(block_core) = BlockRng::reconstruct(core, &state.remaining_results) {
@@ -81,10 +75,10 @@ mod tests {
     use crate::{TripleMixPrng, create_rngs};
 
     #[test]
-    fn test_round_trip() -> Result<(), serde_json::Error> {
+    fn test_round_trip() {
         for prng in create_rngs::<DefaultReproducibility>() {
-            let json = serde_json::to_string(&prng)?;
-            let prng_copy: TripleMixPrng<DefaultReproducibility> = serde_json::from_str(&json)?;
+            let json = serde_json::to_string(&prng).unwrap();
+            let prng_copy: TripleMixPrng<DefaultReproducibility> = serde_json::from_str(&json).unwrap();
             assert_eq!(
                 prng.block_core.core.as_bytes(),
                 prng_copy.block_core.core.as_bytes()
@@ -94,6 +88,5 @@ mod tests {
                 prng_copy.block_core.remaining_results()
             );
         }
-        Ok(())
     }
 }
