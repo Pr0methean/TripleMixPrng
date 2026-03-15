@@ -128,40 +128,43 @@ impl TripleMixSimdCore {
                 Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
             let (mwc_kx_lo, mwc_kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS);
             let (pcg_next_state_lo, pcg_carry) = Self::add128_with_carry(pcg_prod_lo, pcg_inc_lo, Simd::splat(0));
-            let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry); // PCG
+            let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry);
             pcg_state_lo = pcg_next_state_lo;
             pcg_state_hi = pcg_next_state_hi;
+
+            let mwc_borrow = mwc_carry.simd_lt(mwc_kx_lo).to_simd().cast();
+            let mwc_next_state = mwc_carry - mwc_kx_lo;
+            let mwc_next_carry = (mwc_state - mwc_kx_hi) + mwc_borrow;
+
             let pcg_x = pcg_state_hi ^ pcg_state_lo;
-            let mwc_next_carry = mwc_state - mwc_kx_hi;
             let pcg_m = simd_wrapping_mul(pcg_x ^ (pcg_x >> 31), PCG_OUTPUT_MULTIPLIERS);
             let pcg_rot = pcg_x >> 59;
-            let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
             let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
-            let mwc_next_state = mwc_carry - mwc_kx_lo;
-            let tm_x = tm0_masked ^ tm1;
-            mwc_state = mwc_next_state;
-            let tm_mask = (tm_x & Simd::splat(1)).wrapping_neg();
-            let mwc_borrow = mwc_carry.simd_lt(mwc_kx_lo).to_simd().cast();
-            let tm_next_0 = tm1 ^ (tm_mask & Simd::splat(Self::TINYMT_MAT1));
-            let mwc_next_carry = mwc_next_carry + mwc_borrow;
+
+            let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
+            let mut tm_x = tm0_masked ^ tm1;
             let tm_y = tm0_masked + tm1;
-            let tm_x = tm_x ^ (tm_x << Simd::splat(12));
-            tm0 = tm_next_0;
-            let tm_y = tm_y ^ (tm0_masked >> Simd::splat(8));
-            let tm_x = tm_x ^ (tm_x >> Simd::splat(32));
             let tm_out = tm_y ^ ((tm_y & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
-            let tm_x = tm_x ^ (tm_x << Simd::splat(32));
 
-            let (out0, out1) = mix(mwc_next_carry, pcg_output, tm_out, mwc_state, i_mixed);
+            tm_x ^= tm_x << Simd::splat(12);
+            tm_x ^= tm_x >> Simd::splat(32);
+            tm_x ^= tm_x << Simd::splat(32);
+            tm_x ^= tm_x << Simd::splat(11);
 
-            let tm_x = tm_x ^ (tm_x << Simd::splat(11));  // Final x for TinyMT
+            let tm_mask = (tm_x & Simd::splat(1)).wrapping_neg();
+            let tm_next_0 = tm1 ^ (tm_mask & Simd::splat(Self::TINYMT_MAT1));
             let tm_next_1 = tm_x ^ (tm_mask & Simd::splat(Self::TINYMT_MAT2));
-            mwc_carry = mwc_next_carry;
+
+            let (out0, out1) = mix(mwc_next_carry, pcg_output, tm_out, mwc_next_state, i_mixed);
+
             out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
             out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
 
             // Update state
+            tm0 = tm_next_0;
             tm1 = tm_next_1;
+            mwc_state = mwc_next_state;
+            mwc_carry = mwc_next_carry;
         }
 
         self.pcg_state_lo = pcg_state_lo;
@@ -306,30 +309,29 @@ pub(crate) fn mix(
     d = rotl(d ^ a, 52);
 
     // Round 2 - Cross-lane swizzled mixing
+    a = a + d.rotate_elements_left::<1>();
+    b = rotl(b ^ a.rotate_elements_right::<1>(), 37);
+    c = c + b.rotate_elements_right::<2>();
+    d = rotl(d ^ c.rotate_elements_left::<1>(), 19);
+
+    // Deep Nonlinear Spread - All lanes get multiplied
+    let m = AVALANCHE_MULTIPLIERS_3;
+    a = simd_wrapping_mul(a ^ b, m);
+    c = simd_wrapping_mul(c ^ d, m.rotate_elements_left::<2>());
+    b = simd_wrapping_mul(b ^ rotl(a, 31), m.rotate_elements_left::<1>());
+    d = simd_wrapping_mul(d ^ rotl(c, 31), m.rotate_elements_left::<3>());
+
+    // Round 3 - Final cross-lane spread
     a = a + b.rotate_elements_left::<1>();
-    d = rotl(d ^ a.rotate_elements_right::<1>(), 37);
-    c = c + d.rotate_elements_right::<2>();
-    b = rotl(b ^ c.rotate_elements_left::<1>(), 19);
+    c = c + d.rotate_elements_right::<1>();
+    d = rotl(d ^ a.rotate_elements_right::<2>(), 43);
+    b = rotl(b ^ c.rotate_elements_left::<2>(), 11);
 
-    // Deep Nonlinear Spread
-    a = simd_wrapping_mul(a ^ rotl(d, 32), AVALANCHE_MULTIPLIERS_3);
-    c = simd_wrapping_mul(c ^ rotl(b, 32), AVALANCHE_MULTIPLIERS_3.rotate_elements_left::<2>());
-
-    // Round 3 - Robust cross-lane spread
-    a = a + c.rotate_elements_left::<1>();
-    d = rotl(d ^ a.rotate_elements_right::<1>(), 43);
-    b = b + d.rotate_elements_left::<2>();
-    c = rotl(c ^ b.rotate_elements_right::<1>(), 11);
-
-    // Diversified Output mixing
-    let ad = a ^ d;
-    let bd = b + d;
-    let ac = a + c;
-    let bc = b ^ c;
-    let bdr = rotl(bd, 17);
-    let bcr = rotl(bc, 41);
-    let x = ac ^ bdr;
-    let y = ad ^ bcr;
+    // Symmetric but strong output combiners to satisfy bit independence tests
+    let axc = a ^ c;
+    let bxd = b ^ d;
+    let x = axc ^ rotl(b + d, 17);
+    let y = bxd ^ rotl(a + c, 41);
 
     (x, y)
 }
