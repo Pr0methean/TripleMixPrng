@@ -224,4 +224,20 @@ mod tests {
             }
         }
     }
+
+        proptest! {
+        #[test]
+        fn test_wrapping_mul_proptest(a in any::<[u64; 4]>(), b_u64 in any::<[u64; 4]>()) {
+            let a_simd = Simd64::from_array(a);
+            let b_simd = Simd64::from_array(b_u64);
+            let lo = wrapping_mul(a_simd, b_simd);
+            let lo_arr = lo.to_array();
+
+            for i in 0..4 {
+                let expected = (((a[i] as u128) * (b_u64[i] as u128)) & (u64::MAX as u128)) as u64;
+                let actual = lo_arr[i];
+                assert_eq!(actual, expected, "mul_small failed for a={} b={}", a[i], b_u64[i]);
+            }
+        }
+    }
 }
