@@ -132,11 +132,11 @@ impl TripleMixSimdCore {
             pcg_state_lo = pcg_next_state_lo;
             pcg_state_hi = pcg_next_state_hi;
             let pcg_x = pcg_state_hi ^ pcg_state_lo;
+            let mwc_next_carry = mwc_state - mwc_kx_hi;
             let pcg_m = simd_wrapping_mul(pcg_x ^ (pcg_x >> 31), PCG_OUTPUT_MULTIPLIERS);
             let pcg_rot = pcg_x >> 59;
-            let mwc_next_carry = mwc_state - mwc_kx_hi;
-            let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
             let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
+            let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
             let mwc_next_state = mwc_carry - mwc_kx_lo;
             let tm_x = tm0_masked ^ tm1;
             mwc_state = mwc_next_state;
@@ -322,8 +322,14 @@ pub(crate) fn mix(
     c = rotl(c ^ b.rotate_elements_right::<1>(), 11);
 
     // Diversified Output mixing
-    let x = (a + c) ^ rotl(b + d, 17);
-    let y = (a ^ d) ^ rotl(b ^ c, 41);
+    let ad = a ^ d;
+    let bd = b + d;
+    let ac = a + c;
+    let bc = b ^ c;
+    let bdr = rotl(bd, 17);
+    let bcr = rotl(bc, 41);
+    let x = ac ^ bdr;
+    let y = ad ^ bcr;
 
     (x, y)
 }
