@@ -124,41 +124,63 @@ impl TripleMixSimdCore {
             0x94d049bb133111eb,
         ]);
         for block in blocks {
+            // Kick off the highest latency operations (multipliers) early
             let (pcg_prod_hi, pcg_prod_lo) =
                 Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
             let (mwc_kx_lo, mwc_kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS);
+
+            // TinyMT Step 0: Mask and initial XOR
+            let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
+            let mut tm_x = tm0_masked ^ tm1;
+            let tm_y = tm0_masked + tm1;
+
+            // TinyMT Step 1: First shift (Interleave with PCG state logic)
+            tm_x ^= tm_x << Simd::splat(12);
+
+            // Finish PCG state transition
             let (pcg_next_state_lo, pcg_carry) = Self::add128_with_carry(pcg_prod_lo, pcg_inc_lo, Simd::splat(0));
             let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry);
             pcg_state_lo = pcg_next_state_lo;
             pcg_state_hi = pcg_next_state_hi;
 
+            // TinyMT Step 2: Second shift (Interleave with PCG output prep)
+            tm_x ^= tm_x >> Simd::splat(32);
+
+            // Kick off PCG output multiplier
+            let pcg_x = pcg_state_hi ^ pcg_state_lo;
+            let pcg_m = simd_wrapping_mul(pcg_x ^ (pcg_x >> 31), PCG_OUTPUT_MULTIPLIERS);
+            let pcg_rot = pcg_x >> 59;
+
+            // TinyMT Step 3: Third shift (Interleave with MWC state updates)
+            tm_x ^= tm_x << Simd::splat(32);
+
+            // Interleave MWC state updates with PCG output multiplier latency
             let mwc_borrow = mwc_carry.simd_lt(mwc_kx_lo).to_simd().cast();
             let mwc_next_state = mwc_carry - mwc_kx_lo;
             let mwc_next_carry = (mwc_state - mwc_kx_hi) + mwc_borrow;
 
-            let pcg_x = pcg_state_hi ^ pcg_state_lo;
-            let pcg_m = simd_wrapping_mul(pcg_x ^ (pcg_x >> 31), PCG_OUTPUT_MULTIPLIERS);
-            let pcg_rot = pcg_x >> 59;
-            let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
-
-            let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
-            let mut tm_x = tm0_masked ^ tm1;
-            let tm_y = tm0_masked + tm1;
-            let tm_out = tm_y ^ ((tm_y & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
-
-            tm_x ^= tm_x << Simd::splat(12);
-            tm_x ^= tm_x >> Simd::splat(32);
-            tm_x ^= tm_x << Simd::splat(32);
+            // TinyMT Step 4: Fourth shift (Interleave with PCG final rotation)
             tm_x ^= tm_x << Simd::splat(11);
 
+            // Finalize PCG output as soon as pcg_m/pcg_rot are likely ready.
+            let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
+
+            // TinyMT Step 5: Final output and transition prep
+            let tm_out = tm_y ^ ((tm_y & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
             let tm_mask = (tm_x & Simd::splat(1)).wrapping_neg();
             let tm_next_0 = tm1 ^ (tm_mask & Simd::splat(Self::TINYMT_MAT1));
             let tm_next_1 = tm_x ^ (tm_mask & Simd::splat(Self::TINYMT_MAT2));
 
-            let (out0, out1) = mix(mwc_next_carry, pcg_output, tm_out, mwc_next_state, i_mixed);
+            let (x, y) = mix(
+                mwc_next_state,
+                pcg_output,
+                tm_out,
+                tm0_masked,
+                i_mixed,
+            );
 
-            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
-            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+            block[0..4].copy_from_slice(&x.to_array());
+            block[4..8].copy_from_slice(&y.to_array());
 
             // Update state
             tm0 = tm_next_0;
@@ -308,30 +330,30 @@ pub(crate) fn mix(
     a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_3);
     d = rotl(d ^ a, 52);
 
-    // Round 2 - Cross-lane swizzled mixing
-    a = a + d.rotate_elements_left::<1>();
-    b = rotl(b ^ a.rotate_elements_right::<1>(), 37);
-    c = c + b.rotate_elements_right::<2>();
-    d = rotl(d ^ c.rotate_elements_left::<1>(), 19);
+    // Round 2 - Cross-lane swizzled mixing (Parallelized paths)
+    let a2 = a + d.rotate_elements_left::<1>();
+    let c2 = c + b.rotate_elements_right::<2>();
+    let b2 = rotl(b ^ a2.rotate_elements_right::<1>(), 37);
+    let d2 = rotl(d ^ c2.rotate_elements_left::<1>(), 19);
 
-    // Deep Nonlinear Spread - All lanes get multiplied
+    // Deep Nonlinear Spread - All 4 multiplications are now independent
     let m = AVALANCHE_MULTIPLIERS_3;
-    a = simd_wrapping_mul(a ^ b, m);
-    c = simd_wrapping_mul(c ^ d, m.rotate_elements_left::<2>());
-    b = simd_wrapping_mul(b ^ rotl(a, 31), m.rotate_elements_left::<1>());
-    d = simd_wrapping_mul(d ^ rotl(c, 31), m.rotate_elements_left::<3>());
+    let ma = simd_wrapping_mul(a2 ^ b2, m);
+    let mc = simd_wrapping_mul(c2 ^ d2, m.rotate_elements_left::<2>());
+    let mb = simd_wrapping_mul(b2 ^ rotl(a2, 31), m.rotate_elements_left::<1>());
+    let md = simd_wrapping_mul(d2 ^ rotl(c2, 31), m.rotate_elements_left::<3>());
 
-    // Round 3 - Final cross-lane spread
-    a = a + b.rotate_elements_left::<1>();
-    c = c + d.rotate_elements_right::<1>();
-    d = rotl(d ^ a.rotate_elements_right::<2>(), 43);
-    b = rotl(b ^ c.rotate_elements_left::<2>(), 11);
+    // Round 3 - Final cross-lane spread (Parallelized paths)
+    let a3 = ma + mb.rotate_elements_left::<1>();
+    let c3 = mc + md.rotate_elements_right::<1>();
+    let d3 = rotl(md ^ a3.rotate_elements_right::<2>(), 43);
+    let b3 = rotl(mb ^ c3.rotate_elements_left::<2>(), 11);
 
     // Symmetric but strong output combiners to satisfy bit independence tests
-    let axc = a ^ c;
-    let bxd = b ^ d;
-    let x = axc ^ rotl(b + d, 17);
-    let y = bxd ^ rotl(a + c, 41);
+    let axc = a3 ^ c3;
+    let bxd = b3 ^ d3;
+    let x = axc ^ rotl(b3 + d3, 17);
+    let y = bxd ^ rotl(a3 + c3, 41);
 
     (x, y)
 }
