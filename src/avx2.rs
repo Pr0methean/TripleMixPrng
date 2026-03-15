@@ -200,4 +200,9 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn test_mulsmall() {
+        assert_eq!(mul_small(Simd64::splat((1 << 63) + 1), Simd64::splat((1 << 32) - 1)), (Simd64::splat((1 << 63) | (1 << 32) - 1), Simd64::splat((1 << 31) - 1)));
+    }
 }

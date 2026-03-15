@@ -131,10 +131,10 @@ impl TripleMixSimdCore {
             let pcg_xorshifted = pcg_state_hi ^ pcg_state_lo;
             let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry); // PCG
             let pcg_rot = pcg_state_lo >> 59;
+            let pcg_m = simd_wrapping_mul(pcg_xorshifted, PCG_OUTPUT_MULTIPLIERS);
             let mwc_next_carry = mwc_state - mwc_kx_hi;
             pcg_state_lo = pcg_next_state_lo;
             pcg_state_hi = pcg_next_state_hi;
-            let pcg_m = simd_wrapping_mul(pcg_xorshifted, PCG_OUTPUT_MULTIPLIERS);
             let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
             let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
             let mwc_next_state = mwc_carry - mwc_kx_lo;
@@ -299,13 +299,13 @@ pub(crate) fn mix(
         0x94d049bb133111eb,
         0xbcf746f9ee677775,
     ]);
-    let i_mixed_1 = i ^ FEISTEL_CONSTANT_1;
+    let i_mixed_1 = i + FEISTEL_CONSTANT_1;
     let i_mixed_2 = rotl24(i) ^ FEISTEL_CONSTANT_2;
-    let mut b = t + i_mixed_1;
-    let mut c = x_in + i_mixed_2;
 
     let mut a = w_lo;
     let mut d = w_hi;
+    let mut b = t ^ i_mixed_1;
+    let mut c = x_in + i_mixed_2;
 
     // Round 1 - Combined operations
     a += b;
@@ -333,24 +333,6 @@ pub(crate) fn mix(
     d = rotl8(d);
     c += d.rotate_elements_right::<2>();
     d += a_rot;
-    a += b;
-    d ^= a;
-    d = rotl16(d);
-
-    let m = simd_wrapping_mul(a + b, c + d);
-    c += d;
-    b ^= c;
-    b = rotl24(b);
-    d = rotl8(d);
-    let mr1 = rotl(m, 33);
-    let mr2 = rotl(m, 27);
-    c ^= m;
-    b += m;
-    a += mr1;
-    d ^= mr2;
-    c += d;
-    b ^= c;
-    b = rotl(b, 7);
 
     // Output mixing
     let acr = rotl(a + c, 41);
@@ -838,6 +820,7 @@ mod tests {
                                 let xor_same = xor.simd_eq(first_output1 ^ first_output2);
                                 for cell in 0..SIMD_WIDTH {
                                     if vec_idx == 0 && cell == 0 {
+                                        // This is the baseline for comparisons
                                         continue;
                                     }
                                     assert_eq!(
