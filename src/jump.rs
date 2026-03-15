@@ -36,24 +36,115 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     }
 }
 
+/// Represents a linear transformation on the 128-bit state:
+/// new_state = matrix * state + constant
+struct JumpMatrix {
+    /// Multiplier part (how state is transformed)
+    mult_low: Simd64,
+    mult_high: Simd64,
+    /// Constant part (how increment contributes)
+    const_low: Simd64,
+    const_high: Simd64,
+}
+
+impl JumpMatrix {
+    /// Create identity matrix (jump by 0 steps)
+    fn identity() -> Self {
+        Self {
+            mult_low: Simd64::splat(1),
+            mult_high: Simd64::splat(0),
+            const_low: Simd64::splat(0),
+            const_high: Simd64::splat(0),
+        }
+    }
+
+    /// Compose two jump matrices: this * other
+    fn compose(&self, other: &Self) -> Self {
+        // new_mult = self.mult * other.mult
+        let (new_mult_low, new_mult_high) = mul128x128(
+            self.mult_high,
+            self.mult_low,
+            other.mult_high,
+            other.mult_low,
+        );
+
+        // new_const = self.mult * other.const + self.const
+        let (temp_low, temp_high) = mul128x128(
+            self.mult_high,
+            self.mult_low,
+            other.const_high,
+            other.const_low,
+        );
+
+        let (new_const_low, carry) =
+            TripleMixSimdCore::add128_with_carry(temp_low, self.const_low, Simd64::splat(0));
+        let (new_const_high, _) =
+            TripleMixSimdCore::add128_with_carry(temp_high, self.const_high, carry);
+
+        Self {
+            mult_low: new_mult_low,
+            mult_high: new_mult_high,
+            const_low: new_const_low,
+            const_high: new_const_high,
+        }
+    }
+
+    /// Apply this jump to a state
+    fn apply(&self, state_low: Simd64, state_high: Simd64) -> (Simd64, Simd64) {
+        // new_state = mult * state + const
+        let (prod_low, prod_high) =
+            mul128x128(self.mult_high, self.mult_low, state_high, state_low);
+
+        let (new_low, carry) =
+            TripleMixSimdCore::add128_with_carry(prod_low, self.const_low, Simd64::splat(0));
+        let (new_high, _) = TripleMixSimdCore::add128_with_carry(prod_high, self.const_high, carry);
+
+        (new_low, new_high)
+    }
+}
+
+/// Full 128x128 multiplication
+fn mul128x128(a_high: Simd64, a_low: Simd64, b_high: Simd64, b_low: Simd64) -> (Simd64, Simd64) {
+    let (h1, low) = TripleMixSimdCore::mul128x64to128(a_high, a_low, b_low);
+    let h2 = crate::generate::simd_wrapping_mul(a_low, b_high);
+    (low, h1 + h2)
+}
+
 impl TripleMixSimdCore {
     // 2^128 == 2^1 mod (2^127 - 1)
     const TINYMT_JUMP_128_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 1);
     // 2^256 == 2^2 mod (2^127 - 1)
     const TINYMT_JUMP_256_MAT: [u128; 128] = pow_mat_2_exp(Self::TINYMT_JUMP_MAT, 2);
 
+    fn jump_pcg(&mut self, steps: u128) {
+        let mut result = JumpMatrix::identity();
+        let mut base = JumpMatrix {
+            mult_low: Self::PCG_MULTIPLIERS,
+            mult_high: Simd64::splat(0),
+            const_low: self.pcg_inc_lo,
+            const_high: self.pcg_inc_hi,
+        };
+
+        let mut remaining = steps;
+        while remaining > 0 {
+            if remaining & 1 == 1 {
+                result = result.compose(&base);
+            }
+            base = base.compose(&base);
+            remaining >>= 1;
+        }
+
+        let (new_low, new_high) = result.apply(self.pcg_state_lo, self.pcg_state_hi);
+        self.pcg_state_lo = new_low;
+        self.pcg_state_hi = new_high;
+    }
 
     /// Jump ahead by steps = x * 2^(128*k)
     /// x: u128, k: u64
     /// state_lo/state_hi: current state vectors
     /// a: multiplier (per lane)
     /// returns new (state_lo, state_hi)
-    pub fn mwc_jump(
-        state: Simd64,
-        carry: Simd64,
-        steps: u128,
-        k: u64,
-    ) -> (Simd64, Simd64) {
+    pub fn mwc_jump(state: Simd64, carry: Simd64, steps: u128, k: u64) -> (Simd64, Simd64) {
         if steps == 0 && k == 0 {
             return (state, carry);
         }
@@ -72,7 +163,10 @@ impl TripleMixSimdCore {
             let m = (a << 64) - 1;
 
             // Initial V_0 = a * W_0 + c_0
-            let v_0 = a.wrapping_mul(state[i] as u128).wrapping_add(carry[i] as u128) % m;
+            let v_0 = a
+                .wrapping_mul(state[i] as u128)
+                .wrapping_add(carry[i] as u128)
+                % m;
 
             let mut base = a % m;
             let mut exp = steps;
@@ -126,18 +220,18 @@ fn mul_mod(mut x: u128, mut y: u128, m: u128) -> u128 {
 }
 
 impl TripleMixSimdCore {
-
     #[inline]
     pub(crate) fn advance(&mut self, steps: u128) {
         if steps == 0 {
             return;
         }
-        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, steps, 0);
-        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, steps);
+        let (new_mwc_state, new_mwc_carry) =
+            Self::mwc_jump(self.mwc_state, self.mwc_carry, steps, 0);
         let t_pow = pow_mat(Self::TINYMT_JUMP_MAT, steps);
         self.mwc_state = new_mwc_state;
         self.mwc_carry = new_mwc_carry;
-        self.update_x_and_t_from_matrices(&x_pow, &t_pow);
+        self.update_t_from_matrix(&t_pow);
+        self.jump_pcg(steps);
     }
 
     #[inline]
@@ -145,13 +239,13 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 1);
+        let (new_mwc_state, new_mwc_carry) =
+            Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 1);
         // 2^128 = 1 mod (2^128 - 1)
-        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_128_MAT, multiples);
         self.mwc_state = new_mwc_state;
         self.mwc_carry = new_mwc_carry;
-        self.update_x_and_t_from_matrices(&x_pow, &t_pow);
+        self.update_t_from_matrix(&t_pow);
     }
 
     #[inline]
@@ -159,56 +253,32 @@ impl TripleMixSimdCore {
         if multiples == 0 {
             return;
         }
-        let (new_mwc_state, new_mwc_carry) = Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 2);
+        let (new_mwc_state, new_mwc_carry) =
+            Self::mwc_jump(self.mwc_state, self.mwc_carry, multiples, 2);
         // 2^256 = 1 mod (2^128 - 1)
-        let x_pow = pow_mat(Self::XOROSHIRO_JUMP_MAT, multiples);
         let t_pow = pow_mat(Self::TINYMT_JUMP_256_MAT, multiples);
         self.mwc_state = new_mwc_state;
         self.mwc_carry = new_mwc_carry;
-        self.update_x_and_t_from_matrices(&x_pow, &t_pow);
+        self.update_t_from_matrix(&t_pow);
     }
 
     #[inline]
-    fn update_x_and_t_from_matrices(&mut self, x_pow: &[u128; 128], t_pow: &[u128; 128]) {
-        let xr0_arr = self.xr0.as_mut_array();
-        let xr1_arr = self.xr1.as_mut_array();
+    fn update_t_from_matrix(&mut self, t_pow: &[u128; 128]) {
         let tm0_arr = self.tm0.as_mut_array();
         let tm1_arr = self.tm1.as_mut_array();
         for i in 0..SIMD_WIDTH {
-            let x_state = (xr0_arr[i] as u128) | ((xr1_arr[i] as u128) << 64);
-            let x_new = apply_mat(x_pow, x_state);
-            xr0_arr[i] = x_new as u64;
-            xr1_arr[i] = (x_new >> 64) as u64;
-
             let t_state = (tm0_arr[i] as u128) | ((tm1_arr[i] as u128) << 64);
             let t_new = apply_mat(t_pow, t_state);
             tm0_arr[i] = t_new as u64;
             tm1_arr[i] = (t_new >> 64) as u64;
         }
     }
-    const XOROSHIRO_JUMP_MAT: [u128; 128] = compute_xoroshiro_mat();
     const TINYMT_JUMP_MAT: [u128; 128] = compute_tinymt_mat();
 }
 
 // ============================================================================
 // Jump-ahead helpers
 // ============================================================================
-
-const fn compute_xoroshiro_mat() -> [u128; 128] {
-    let mut res = [0; 128];
-    let mut i = 0;
-    while i < 128 {
-        let state = 1u128 << i;
-        let mut xr0 = state as u64;
-        let mut xr1 = (state >> 64) as u64;
-        let t = xr0 ^ xr1;
-        xr0 = rotl_scalar(xr0, 24) ^ t ^ (t << 16);
-        xr1 = rotl_scalar(t, 37);
-        res[i] = (xr0 as u128) | ((xr1 as u128) << 64);
-        i += 1;
-    }
-    res
-}
 
 const fn compute_tinymt_mat() -> [u128; 128] {
     let mut res = [0; 128];
@@ -233,10 +303,6 @@ const fn compute_tinymt_mat() -> [u128; 128] {
         i += 1;
     }
     res
-}
-
-const fn rotl_scalar(x: u64, k: u32) -> u64 {
-    x.rotate_left(k)
 }
 
 const fn apply_mat(mat: &[u128; 128], mut vec: u128) -> u128 {
@@ -297,15 +363,6 @@ mod tests {
 
     #[test]
     fn test_jump_ahead_constants() {
-        assert_eq!(
-            pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 128),
-            TripleMixSimdCore::XOROSHIRO_JUMP_MAT
-        );
-        assert_eq!(
-            pow_mat_2_exp(TripleMixSimdCore::XOROSHIRO_JUMP_MAT, 256),
-            TripleMixSimdCore::XOROSHIRO_JUMP_MAT
-        );
-
         assert_eq!(
             TripleMixSimdCore::TINYMT_JUMP_128_MAT,
             pow_mat_2_exp(TripleMixSimdCore::TINYMT_JUMP_MAT, 128)

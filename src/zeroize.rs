@@ -4,8 +4,10 @@ use core::simd::Simd;
 
 impl zeroize::Zeroize for TripleMixSimdCore {
     fn zeroize(&mut self) {
-        self.xr0 = Simd::splat(0);
-        self.xr1 = Simd::splat(0);
+        self.pcg_state_lo = Simd::splat(0);
+        self.pcg_state_hi = Simd::splat(0);
+        self.pcg_inc_lo = Simd::splat(0);
+        self.pcg_inc_hi = Simd::splat(0);
         self.tm0 = Simd::splat(0);
         self.tm1 = Simd::splat(0);
         self.mwc_state = Simd::splat(0);
@@ -46,8 +48,10 @@ mod tests {
     #[test]
     fn test_zeroize() {
         let zero_core = TripleMixSimdCore {
-            xr0: Simd64::splat(0),
-            xr1: Simd64::splat(0),
+            pcg_state_lo: Simd64::splat(0),
+            pcg_state_hi: Simd64::splat(0),
+            pcg_inc_lo: Simd64::splat(0),
+            pcg_inc_hi: Simd64::splat(0),
             tm0: Simd64::splat(0),
             tm1: Simd64::splat(0),
             mwc_state: Simd64::splat(0),

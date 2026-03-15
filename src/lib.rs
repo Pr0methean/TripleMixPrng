@@ -28,12 +28,14 @@ use reproducibility::Reproducibility;
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct TripleMixSimdCore {
-    xr0: Simd64,
-    xr1: Simd64,
-    tm0: Simd64,
-    tm1: Simd64,
+    tm0: Simd64, // TinyMT64 state
+    tm1: Simd64, // TinyMT64 state, with highest bit always 0
     mwc_state: Simd64,
     mwc_carry: Simd64,
+    pcg_state_lo: Simd64,
+    pcg_state_hi: Simd64,
+    pcg_inc_lo: Simd64,
+    pcg_inc_hi: Simd64,
 }
 
 impl std::fmt::Debug for TripleMixSimdCore {
@@ -42,11 +44,15 @@ impl std::fmt::Debug for TripleMixSimdCore {
         let x3 = self.mwc_state;
         let x4 = self.tm1;
         let x5 = self.tm0;
-        let x6 = self.xr1;
-        let x7 = self.xr0;
+        let x6 = self.pcg_state_hi;
+        let x7 = self.pcg_state_lo;
+        let x8 = self.pcg_inc_hi;
+        let x9 = self.pcg_inc_lo;
         f.debug_struct("TripleMixSimdCore")
-            .field("xr0", &x7.to_array())
-            .field("xr1", &x6.to_array())
+            .field("pcg_state_lo", &x7.to_array())
+            .field("pcg_state_hi", &x6.to_array())
+            .field("pcg_inc_lo", &x9.to_array())
+            .field("pcg_inc_hi", &x8.to_array())
             .field("tm0", &x5.to_array())
             .field("tm1", &x4.to_array())
             .field("mwc_state", &x3.to_array())
@@ -99,21 +105,25 @@ pub(crate) fn create_rngs<R: Reproducibility>() -> [TripleMixPrng<R>; 5] {
     use core::simd::Simd;
     use rand::rngs::SysRng;
 
-    const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([4, 3, 2, 1]);
+    const SMALLEST_DISTINCT_POSITIVE_DESCENDING: Simd64 = Simd::from_array([7, 5, 3, 1]);
     const LARGEST_DISTINCT: Simd64 =
-        Simd::from_array([u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX]);
+        Simd::from_array([u64::MAX - 6, u64::MAX - 4, u64::MAX - 2, u64::MAX]);
     let rng1 = TripleMixPrng::almost_all_zeroes_state();
     let rng2 = TripleMixPrng::from_core(TripleMixSimdCore {
-        xr0: Simd::splat(0),
-        xr1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
+        pcg_state_lo: Simd::splat(0),
+        pcg_state_hi: Simd::splat(0),
+        pcg_inc_lo: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
+        pcg_inc_hi: Simd::splat(0),
         tm0: Simd::splat(0),
         tm1: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
         mwc_state: Simd::splat(0),
         mwc_carry: SMALLEST_DISTINCT_POSITIVE_DESCENDING,
     });
     let rng3 = TripleMixPrng::from_core(TripleMixSimdCore {
-        xr0: Simd::splat(u64::MAX),
-        xr1: LARGEST_DISTINCT,
+        pcg_state_lo: Simd::splat(u64::MAX),
+        pcg_state_hi: Simd::splat(u64::MAX),
+        pcg_inc_lo: LARGEST_DISTINCT,
+        pcg_inc_hi: Simd::splat(u64::MAX),
         tm0: Simd::splat(u64::MAX),
         tm1: LARGEST_DISTINCT,
         mwc_state: TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(2),

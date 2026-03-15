@@ -6,11 +6,11 @@ use core::hint::cold_path;
 use core::marker::PhantomData;
 use core::simd::Simd;
 use core::simd::cmp::SimdPartialEq;
-use std::simd::cmp::SimdPartialOrd;
 use generic_array::GenericArray;
 use rand::RngExt;
 use rand_core::SeedableRng;
 use rand_core::block::BlockRng;
+use std::simd::cmp::SimdPartialOrd;
 use tiny_keccak::{Hasher, IntoXof, Kmac, Xof};
 use typenum::U;
 
@@ -104,8 +104,10 @@ impl<R: Reproducibility> SeedableRng for TripleMixPrng<R> {
 impl<R: Reproducibility> TripleMixPrng<R> {
     #[inline(always)]
     fn permute(base: &Kmac, tweak: u128) -> TripleMixSimdCore {
-        let mut xr0 = Simd64::splat(0);
-        let mut xr1 = Simd64::splat(0);
+        let mut pcg_state_lo = Simd64::splat(0);
+        let mut pcg_state_hi = Simd64::splat(0);
+        let mut pcg_inc_lo = Simd64::splat(0);
+        let mut pcg_inc_hi = Simd64::splat(0);
         let mut tm0 = Simd64::splat(0);
         let mut tm1 = Simd64::splat(0);
         let mut mwc_state = Simd64::splat(0);
@@ -116,20 +118,22 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             round_kmac.update(&R::u64_as_bytes(round));
 
             // Update KMAC from right half
-            let mut buffer = [0u64; 12];
+            let mut buffer = [0u64; 16];
             // This loop looks scalar, but modern LLVM will see
             // the fixed 128-bit extract pattern and emit VEXTRACTI128
             // or VPERM2I128 directly into the buffer.
-            buffer[0..2].copy_from_slice(&xr0.as_array()[2..4]);
-            buffer[2..4].copy_from_slice(&xr1.as_array()[2..4]);
-            buffer[4..6].copy_from_slice(&tm0.as_array()[2..4]);
-            buffer[6..8].copy_from_slice(&tm1.as_array()[2..4]);
-            buffer[8..10].copy_from_slice(&mwc_state.as_array()[2..4]);
-            buffer[10..12].copy_from_slice(&mwc_carry.as_array()[2..4]);
+            buffer[0..2].copy_from_slice(&pcg_state_lo.as_array()[2..4]);
+            buffer[2..4].copy_from_slice(&pcg_state_hi.as_array()[2..4]);
+            buffer[4..6].copy_from_slice(&pcg_inc_lo.as_array()[2..4]);
+            buffer[6..8].copy_from_slice(&pcg_inc_hi.as_array()[2..4]);
+            buffer[8..10].copy_from_slice(&tm0.as_array()[2..4]);
+            buffer[10..12].copy_from_slice(&tm1.as_array()[2..4]);
+            buffer[12..14].copy_from_slice(&mwc_state.as_array()[2..4]);
+            buffer[14..16].copy_from_slice(&mwc_carry.as_array()[2..4]);
             round_kmac.update(R::cast_u64_slice_as_u8(&buffer).as_ref());
 
             let mut reader = round_kmac.into_xof();
-            let mut f_out = [0u8; 96];
+            let mut f_out = [0u8; 128];
             reader.squeeze(&mut f_out);
 
             // Xor into left half
@@ -138,19 +142,25 @@ impl<R: Reproducibility> TripleMixPrng<R> {
             let d0 = Simd::from_slice(&data.as_ref()[0..4]); // words 0,1,2,3
             let d1 = Simd::from_slice(&data.as_ref()[4..8]); // words 4,5,6,7
             let d2 = Simd::from_slice(&data.as_ref()[8..12]); // words 8,9,10,11
-            xr0 ^= d0 & mask;
+            let d3 = Simd::from_slice(&data.as_ref()[12..16]); // words 12,13,14,15
+            pcg_state_lo ^= d0 & mask;
             // Use a swizzle to get words 2,3 into lanes 0,1
-            xr1 ^= d0.rotate_elements_left::<2>() & mask;
+            pcg_state_hi ^= d0.rotate_elements_left::<2>() & mask;
 
-            tm0 ^= d1 & mask;
-            tm1 ^= d1.rotate_elements_left::<2>() & mask;
+            pcg_inc_lo ^= d1 & mask;
+            pcg_inc_hi ^= d1.rotate_elements_left::<2>() & mask;
 
-            mwc_state ^= d2 & mask;
-            mwc_carry ^= d2.rotate_elements_left::<2>() & mask;
+            tm0 ^= d2 & mask;
+            tm1 ^= d2.rotate_elements_left::<2>() & mask;
+
+            mwc_state ^= d3 & mask;
+            mwc_carry ^= d3.rotate_elements_left::<2>() & mask;
 
             // Swap: Lanes 0,1 <-> Lanes 2,3
-            xr0 = xr0.rotate_elements_left::<2>();
-            xr1 = xr1.rotate_elements_left::<2>();
+            pcg_state_lo = pcg_state_lo.rotate_elements_left::<2>();
+            pcg_state_hi = pcg_state_hi.rotate_elements_left::<2>();
+            pcg_inc_lo = pcg_inc_lo.rotate_elements_left::<2>();
+            pcg_inc_hi = pcg_inc_hi.rotate_elements_left::<2>();
             tm0 = tm0.rotate_elements_left::<2>();
             tm1 = tm1.rotate_elements_left::<2>();
             mwc_state = mwc_state.rotate_elements_left::<2>();
@@ -158,9 +168,12 @@ impl<R: Reproducibility> TripleMixPrng<R> {
         }
 
         tm0 &= Simd::splat(TINYMT64_LANE_MASK);
+        pcg_inc_lo |= Simd::splat(1);
         TripleMixSimdCore {
-            xr0,
-            xr1,
+            pcg_state_lo,
+            pcg_state_hi,
+            pcg_inc_lo,
+            pcg_inc_hi,
             tm0,
             tm1,
             mwc_state,
@@ -171,7 +184,10 @@ impl<R: Reproducibility> TripleMixPrng<R> {
     #[inline(always)]
     fn is_distinct(a: &TripleMixSimdCore, b: &TripleMixSimdCore) -> bool {
         // Simple distinctness check: Child state != Parent state in any lane combination
-        !((a.xr0.simd_eq(b.xr0) & a.xr1.simd_eq(b.xr1))
+        !((a.pcg_state_lo.simd_eq(b.pcg_state_lo)
+            & a.pcg_state_hi.simd_eq(b.pcg_state_hi)
+            & a.pcg_inc_lo.simd_eq(b.pcg_inc_lo)
+            & a.pcg_inc_hi.simd_eq(b.pcg_inc_hi))
             | (a.tm0.simd_eq(b.tm0) & a.tm1.simd_eq(b.tm1))
             | (a.mwc_state.simd_eq(b.mwc_state) & a.mwc_carry.simd_eq(b.mwc_carry)))
         .any()
@@ -234,13 +250,14 @@ impl TripleMixSimdCore {
     #[inline(always)]
     pub(crate) fn is_valid(self: &TripleMixSimdCore) -> bool {
         // Dead-state check
-        if ((self.xr0 | self.xr1).simd_eq(Simd::splat(0))
-            | (self.tm0 | self.tm1).simd_eq(Simd::splat(0))
+        if ((self.tm0 | self.tm1).simd_eq(Simd::splat(0))
             | (self.mwc_state | self.mwc_carry).simd_eq(Simd::splat(0))
             | self.mwc_state.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
             | self.mwc_carry.simd_ge(TripleMixSimdCore::MCG_MULTIPLIERS)
-            | (self.mwc_state & self.mwc_carry).simd_eq(TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1))
-        ).any()
+            | (self.mwc_state & self.mwc_carry)
+                .simd_eq(TripleMixSimdCore::MCG_MULTIPLIERS - Simd::splat(1))
+            | (self.pcg_inc_lo & Simd::splat(1)).simd_ne(Simd::splat(1)))
+        .any()
         {
             cold_path();
             return false;
@@ -250,15 +267,18 @@ impl TripleMixSimdCore {
         // We check all 3 possible shift-offsets (1, 2, 3).
         macro_rules! find_similar {
             ($shift:expr) => {
-                let diff_xr = (self.xr0 ^ self.xr0.rotate_elements_left::<$shift>())
-                    | (self.xr1 ^ self.xr1.rotate_elements_left::<$shift>());
+                let diff_pcg = (self.pcg_state_lo
+                    ^ self.pcg_state_lo.rotate_elements_left::<$shift>())
+                    | (self.pcg_state_hi ^ self.pcg_state_hi.rotate_elements_left::<$shift>())
+                    | (self.pcg_inc_lo ^ self.pcg_inc_lo.rotate_elements_left::<$shift>())
+                    | (self.pcg_inc_hi ^ self.pcg_inc_hi.rotate_elements_left::<$shift>());
                 let diff_tm = (self.tm0 ^ self.tm0.rotate_elements_left::<$shift>())
                     | (self.tm1 ^ self.tm1.rotate_elements_left::<$shift>());
                 let diff_mcg = (self.mwc_state ^ self.mwc_state.rotate_elements_left::<$shift>())
                     | (self.mwc_carry ^ self.mwc_carry.rotate_elements_left::<$shift>());
 
                 // A lane is similar if ANY sub-generator matches the rotated version
-                if (diff_xr.simd_eq(Simd::splat(0))
+                if (diff_pcg.simd_eq(Simd::splat(0))
                     | diff_tm.simd_eq(Simd::splat(0))
                     | diff_mcg.simd_eq(Simd::splat(0)))
                 .any()
@@ -373,7 +393,7 @@ mod tests {
         let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 0);
 
         // Ensure same seed + same tweak = identical state
-        assert_eq!(p1.xr0.as_array(), p2.xr0.as_array());
+        assert_eq!(p1.pcg_state_lo.as_array(), p2.pcg_state_lo.as_array());
         assert_eq!(p1.tm1.as_array(), p2.tm1.as_array());
     }
 
@@ -384,7 +404,7 @@ mod tests {
         let p2 = TripleMixPrng::<NotReproducible>::permute(&base, 1);
 
         // Different tweaks MUST produce different states
-        assert_ne!(p1.xr0.as_array(), p2.xr0.as_array());
+        assert_ne!(p1.pcg_state_lo.as_array(), p2.pcg_state_lo.as_array());
     }
 
     #[test]
@@ -397,8 +417,10 @@ mod tests {
         for i in 0..1000 {
             let p = TripleMixPrng::<NotReproducible>::permute(&base, i);
             let state_snapshot = (
-                p.xr0.as_array().clone(),
-                p.xr1.as_array().clone(),
+                p.pcg_state_lo.as_array().clone(),
+                p.pcg_state_hi.as_array().clone(),
+                p.pcg_inc_lo.as_array().clone(),
+                p.pcg_inc_hi.as_array().clone(),
                 p.tm0.as_array().clone(),
                 p.tm1.as_array().clone(),
             );
@@ -419,14 +441,15 @@ mod tests {
         let p1 = TripleMixPrng::<NotReproducible>::permute(&base1, 0);
         let p2 = TripleMixPrng::<NotReproducible>::permute(&base2, 0);
 
-        // Count differing bits in xr0 across all lanes
+        // Count differing bits in pcg_state_lo across all lanes
         let mut diff_bits = 0;
         for i in 0..4 {
-            diff_bits += (p1.xr0.as_array()[i] ^ p2.xr0.as_array()[i]).count_ones();
+            diff_bits +=
+                (p1.pcg_state_lo.as_array()[i] ^ p2.pcg_state_lo.as_array()[i]).count_ones();
         }
 
         // Avalanche effect: ~50% of bits should flip.
-        // For 256 bits of xr0, we expect ~128. Threshold at 80 for safety.
+        // For 256 bits of pcg_state_lo, we expect ~128. Threshold at 80 for safety.
         assert!(
             diff_bits > 80,
             "Poor diffusion: only {} bits flipped",
@@ -455,7 +478,7 @@ mod tests {
         // Since it's a 4-round Feistel, if we started with 0,
         // the final state should be high-entropy in all lanes.
         for i in 0..4 {
-            assert_ne!(p.xr0.as_array()[i], 0, "Lane {} remained zero", i);
+            assert_ne!(p.pcg_state_lo.as_array()[i], 0, "Lane {} remained zero", i);
         }
     }
 
