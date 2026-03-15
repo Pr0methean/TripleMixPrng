@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773559255884,
+  "lastUpdate": 1773559301400,
   "repoUrl": "https://github.com/Pr0methean/TripleMixPrng",
   "entries": {
     "Rust Benchmark": [
@@ -38688,6 +38688,198 @@ window.BENCHMARK_DATA = {
             "value": 8351,
             "range": "± 26",
             "unit": "cycles/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4961925+Pr0methean@users.noreply.github.com",
+            "name": "Chris Hennick",
+            "username": "Pr0methean"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0493cffc214473a5c77b0ee4ff677953c1e60ec3",
+          "message": "Replace Xoroshiro with PCG (#66)\n\n* WIP: replace Xoroshiro with LCG\n\n* WIP: implement jump\n\n* Replace Xoroshiro with LCG (via Gemini 3.1 Pro)\n\n* WIP: strengthen test_avalanche by allowing some tests to run on PCG increments\n\n* Simplify mix function and clean up unused code\n\n* Update reproducibility test output\n\n* Bug fix (via Gemini 3.1 Pro)\n\n* Update reproducibility test output\n\n* Improve interleaving of instructions\n\n* Switch back to a simpler mix()\n\n* cargo fmt\n\n* Optimize fill_blocks to reduce register pressure\n\n* Update reference output (last commit fixed a bug in tm_mask initialization)\n\n* WIP: tweaks\n\n* Add tests for mul_small (via proptest)\n\n* Add tests for mul_small (via Gemini 3 Flash)\n\n* Tweaks to improve mixing and fix test_avalanche failure (via Gemini 3 Flash)\n\n* Interleave instructions\n\n* Fix jump-ahead and refine mixer (via Gemini 3 Flash)\n\n* Fixes and more interleaving, via Gemini 3 Flash\n\n* Fix statistical test failures\n\n* Fix test_bit_correlations_and_tranistions failure\n\n* Eliminate one line from mix() that tests pass without\n\n* Eliminate one line from mix() that tests pass without\n\n* Update reference output\n\n* Move some rotl calls so that they start earlier in their round\n\n* Update reference output",
+          "timestamp": "2026-03-15T00:00:47-07:00",
+          "tree_id": "6d63131bb38469c40b77e0f33c138bc5e7f3f251",
+          "url": "https://github.com/Pr0methean/TripleMixPrng/commit/0493cffc214473a5c77b0ee4ff677953c1e60ec3"
+        },
+        "date": 1773559294805,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 0)/TripleMixPrng",
+            "value": 709482,
+            "range": "± 12431",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 0)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 719954,
+            "range": "± 10290",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 1)/TripleMixPrng",
+            "value": 708655,
+            "range": "± 6064",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 1)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 864481,
+            "range": "± 199272",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 2)/TripleMixPrng",
+            "value": 709229,
+            "range": "± 9914",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 2)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 858625,
+            "range": "± 15689",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 3)/TripleMixPrng",
+            "value": 708491,
+            "range": "± 6246",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 3)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 860345,
+            "range": "± 69471",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 4)/TripleMixPrng",
+            "value": 709674,
+            "range": "± 13026",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 4)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 859269,
+            "range": "± 27632",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 5)/TripleMixPrng",
+            "value": 708086,
+            "range": "± 6284",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 5)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 858841,
+            "range": "± 66420",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 6)/TripleMixPrng",
+            "value": 709227,
+            "range": "± 22685",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 6)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 859629,
+            "range": "± 13772",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 7)/TripleMixPrng",
+            "value": 708701,
+            "range": "± 11396",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: fill_bytes 1MB (misalignment: 7)/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 857131,
+            "range": "± 55118",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: next_u64/TripleMixPrng",
+            "value": 55,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: next_u64/TripleMixPrng with CrossPlatform reproducibility",
+            "value": 55,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/8",
+            "value": 2341,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/16",
+            "value": 2354,
+            "range": "± 422",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/32",
+            "value": 2341,
+            "range": "± 41",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/64",
+            "value": 2341,
+            "range": "± 70",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/72",
+            "value": 2311,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/128",
+            "value": 2618,
+            "range": "± 49",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/216",
+            "value": 2570,
+            "range": "± 37",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/256",
+            "value": 2873,
+            "range": "± 145",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/from_seed/512",
+            "value": 3406,
+            "range": "± 293",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "aarch64:windows: Initialization/fork",
+            "value": 2924,
+            "range": "± 6",
+            "unit": "ns/iter"
           }
         ]
       }
