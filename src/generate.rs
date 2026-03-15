@@ -175,7 +175,7 @@ impl TripleMixSimdCore {
                 mwc_next_state,
                 pcg_output,
                 tm_out,
-                tm0_masked,
+                mwc_next_carry,
                 i_mixed,
             );
 
@@ -282,8 +282,6 @@ pub(crate) fn mix(
         ))
     }
 
-// rotl8 removed as it was unused
-
     #[inline(always)]
     fn rotl24(d: Simd64) -> Simd64 {
         let d_transmuted: u8x32 = cast(d);
@@ -308,11 +306,29 @@ pub(crate) fn mix(
         0x85839d6effbd7dc6,
         0xbbf73c790d94f79d,
     ]);
+    const AVALANCHE_MULTIPLIERS_1: Simd64 = Simd::from_array([
+        0xd6e8feb86659fd93,
+        0x881cf9e71fbdd5b9,
+        0xbf58476d1ce4e5b9,
+        0xcb79e64eccc0e578,
+    ]);
+    const AVALANCHE_MULTIPLIERS_2: Simd64 = Simd::from_array([
+        0xd1342543de82ef95,
+        0xa24baed4963ee407,
+        0x9fb21c651e98df25,
+        0xc2b2ae3d27d4eb4f,
+    ]);
     const AVALANCHE_MULTIPLIERS_3: Simd64 = Simd::from_array([
         0xe68e0860ce559b5b,
         0xbca6b7d7acc9d61b,
         0x94d049bb133111eb,
         0xbcf746f9ee677775,
+    ]);
+    const AVALANCHE_MULTIPLIERS_4: Simd64 = Simd::from_array([
+        0xb8fe6c3923a44bbd,
+        0x7c01812cf721ad1b,
+        0xded46de9839097d9,
+        0x7240a4a4b7b3671f
     ]);
     let i_mixed_1 = i + FEISTEL_CONSTANT_1;
     let i_mixed_2 = rotl24(i) ^ FEISTEL_CONSTANT_2;
@@ -327,21 +343,20 @@ pub(crate) fn mix(
     c = c + d; b ^= c; b = rotl16(b);
 
     // Cross-lane nonlinear mixing
-    a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_3);
-    d = rotl(d ^ a, 52);
+    a = a ^ rotl(c, 23);
+    d = rotl(d ^ b, 52);
 
-    // Round 2 - Cross-lane swizzled mixing (Parallelized paths)
-    let a2 = a + d.rotate_elements_left::<1>();
-    let c2 = c + b.rotate_elements_right::<2>();
-    let b2 = rotl(b ^ a2.rotate_elements_right::<1>(), 37);
-    let d2 = rotl(d ^ c2.rotate_elements_left::<1>(), 19);
+    // Round 2 - Cross-lane swizzled mixing
+    a = a + b.rotate_elements_left::<1>();
+    d = rotl(d ^ a.rotate_elements_right::<1>(), 37);
+    c = c + d.rotate_elements_right::<2>();
+    b = rotl(b ^ c.rotate_elements_left::<1>(), 19);
 
     // Deep Nonlinear Spread - All 4 multiplications are now independent
-    let m = AVALANCHE_MULTIPLIERS_3;
-    let ma = simd_wrapping_mul(a2 ^ b2, m);
-    let mc = simd_wrapping_mul(c2 ^ d2, m.rotate_elements_left::<2>());
-    let mb = simd_wrapping_mul(b2 ^ rotl(a2, 31), m.rotate_elements_left::<1>());
-    let md = simd_wrapping_mul(d2 ^ rotl(c2, 31), m.rotate_elements_left::<3>());
+    let ma = simd_wrapping_mul(a ^ b, AVALANCHE_MULTIPLIERS_1);
+    let mb = simd_wrapping_mul(b + rotl(a, 19), AVALANCHE_MULTIPLIERS_2);
+    let mc = simd_wrapping_mul(c + d, AVALANCHE_MULTIPLIERS_3);
+    let md = simd_wrapping_mul(d ^ rotl(c, 31), AVALANCHE_MULTIPLIERS_4);
 
     // Round 3 - Final cross-lane spread (Parallelized paths)
     let a3 = ma + mb.rotate_elements_left::<1>();
@@ -350,10 +365,10 @@ pub(crate) fn mix(
     let b3 = rotl(mb ^ c3.rotate_elements_left::<2>(), 11);
 
     // Symmetric but strong output combiners to satisfy bit independence tests
+    let bxd = b3 + d3;
     let axc = a3 ^ c3;
-    let bxd = b3 ^ d3;
-    let x = axc ^ rotl(b3 + d3, 17);
-    let y = bxd ^ rotl(a3 + c3, 41);
+    let y = bxd + rotl(a3 + d, 41);
+    let x = axc ^ rotl(b3 ^ c, 17);
 
     (x, y)
 }
