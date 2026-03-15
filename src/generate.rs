@@ -45,21 +45,6 @@ impl TripleMixSimdCore {
         0x9B3C_D8F1_E5A7_4D29,
     ]);
 
-    /// Advance the 128-bit state for all lanes: state = state * multiplier + inc
-    #[inline]
-    fn pcg_advance(&mut self) {
-        // 128-bit multiplication: (state_high, state_low) * multiplier (per lane)
-        let (prod_high, prod_low) =
-            Self::mul128x64to128(self.pcg_state_hi, self.pcg_state_lo, Self::PCG_MULTIPLIERS);
-
-        // Add the 128-bit increment with carry propagation
-        let (new_low, carry) = Self::add128_with_carry(prod_low, self.pcg_inc_lo, Simd64::splat(0));
-        let (new_high, _) = Self::add128_with_carry(prod_high, self.pcg_inc_hi, carry);
-
-        self.pcg_state_lo = new_low;
-        self.pcg_state_hi = new_high;
-    }
-
     /// 128-bit multiplication by PER-LANE 64-bit multipliers using simd_mulsmall
     /// (high, low) = (a_high, a_low) * b (where b is per lane)
     ///
