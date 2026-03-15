@@ -45,21 +45,6 @@ impl TripleMixSimdCore {
         0x9B3C_D8F1_E5A7_4D29,
     ]);
 
-    /// Generate the next 4 random u64 values (one per lane)
-    pub fn pcg_next(&mut self) -> Simd64 {
-        // NumPy PCG64DXSM semantics:
-        // 1. Apply output function to CURRENT state
-        // 2. Then advance state: state = state * multiplier + inc
-
-        // Step 1: Generate output from current state
-        let output = self.dxsm_output(self.pcg_state_lo, self.pcg_state_hi);
-
-        // Step 2: Advance 128-bit state using PER-LANE multipliers
-        self.pcg_advance();
-
-        output
-    }
-
     /// Advance the 128-bit state for all lanes: state = state * multiplier + inc
     #[inline]
     fn pcg_advance(&mut self) {
@@ -117,28 +102,6 @@ impl TripleMixSimdCore {
         (sum, carry_out)
     }
 
-    /// DXSM output function applied to the 128-bit state before advancing
-    #[inline]
-    fn dxsm_output(&self, state_low: Simd64, state_high: Simd64) -> Simd64 {
-        // Standard DXSM output function (same for all lanes regardless of multiplier)
-
-        // XOR high and low to mix
-        let xorshifted = state_high ^ state_low;
-
-        const PCG_OUTPUT_MULTIPLIERS: Simd64 = Simd::from_array([
-            0xd6e8feb86659fd93,
-            0x881cf9e71fbdd5b9,
-            0xbf58476d1ce4e5b9,
-            0x94d049bb133111eb,
-        ]);
-        // Multiply and rotate (rotate right by state_low >> 59)
-        let rot = state_low >> 59;
-        let m = simd_wrapping_mul(xorshifted, PCG_OUTPUT_MULTIPLIERS);
-
-        // Rotate right by 'rot' bits
-        (m >> rot) | (m << (Simd64::splat(64) - rot))
-    }
-
     pub(crate) fn almost_all_zeroes_core() -> TripleMixSimdCore {
         const SMALLEST_2BIT_POSITIVE: [u64; SIMD_WIDTH] = [3, 5, 7, 9];
         TripleMixSimdCore {
@@ -161,6 +124,7 @@ impl TripleMixSimdCore {
 
         let pcg_inc_lo = self.pcg_inc_lo;
         let pcg_inc_hi = self.pcg_inc_hi;
+        let i_mixed = pcg_inc_hi + pcg_inc_lo;
         let mut pcg_state_lo = self.pcg_state_lo;
         let mut pcg_state_hi = self.pcg_state_hi;
         let mut tm0 = self.tm0;
@@ -168,49 +132,53 @@ impl TripleMixSimdCore {
         let mut mwc_state = self.mwc_state;
         let mut mwc_carry = self.mwc_carry;
 
+        const PCG_OUTPUT_MULTIPLIERS: Simd64 = Simd::from_array([
+            0xd6e8feb86659fd93,
+            0x881cf9e71fbdd5b9,
+            0xbf58476d1ce4e5b9,
+            0x94d049bb133111eb,
+        ]);
         for block in blocks {
-            tm0 &= Simd::splat(TINYMT64_LANE_MASK); // TinyMT64 output tempering
-            let (prod_high, prod_low) =
-                Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS); // PCG update
-            // 128-bit MWC:
-            // c =
-            // w' = w * (lane_constant << 64 + 1) + inc
-            //
-            // This differs from an LCG in two ways:
-            // (1) high_product is computed from w_lo, not next_w_lo
-            // (2) w_hi is updated after output, but next_w_lo is output already updated
-            let (kx_lo, kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS); // MWC update
-            let pcg_output = self.dxsm_output(pcg_state_lo, pcg_state_hi); // PCG output
-            let mut x = tm0 ^ tm1; // TinyMT64 update
-            let (new_low, carry) = Self::add128_with_carry(prod_low, pcg_inc_lo, Simd64::splat(0)); // PCG update
-            let next_state = mwc_carry - kx_lo; // MCG update
-            x ^= x << Simd::splat(12); // TinyMT64 output tempering
-            let (new_high, _) = Self::add128_with_carry(prod_high, pcg_inc_hi, carry); // PCG update
-            let mut ty = tm0 + tm1; // TinyMT64 update
-            pcg_state_lo = new_low; // PCG update
-            x ^= x >> Simd::splat(32); // TinyMT64 output tempering
-            pcg_state_hi = new_high; // PCG update
-            ty ^= tm0 >> Simd::splat(8); // TinyMT64 update
-            x ^= x << Simd::splat(32); // TinyMT64 output tempering
+            let (pcg_prod_hi, pcg_prod_lo) =
+                Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
+            let (mwc_kx_lo, mwc_kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS);
+            let (pcg_next_state_lo, pcg_carry) = Self::add128_with_carry(pcg_prod_lo, pcg_inc_lo, Simd::splat(0));
+            let pcg_xorshifted = pcg_state_hi ^ pcg_state_lo;
+            let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry); // PCG
+            let pcg_rot = pcg_state_lo >> 59;
+            let mwc_next_carry = mwc_state - mwc_kx_hi;
+            pcg_state_lo = pcg_next_state_lo;
+            pcg_state_hi = pcg_next_state_hi;
+            let pcg_m = simd_wrapping_mul(pcg_xorshifted, PCG_OUTPUT_MULTIPLIERS);
+            let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
+            let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
+            let mwc_next_state = mwc_carry - mwc_kx_lo;
+            let tm_x = tm0_masked ^ tm1;
+            mwc_state = mwc_next_state;
+            let tm_mask = (tm_x & Simd::splat(1)).wrapping_neg();
+            let mwc_borrow = mwc_carry.simd_lt(mwc_kx_lo).to_simd().cast();
+            let tm_next_0 = tm1 ^ (tm_mask & Simd::splat(Self::TINYMT_MAT1));
+            let mwc_next_carry = mwc_next_carry + mwc_borrow;
+            let tm_y = tm0_masked + tm1;
+            let tm_x = tm_x ^ (tm_x << Simd::splat(12));
+            tm0 = tm_next_0;
+            let tm_y = tm_y ^ (tm0_masked >> Simd::splat(8));
+            let tm_x = tm_x ^ (tm_x >> Simd::splat(32));
+            let tm_out = tm_y ^ ((tm_y & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
+            let tm_x = tm_x ^ (tm_x << Simd::splat(32));
 
-            let t_out =
-                ty ^ ((ty & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT)); // TinyMT output
-            let i_mixed = pcg_inc_hi + pcg_inc_lo;
-            x ^= x << Simd::splat(11); // TinyMT64 output tempering
+            let (out0, out1) = mix(mwc_carry, pcg_output, tm_out, mwc_state, i_mixed);
 
-            // Mixing
-            let (out0, out1) = mix(mwc_carry, pcg_output, t_out, mwc_state, i_mixed);
-            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]); // output
-            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]); // output
-            let borrow = mwc_carry.simd_lt(kx_lo).to_simd().cast(); // MCG update: false = 0, true = u64::MAX
-            let mask = (x & Simd::splat(1)).wrapping_neg(); // TinyMT64 update
-            let next_carry_part = mwc_state - kx_hi; // MCG update
-            tm0 = tm1 ^ (mask & Simd::splat(Self::TINYMT_MAT1)); // TinyMT64 update
-            let next_carry = next_carry_part + borrow; // MCG update: adding u64::MAX == subtracting 1
-            tm1 = x ^ (mask & Simd::splat(Self::TINYMT_MAT2)); // TinyMT64 update
-            mwc_state = next_state; // MCG update
-            mwc_carry = next_carry; // MCG update
+            let tm_x = tm_x ^ (tm_x << Simd::splat(11));  // Final x for TinyMT
+            let tm_next_1 = tm_x ^ (tm_mask & Simd::splat(Self::TINYMT_MAT2));
+            mwc_carry = mwc_next_carry;
+            out0.copy_to_slice(&mut block[0..SIMD_WIDTH]);
+            out1.copy_to_slice(&mut block[SIMD_WIDTH..(2 * SIMD_WIDTH)]);
+
+            // Update state
+            tm1 = tm_next_1;
         }
+
         self.pcg_state_lo = pcg_state_lo;
         self.pcg_state_hi = pcg_state_hi;
         self.tm0 = tm0;
