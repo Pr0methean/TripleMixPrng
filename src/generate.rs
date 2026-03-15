@@ -349,22 +349,24 @@ pub(crate) fn mix(
     b = rotl(b ^ c.rotate_elements_left::<1>(), 19);
 
     // Deep Nonlinear Spread - All 4 multiplications are now independent
-    let ma = simd_wrapping_mul(a ^ b, AVALANCHE_MULTIPLIERS_1);
-    let mb = simd_wrapping_mul(b + rotl(a, 19), AVALANCHE_MULTIPLIERS_2);
+    let ma = simd_wrapping_mul(a ^ rotl(b, 19), AVALANCHE_MULTIPLIERS_1);
+    let mb = simd_wrapping_mul(b + rotl(a, 31), AVALANCHE_MULTIPLIERS_2);
     let mc = simd_wrapping_mul(c + d, AVALANCHE_MULTIPLIERS_3);
-    let md = simd_wrapping_mul(d ^ rotl(c, 31), AVALANCHE_MULTIPLIERS_4);
+    let md = simd_wrapping_mul(d ^ c, AVALANCHE_MULTIPLIERS_4);
 
     // Round 3 - Final cross-lane spread
-    let a3 = ma + mb.rotate_elements_left::<1>();
+    let a3 = rotl(ma + mb.rotate_elements_left::<1>(), 43);
     let c3 = mc + md.rotate_elements_right::<1>();
-    let d3 = rotl(md ^ a3.rotate_elements_right::<2>(), 43);
+    let d3 = md ^ a3.rotate_elements_right::<2>();
     let b3 = rotl(mb ^ c3.rotate_elements_left::<2>(), 11);
 
-    // Output combiners
+    // Output combiners (note reuse of d from round 2!)
+    let adr = rotl(a3 + d, 41);
+    let bcr = rotl(b3 ^ c3, 17);
     let bxd = b3 + d3;
     let axc = a3 ^ c3;
-    let y = bxd + rotl(a3 + d, 41);
-    let x = axc ^ rotl(b3 ^ c, 17);
+    let y = bxd + adr;
+    let x = axc ^ bcr;
 
     (x, y)
 }
