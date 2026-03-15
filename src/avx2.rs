@@ -80,6 +80,7 @@ unsafe fn mul_small_avx2(x: __m256i, kvec: __m256i) -> (__m256i, __m256i) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// Helper: check that mullo(a, b) == element-wise a[i].wrapping_mul(b[i])
     fn assert_mullo_eq(a_arr: [u64; 4], b_arr: [u64; 4]) {
@@ -204,5 +205,23 @@ mod tests {
     #[test]
     fn test_mulsmall() {
         assert_eq!(mul_small(Simd64::splat((1 << 63) + 1), Simd64::splat((1 << 32) - 1)), (Simd64::splat((1 << 63) | (1 << 32) - 1), Simd64::splat((1 << 31) - 1)));
+    }
+
+    proptest! {
+        #[test]
+        fn test_mul_small_proptest(a in any::<[u64; 4]>(), b in any::<[u32; 4]>()) {
+            let a_simd = Simd64::from_array(a);
+            let b_u64 = b.map(|x| x as u64);
+            let b_simd = Simd64::from_array(b_u64);
+            let (lo, hi) = mul_small(a_simd, b_simd);
+            let lo_arr = lo.to_array();
+            let hi_arr = hi.to_array();
+
+            for i in 0..4 {
+                let expected = (a[i] as u128) * (b_u64[i] as u128);
+                let actual = (lo_arr[i] as u128) | ((hi_arr[i] as u128) << 64);
+                assert_eq!(actual, expected, "mul_small failed for a={} b={}", a[i], b_u64[i]);
+            }
+        }
     }
 }

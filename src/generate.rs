@@ -367,7 +367,7 @@ mod tests {
     use gf2::{BitMatrix, BitStore};
     use hypors::chi_square::goodness_of_fit;
     use itertools::Itertools;
-    use proptest::{prop_assert, proptest};
+    use proptest::{prop_assert, proptest, prelude::any};
     use rand::{RngExt, rng};
     use rand_core::{Rng, SeedableRng};
     use statrs::distribution::{Binomial, Discrete, DiscreteCDF};
@@ -606,6 +606,22 @@ mod tests {
             assert!(mean <= 258.0, "Mean weight {mean:.02} too high");
             assert!(stdev >= 11.0, "Stdev weight {stdev:.02} too low");
             assert!(stdev <= 14.0, "Stdev weight {stdev:.02} too high");
+        }
+
+        #[test]
+        fn test_simd_mulsmall_proptest(a in any::<[u64; 4]>(), b in any::<[u32; 4]>()) {
+            let a_simd = Simd64::from_array(a);
+            let b_u64 = b.map(|x| x as u64);
+            let b_simd = Simd64::from_array(b_u64);
+            let (lo, hi) = super::simd_mulsmall(a_simd, b_simd);
+            let lo_arr = lo.to_array();
+            let hi_arr = hi.to_array();
+
+            for i in 0..4 {
+                let expected = (a[i] as u128) * (b_u64[i] as u128);
+                let actual = (lo_arr[i] as u128) | ((hi_arr[i] as u128) << 64);
+                assert_eq!(actual, expected, "simd_mulsmall failed for a={} b={}", a[i], b_u64[i]);
+            }
         }
     }
 
