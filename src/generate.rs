@@ -128,13 +128,13 @@ impl TripleMixSimdCore {
                 Self::mul128x64to128(pcg_state_hi, pcg_state_lo, Self::PCG_MULTIPLIERS);
             let (mwc_kx_lo, mwc_kx_hi) = simd_mulsmall(mwc_state, Self::MWC_MULTIPLIER_COMPLEMENTS);
             let (pcg_next_state_lo, pcg_carry) = Self::add128_with_carry(pcg_prod_lo, pcg_inc_lo, Simd::splat(0));
-            let pcg_xorshifted = pcg_state_hi ^ pcg_state_lo;
             let (pcg_next_state_hi, _) = Self::add128_with_carry(pcg_prod_hi, pcg_inc_hi, pcg_carry); // PCG
-            let pcg_rot = pcg_state_lo >> 59;
-            let pcg_m = simd_wrapping_mul(pcg_xorshifted, PCG_OUTPUT_MULTIPLIERS);
-            let mwc_next_carry = mwc_state - mwc_kx_hi;
             pcg_state_lo = pcg_next_state_lo;
             pcg_state_hi = pcg_next_state_hi;
+            let pcg_x = pcg_state_hi ^ pcg_state_lo;
+            let pcg_m = simd_wrapping_mul(pcg_x ^ (pcg_x >> 31), PCG_OUTPUT_MULTIPLIERS);
+            let pcg_rot = pcg_x >> 59;
+            let mwc_next_carry = mwc_state - mwc_kx_hi;
             let pcg_output = (pcg_m >> pcg_rot) | (pcg_m << (Simd64::splat(64) - pcg_rot));
             let tm0_masked = tm0 & Simd::splat(TINYMT64_LANE_MASK);
             let mwc_next_state = mwc_carry - mwc_kx_lo;
@@ -152,7 +152,7 @@ impl TripleMixSimdCore {
             let tm_out = tm_y ^ ((tm_y & Simd::splat(1)).wrapping_neg() & Simd::splat(Self::TINYMT_TMAT));
             let tm_x = tm_x ^ (tm_x << Simd::splat(32));
 
-            let (out0, out1) = mix(mwc_carry, pcg_output, tm_out, mwc_state, i_mixed);
+            let (out0, out1) = mix(mwc_next_carry, pcg_output, tm_out, mwc_state, i_mixed);
 
             let tm_x = tm_x ^ (tm_x << Simd::splat(11));  // Final x for TinyMT
             let tm_next_1 = tm_x ^ (tm_mask & Simd::splat(Self::TINYMT_MAT2));
@@ -257,17 +257,7 @@ pub(crate) fn mix(
         ))
     }
 
-    #[inline(always)]
-    fn rotl8(d: Simd64) -> Simd64 {
-        let d_transmuted: u8x32 = cast(d);
-        cast(simd_swizzle!(
-            d_transmuted,
-            [
-                7, 0, 1, 2, 3, 4, 5, 6, 15, 8, 9, 10, 11, 12, 13, 14, 23, 16, 17, 18, 19, 20, 21,
-                22, 31, 24, 25, 26, 27, 28, 29, 30
-            ]
-        ))
-    }
+// rotl8 removed as it was unused
 
     #[inline(always)]
     fn rotl24(d: Simd64) -> Simd64 {
@@ -307,40 +297,33 @@ pub(crate) fn mix(
     let mut b = t ^ i_mixed_1;
     let mut c = x_in + i_mixed_2;
 
-    // Round 1 - Combined operations
-    a += b;
-    d ^= a;
-    d = rotl24(d);
-    c += d;
-    b ^= c;
-    b = rotl16(b);
+    // Round 1 - Full ARX (Lane local)
+    a = a + b; d ^= a; d = rotl24(d);
+    c = c + d; b ^= c; b = rotl16(b);
 
-    // Cross-mix with multiplication (keeps per-lane constants)
+    // Cross-lane nonlinear mixing
     a = simd_wrapping_mul(a ^ rotl(c, 23), AVALANCHE_MULTIPLIERS_3);
     d = rotl(d ^ a, 52);
 
-    c += rotl(b, 33);
-    b = rotl8(b ^ c);
+    // Round 2 - Cross-lane swizzled mixing
+    a = a + b.rotate_elements_left::<1>();
+    d = rotl(d ^ a.rotate_elements_right::<1>(), 37);
+    c = c + d.rotate_elements_right::<2>();
+    b = rotl(b ^ c.rotate_elements_left::<1>(), 19);
 
-    // Permutation with per-lane swizzles
-    let c_rot = rotl(c.rotate_elements_left::<1>(), 17);
-    let a_rot = rotl(a.rotate_elements_right::<1>(), 29);
+    // Deep Nonlinear Spread
+    a = simd_wrapping_mul(a ^ rotl(d, 32), AVALANCHE_MULTIPLIERS_3);
+    c = simd_wrapping_mul(c ^ rotl(b, 32), AVALANCHE_MULTIPLIERS_3.rotate_elements_left::<2>());
 
-    // Round 2 - Efficient mixing
-    a += b;
-    d ^= a;
-    b ^= c_rot;
-    d = rotl8(d);
-    c += d.rotate_elements_right::<2>();
-    d += a_rot;
+    // Round 3 - Robust cross-lane spread
+    a = a + c.rotate_elements_left::<1>();
+    d = rotl(d ^ a.rotate_elements_right::<1>(), 43);
+    b = b + d.rotate_elements_left::<2>();
+    c = rotl(c ^ b.rotate_elements_right::<1>(), 11);
 
-    // Output mixing
-    let acr = rotl(a + c, 41);
-    let axc = a ^ c;
-    let bdr = rotl(b + d, 17);
-    let bxd = b ^ d;
-    let x = axc ^ bdr;
-    let y = bxd ^ acr;
+    // Diversified Output mixing
+    let x = (a + c) ^ rotl(b + d, 17);
+    let y = (a ^ d) ^ rotl(b ^ c, 41);
 
     (x, y)
 }
@@ -905,7 +888,7 @@ mod tests {
             );
             assert!(
                 low_avalanche_p_value > 0.001,
-                "Too many low-avalanche results"
+                "Too many low-avalanche results. Worst offender: Field {min_field} lane {min_lane} bit {min_bit} on iteration {min_iter} with {min_flips} flips."
             );
             assert!(
                 min_flips as usize >= 16 * OUTPUT_LEN,
