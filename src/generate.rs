@@ -342,9 +342,6 @@ pub(crate) fn mix(
     a = a + b; d ^= a; d = rotl24(d);
     c = c + d; b ^= c; b = rotl16(b);
 
-    // Cross-lane nonlinear mixing
-    d = rotl(d ^ b, 49);
-
     // Round 2 - Cross-lane swizzled mixing
     a = a + b.rotate_elements_left::<1>();
     d = rotl(d ^ a.rotate_elements_right::<1>(), 37);
