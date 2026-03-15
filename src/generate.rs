@@ -343,8 +343,8 @@ pub(crate) fn mix(
     c = c + d; b ^= c; b = rotl16(b);
 
     // Cross-lane nonlinear mixing
-    a = a ^ rotl(c, 23);
-    d = rotl(d ^ b, 52);
+    a = a ^ rotl24(c);
+    d = rotl(d ^ b, 49);
 
     // Round 2 - Cross-lane swizzled mixing
     a = a + b.rotate_elements_left::<1>();
@@ -358,13 +358,13 @@ pub(crate) fn mix(
     let mc = simd_wrapping_mul(c + d, AVALANCHE_MULTIPLIERS_3);
     let md = simd_wrapping_mul(d ^ rotl(c, 31), AVALANCHE_MULTIPLIERS_4);
 
-    // Round 3 - Final cross-lane spread (Parallelized paths)
+    // Round 3 - Final cross-lane spread
     let a3 = ma + mb.rotate_elements_left::<1>();
     let c3 = mc + md.rotate_elements_right::<1>();
     let d3 = rotl(md ^ a3.rotate_elements_right::<2>(), 43);
     let b3 = rotl(mb ^ c3.rotate_elements_left::<2>(), 11);
 
-    // Symmetric but strong output combiners to satisfy bit independence tests
+    // Output combiners
     let bxd = b3 + d3;
     let axc = a3 ^ c3;
     let y = bxd + rotl(a3 + d, 41);
